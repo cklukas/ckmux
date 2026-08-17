@@ -2,6 +2,7 @@
 #include "client/client_app.hpp"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -30,6 +31,45 @@ constexpr const char* kVersion = "0.0.1 (M1)";
 w::TerminalView* terminal_view_of(w::Window* window) {
     if (window == nullptr) return nullptr;
     return dynamic_cast<w::TerminalView*>(window->content());
+}
+
+// The choices the settings dialog offers, each label beside the value it
+// stands for and in the order a reader sees them. One table rather than a list
+// of labels and a switch over indices somewhere else: those two can be
+// reordered independently, and then a dialog quietly stores the wrong answer.
+template <typename Value>
+struct Choice {
+    std::string_view label;
+    Value value;
+};
+
+constexpr std::array<Choice<ClockMode>, 3> kClockChoices{{{"With seconds", ClockMode::Seconds},
+                                                          {"Without seconds", ClockMode::Minutes},
+                                                          {"No clock", ClockMode::Off}}};
+constexpr std::array<Choice<Theme>, 3> kThemeChoices{
+    {{"Dark", Theme::Dark}, {"Light", Theme::Light}, {"Monochrome", Theme::Mono}}};
+
+template <typename Value, std::size_t N>
+std::vector<std::string> choice_labels(const std::array<Choice<Value>, N>& choices) {
+    std::vector<std::string> labels;
+    labels.reserve(N);
+    for (const Choice<Value>& choice : choices) labels.emplace_back(choice.label);
+    return labels;
+}
+
+template <typename Value, std::size_t N>
+int choice_index(const std::array<Choice<Value>, N>& choices, Value value) {
+    for (std::size_t i = 0; i < N; ++i)
+        if (choices[i].value == value) return static_cast<int>(i);
+    return -1;
+}
+
+// What the reader picked, or what they had. A dialog that came back with an
+// index outside the list must not turn that into a setting.
+template <typename Value, std::size_t N>
+Value choice_value(const std::array<Choice<Value>, N>& choices, int index, Value fallback) {
+    if (index < 0 || static_cast<std::size_t>(index) >= N) return fallback;
+    return choices[static_cast<std::size_t>(index)].value;
 }
 
 // Whether closing `window` would take a program with it. A window whose child
@@ -83,9 +123,10 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     // this project pins tests against.
     keymap_.apply(options_.settings.binds, options_.config_warnings);
     roles_ = u::intern_standard_roles(app_.roles());
-    // [general] theme, chosen before anything is drawn. The View menu changes
-    // it for this session only: the file is the reader's, and a menu that
-    // rewrote it would make a passing look at Monochrome permanent.
+    // [general] theme, applied before anything is drawn — and before
+    // build_chrome(), which hands the shell whatever is on the application
+    // rather than naming a theme of its own. Settings ▸ General… changes it
+    // and stores it.
     switch (options_.settings.theme) {
         case Theme::Dark: set_theme(u::make_dark_theme(app_.roles(), roles_)); break;
         case Theme::Light: set_theme(u::make_light_theme(app_.roles(), roles_)); break;
@@ -202,13 +243,6 @@ void ClientApp::register_commands() {
         }
     });
 
-    declare(commands::kThemeDark, "&Dark", "View",
-            [this] { set_theme(u::make_dark_theme(app_.roles(), roles_)); });
-    declare(commands::kThemeLight, "&Light", "View",
-            [this] { set_theme(u::make_light_theme(app_.roles(), roles_)); });
-    declare(commands::kThemeMono, "&Monochrome", "View",
-            [this] { set_theme(u::make_mono_theme(app_.roles(), roles_)); });
-
     // Everything is declared, so the table can learn what its keys resolve to.
     // Every surface reads ids from here afterwards, which is why this is the
     // last line rather than an incremental step inside the loop above.
@@ -248,19 +282,24 @@ void ClientApp::build_chrome() {
     w::MenuBarItem window_menu{"&Window",
                                {item(commands::kMoveResize), item(u::std_command_keys::kZoom), separator,
                                 item(u::std_command_keys::kTile), item(u::std_command_keys::kCascade)}};
-    w::MenuBarItem view_menu{"&View",
-                             {item(commands::kThemeDark), item(commands::kThemeLight),
-                              item(commands::kThemeMono)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
-    // Settings menu rather than hiding one per feature area.
+    // Settings menu rather than hiding one per feature area — and the colour
+    // theme is a setting, which is why there is no View menu holding three
+    // themes of its own. It was one: three menu items that changed the theme
+    // for the session and left the file saying something else, so a reader who
+    // liked Light had to find it again every morning.
     w::MenuBarItem settings_menu{"&Settings", {item(commands::kSettings)}};
     w::MenuBarItem help_menu{"&Help",
                              {item(commands::kKeyReference), separator, item(commands::kAbout)}};
 
-    w::ApplicationShell shell(app_, {.theme = u::make_dark_theme(app_.roles(), roles_),
+    // The theme the constructor already put on the application, handed
+    // straight back: the shell assigns whatever it is given, so naming one
+    // here would quietly overrule `[general] theme` — which is how a reader
+    // who chose Light got Dark every morning.
+    w::ApplicationShell shell(app_, {.theme = app_.theme(),
                                      .menus = {std::move(session_menu), std::move(terminal_menu),
-                                               std::move(window_menu), std::move(view_menu),
-                                               std::move(settings_menu), std::move(help_menu)},
+                                               std::move(window_menu), std::move(settings_menu),
+                                               std::move(help_menu)},
                                      .status_items = {},
                                      // ckmux composes every footer item from
                                      // the current context, so there is
@@ -270,6 +309,78 @@ void ClientApp::build_chrome() {
                                      .always_dock_status_line = true});
     desktop_ = &shell.desktop();
     footer_ = shell.status_line();
+    install_clock();
+}
+
+ckv::widgets::MenuBar* ClientApp::menu_bar() {
+    if (desktop_ == nullptr) return nullptr;
+    return dynamic_cast<w::MenuBar*>(desktop_->top_dock());
+}
+
+void ClientApp::install_clock() {
+    // The clock goes at the right end of the menu bar (plans/06): it is where
+    // a reader looks for one, and it is the one permanent row with space to
+    // spare — the footer's right side already carries session state. The bar
+    // owns the placement and re-decides it on every resize, so the clock stays
+    // at the right end rather than where the right end used to be.
+    //
+    // Re-run whenever the setting changes, so this is the whole of "what the
+    // bar's right end should be", not an addition to it: `off` and a client
+    // with no way to read the time both leave the bar as it was before there
+    // was a clock, rather than leaving a stopped one behind.
+    w::MenuBar* const bar = menu_bar();
+    if (bar == nullptr) return;
+    const ClockMode mode = options_.local_now ? options_.settings.clock : ClockMode::Off;
+    if (mode == ClockMode::Off) {
+        clock_ = bar->set_trailing_view(std::unique_ptr<w::ClockView>{});
+        return;
+    }
+    if (clock_ == nullptr) {
+        auto clock = std::make_unique<w::ClockView>();
+        // No blinking separator, unlike ckVision's terminal example. A blinking
+        // one repaints twice a second whatever else is happening, and ckmux's
+        // frames may be travelling down an SSH link to a reader who is not
+        // looking at the clock.
+        //
+        // The provider is copied rather than reached through `this`: the bar
+        // outlives this client (the desktop belongs to the Application), and a
+        // clock that ticks through a dangling client is a crash at shutdown.
+        clock->set_time_provider([now = options_.local_now] { return now().time; });
+        clock_ = bar->set_trailing_view(std::move(clock));
+        // Clicking it drops a calendar out of it. The two widgets know nothing
+        // about each other; this is the whole of the wiring, and the keyboard
+        // reaches it for free — a trailing view is a title on the bar, so the
+        // menu key and → walk onto it and Enter acts.
+        clock_->on_click = [this] { open_calendar(); };
+    }
+    // Seconds are a repaint a second and a cell or two of width; the bar
+    // re-measures its trailing view, so switching either way needs nothing
+    // else said about the layout.
+    clock_->set_show_seconds(mode == ClockMode::Seconds);
+}
+
+void ClientApp::open_calendar() {
+    if (desktop_ == nullptr || clock_ == nullptr || !options_.local_now) return;
+    // An open calendar holds the mouse, so a second click on the clock
+    // dismisses it before the clock ever hears about it — the way clicking an
+    // open menu title closes its menu. Reopening takes the next click.
+    w::CalendarDropdown* const dropdown = w::show_calendar_dropdown(*clock_, app_, *desktop_);
+    clock_->set_open(true);
+    // Read through the member rather than captured: the clock this calendar
+    // hangs from can be replaced or removed while it is open (Settings ▸
+    // General…), and a closing calendar must not put a highlight back on a
+    // clock that is gone.
+    dropdown->on_closed = [this] {
+        if (clock_ != nullptr) clock_->set_open(false);
+    };
+    // Today is asked for on every repaint rather than fixed when the calendar
+    // opens: a ckmux session outlives midnight, and a calendar still marking
+    // yesterday is confidently wrong about the one fact it exists to state.
+    dropdown->calendar().set_today_provider(
+        [now = options_.local_now] { return std::optional<w::DateValue>(now().date); });
+    const w::DateValue today = options_.local_now().date;
+    dropdown->show_month(today);  // the month picker and the year field follow
+    dropdown->calendar().set_selected(today);
 }
 
 ckv::widgets::Window* ClientApp::new_terminal() {
@@ -674,7 +785,6 @@ void ClientApp::show_settings() {
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "  Unticked, only ~/.zshrc and its kind run. tmux ticks this.",
                            .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(w::FieldDescriptor{.kind = w::FieldKind::Note});
 
     // The picture limit. Its unit is in the label because a bare number in a
     // field is a question ("of what?"), and the note underneath answers the
@@ -689,48 +799,74 @@ void ClientApp::show_settings() {
                            },
                            .kind = w::FieldKind::Text});
     descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  Pictures larger than the window are cut off at its edge, so this",
+        .label = "  Pictures larger than the window are cut off at its edge, so this only",
         .kind = w::FieldKind::Note});
     descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  only stops an absurd one: 64 is far more than a full screen at",
+        .label = "  stops an absurd one: 64 is far more than a full screen at 4K and 2x",
         .kind = w::FieldKind::Note});
     descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  4K and 2x scaling, which is about 33. Between " +
-                                    std::to_string(ckm::kSixelMegapixelsMin) + " and " +
-                                    std::to_string(ckm::kSixelMegapixelsMax) + ". A picture past",
+        w::FieldDescriptor{.label = "  scaling. Between " + std::to_string(ckm::kSixelMegapixelsMin) +
+                                    " and " + std::to_string(ckm::kSixelMegapixelsMax) +
+                                    "; a larger one is refused, with the reason.",
                            .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  it is refused, and the terminal says which picture and which limit.",
-        .kind = w::FieldKind::Note});
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "  Both take effect for terminals opened from now on.",
+                           .kind = w::FieldKind::Note});
 
-    // A blank line: what the settings do and when they start applying are two
-    // different thoughts, and the second is the one a reader comes back for.
-    descriptor.fields.push_back(w::FieldDescriptor{.kind = w::FieldKind::Note});
-    descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  Both take effect for terminals opened from now on.", .kind = w::FieldKind::Note});
-    descriptor.buttons.push_back(w::ButtonDescriptor{"&Save", true, nullptr});
-    descriptor.buttons.push_back(w::ButtonDescriptor{"&Cancel", false, nullptr});
-    descriptor.minimum_window_size = ckv::Size{72, 21};
+    // The clock and the theme: chrome rather than terminal behaviour, which is
+    // why they are last, and why the note above says only the two settings
+    // over it wait for a new terminal. These two change as the dialog closes.
+    //
+    // Combo boxes rather than radio groups, although three visible
+    // alternatives would otherwise be a radio group's job: two of those cost
+    // eight rows, and this dialog has to keep fitting a 24-row terminal, which
+    // is a real size for a multiplexer to be run in.
+    const std::size_t clock_field = descriptor.fields.size();
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "Cloc&k in the menu bar:",
+                           .kind = w::FieldKind::Combo,
+                           .options = choice_labels(kClockChoices),
+                           .initial_selection = choice_index(kClockChoices, options_.settings.clock)});
+    const std::size_t theme_field = descriptor.fields.size();
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "Colour &theme:",
+                           .kind = w::FieldKind::Combo,
+                           .options = choice_labels(kThemeChoices),
+                           .initial_selection = choice_index(kThemeChoices, options_.settings.theme)});
+    // Roles rather than a bool: Save is the default button and validates,
+    // Cancel dismisses without validating or carrying values — which is what
+    // Esc does, and saying so here is how the two stay the same thing.
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Save", w::ButtonRole::Accept, nullptr});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Cancel", w::ButtonRole::Dismiss, nullptr});
+    descriptor.minimum_window_size = ckv::Size{72, 22};
     descriptor.button_alignment = u::Alignment::End;
     descriptor.anchor_buttons_to_bottom = true;
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
         w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
-    presentation->set_completion_handler([this, login_field, sixel_field](w::DialogResult result) {
-        if (!result.accepted || result.checked.size() <= login_field ||
-            result.values.size() <= sixel_field)
-            return;
-        // One report between them: a home directory that cannot be written to
-        // fails both saves, and being told so twice is being told so once with
-        // an extra dialog in the way.
-        bool stored = apply_login_shell(result.checked[login_field]);
-        // The field validator has already refused anything unreadable, so a
-        // value that arrives here parses; the check is what makes that a fact
-        // rather than an assumption.
-        if (const std::optional<int> megapixels = ckm::parse_sixel_megapixels(result.values[sixel_field]))
-            stored = apply_sixel_max_megapixels(*megapixels) && stored;
-        if (!stored) report_settings_not_saved();
-    });
+    presentation->set_completion_handler(
+        [this, login_field, sixel_field, clock_field, theme_field](w::DialogResult result) {
+            if (!result.accepted || result.checked.size() <= login_field ||
+                result.values.size() <= sixel_field || result.selected.size() <= theme_field)
+                return;
+            // One report between them: a home directory that cannot be written
+            // to fails every save, and being told so four times is being told
+            // so once with three extra dialogs in the way.
+            bool stored = apply_login_shell(result.checked[login_field]);
+            // The field validator has already refused anything unreadable, so a
+            // value that arrives here parses; the check is what makes that a
+            // fact rather than an assumption.
+            if (const std::optional<int> megapixels =
+                    ckm::parse_sixel_megapixels(result.values[sixel_field]))
+                stored = apply_sixel_max_megapixels(*megapixels) && stored;
+            stored = apply_clock_mode(choice_value(kClockChoices, result.selected[clock_field],
+                                                   options_.settings.clock)) &&
+                     stored;
+            stored = apply_theme(choice_value(kThemeChoices, result.selected[theme_field],
+                                              options_.settings.theme)) &&
+                     stored;
+            if (!stored) report_settings_not_saved();
+        });
     pending_dialogs_.push_back(std::move(presentation));
 }
 
@@ -752,6 +888,32 @@ bool ClientApp::apply_sixel_max_megapixels(int megapixels) {
     options_.settings.sixel_max_megapixels = megapixels;
     return ckm::save_setting(ckm::platform::config_file_path(), "terminal", "sixel-max-megapixels",
                              std::to_string(megapixels));
+}
+
+bool ClientApp::apply_clock_mode(ClockMode mode) {
+    if (options_.settings.clock == mode) return true;
+    options_.settings.clock = mode;
+    // Immediately, unlike the two settings above it: the clock is chrome the
+    // reader is looking at while they choose, so the dialog closing onto an
+    // unchanged bar would read as a setting that did not take.
+    install_clock();
+    return ckm::save_setting(ckm::platform::config_file_path(), "general", "clock",
+                             ckm::clock_setting(mode));
+}
+
+bool ClientApp::apply_theme(Theme theme) {
+    if (options_.settings.theme == theme) return true;
+    options_.settings.theme = theme;
+    switch (theme) {
+        case Theme::Dark: set_theme(u::make_dark_theme(app_.roles(), roles_)); break;
+        case Theme::Light: set_theme(u::make_light_theme(app_.roles(), roles_)); break;
+        case Theme::Mono: set_theme(u::make_mono_theme(app_.roles(), roles_)); break;
+    }
+    // Stored, which is the whole reason this moved out of a View menu: a theme
+    // chosen for one session and forgotten by the next is a theme a reader has
+    // to choose every morning.
+    return ckm::save_setting(ckm::platform::config_file_path(), "general", "theme",
+                             ckm::theme_setting(theme));
 }
 
 void ClientApp::report_settings_not_saved() {

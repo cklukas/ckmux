@@ -24,12 +24,21 @@
 #include "cvision/term/terminal_subsession.hpp"
 #include "cvision/ui/application.hpp"
 #include "cvision/ui/standard_roles.hpp"
+#include "cvision/widgets/common_components.hpp"
 #include "cvision/widgets/desktop.hpp"
 #include "cvision/widgets/help_viewer.hpp"
 #include "cvision/widgets/status_line.hpp"
 #include "cvision/widgets/window.hpp"
 
 namespace ckm::client {
+
+// The reader's local date and time, read together. One reading rather than
+// two, so the clock on the menu bar and the calendar under it can never
+// disagree about which day it is.
+struct LocalMoment {
+    ckv::widgets::DateValue date;
+    ckv::widgets::TimeValue time;
+};
 
 struct ClientOptions {
     // Everything the configuration file said, defaults included (plans/08).
@@ -60,6 +69,14 @@ struct ClientOptions {
     // platform::write_to_command, a test passes a recorder. Empty means no
     // helper target is attempted at all.
     std::function<bool(const std::string& command, std::string_view text)> clipboard_writer;
+    // What time it is where the reader is — the one wall-clock reading ckmux
+    // takes, and injected for the same reason the clipboard writer is: reading
+    // the host clock and its time zone is an application's job, never the
+    // library's, and ckVision's own `Clock` is monotonic on purpose (AGENTS.md
+    // determinism rule). The host passes the system reading, a test passes a
+    // fixed moment. Empty means no clock at all: one that has to guess the
+    // time is worse than none.
+    std::function<LocalMoment()> local_now;
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator
@@ -97,6 +114,9 @@ public:
     // is client-local by design (plans/03: dialogs, the picker and copy mode
     // are never synced), which is also why it needs nothing from the server.
     CopyModeView* copy_mode() noexcept { return copy_mode_; }
+    // The clock at the right end of the menu bar, or nullptr when `[general]
+    // clock` is off or nothing can tell it the time.
+    ckv::widgets::ClockView* clock() noexcept { return clock_; }
     // What `^B ]` would paste: text yanked in copy mode, held here so it
     // survives a copy that no system clipboard accepted.
     const std::string& internal_clipboard() const noexcept { return internal_clipboard_; }
@@ -117,6 +137,12 @@ public:
 private:
     void register_commands();
     void build_chrome();
+    ckv::widgets::MenuBar* menu_bar();
+    // Makes the menu bar's right end match `[general] clock`: a clock with or
+    // without seconds, or nothing there at all. Called at startup and again
+    // whenever the setting changes, so it states the whole answer rather than
+    // adding to whatever is already there.
+    void install_clock();
     void refresh_footer();
     ckv::widgets::Window* open_terminal(std::string title);
     void close_terminal(ckv::widgets::Window* window);
@@ -130,6 +156,9 @@ private:
     void refresh_terminal_titles();
     void show_key_reference();
     void show_about();
+    // Drops a calendar out of the menu-bar clock, the way a menu title drops
+    // its menu.
+    void open_calendar();
     void show_settings();
     // Freezes the focused terminal's history into a copy-mode surface over
     // its window, and takes it away again.
@@ -149,6 +178,10 @@ private:
     // once rather than once per setting.
     bool apply_login_shell(bool login_shell);
     bool apply_sixel_max_megapixels(int megapixels);
+    // These two also change what is on screen at once — the clock and the
+    // colours are what the reader is looking at while they choose.
+    bool apply_clock_mode(ClockMode mode);
+    bool apply_theme(Theme theme);
     void report_settings_not_saved();
     void report_config_warnings();
     void set_theme(ckv::ui::Theme theme);
@@ -165,6 +198,9 @@ private:
     ckv::ui::StandardRoles roles_{};
     ckv::widgets::Desktop* desktop_ = nullptr;
     ckv::widgets::StatusLine* footer_ = nullptr;
+    // The menu bar's trailing view, owned by the bar. Held because the
+    // calendar hangs from it and has to tell it when it closes again.
+    ckv::widgets::ClockView* clock_ = nullptr;
     // Per terminal window: the name ckmux gave it, and the last title its
     // child asked for. The first is what the window falls back to when the
     // child stops asking; the second is what stops us rewriting the caption

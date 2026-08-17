@@ -3,6 +3,7 @@
 // The ckmux terminal host. M1 runs everything in this one process; M2 moves
 // the terminals behind a detached server and leaves this file a client.
 #include <cstdlib>
+#include <ctime>
 #include <string>
 
 #include "client/client_app.hpp"
@@ -41,6 +42,20 @@ int main() {
     // not do itself — the host supplies the one function that does.
     options.clipboard_writer = [](const std::string& command, std::string_view text) {
         return ckm::platform::write_to_command(command, text);
+    };
+
+    // The menu-bar clock's time, and the calendar's today. This is the only
+    // wall-clock reading ckmux takes, and it is taken here for the same reason
+    // the environment is: the host knows which machine and which time zone
+    // this is, ckVision's Clock is monotonic by design, and a test hands the
+    // client a fixed moment instead of this function.
+    options.local_now = [] {
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+        ::localtime_r(&now, &local);
+        return ckm::client::LocalMoment{
+            .date = {local.tm_year + 1900, local.tm_mon + 1, local.tm_mday},
+            .time = {local.tm_hour, local.tm_min, local.tm_sec}};
     };
 
     ckm::client::ClientApp client(app, std::move(options));

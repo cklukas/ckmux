@@ -267,7 +267,10 @@ its output already exist as return values.
 hold-on-error, the exit banner, and respawn-in-window.
 **WP-14 — Notifications and help.** `NotificationCenter` toasts; help pages
 complete, with their key tables generated from the same registry that
-dispatches the keys.
+dispatches the keys. `[general] clock` no longer waits here: the menu-bar
+clock and its calendar landed on their own (2026-08-17), being one trailing
+view on a bar that already existed and needing nothing from the server, the
+notifications or the help pages.
 **WP-15 — M3 acceptance.** Every operation-table row green at the wire; a
 newcomer drives everything from menus alone (checklist walkthrough); the
 author's tmux muscle-memory set is covered.

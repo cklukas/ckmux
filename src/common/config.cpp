@@ -162,6 +162,11 @@ std::string_view enum_spelling(Value value, const std::array<EnumChoice<Value>, 
 
 constexpr std::array<EnumChoice<Theme>, 3> kThemes{
     {{"dark", Theme::Dark}, {"light", Theme::Light}, {"mono", Theme::Mono}}};
+// `minutes` is the clock without a second hand — named for what it shows
+// rather than for what it leaves out, so the three spellings read as three
+// answers to one question.
+constexpr std::array<EnumChoice<ClockMode>, 3> kClockModes{
+    {{"seconds", ClockMode::Seconds}, {"minutes", ClockMode::Minutes}, {"off", ClockMode::Off}}};
 constexpr std::array<EnumChoice<ExitPolicy>, 3> kExitPolicies{{{"close", ExitPolicy::Close},
                                                                {"hold", ExitPolicy::Hold},
                                                                {"hold-on-error", ExitPolicy::HoldOnError}}};
@@ -238,7 +243,7 @@ std::optional<std::string> apply_assignment(std::string_view section, std::strin
         if (key == "on-exit") return enumerated(settings.on_exit, kExitPolicies);
         if (key == "confirm-kill") return boolean(settings.confirm_kill);
         if (key == "kill-empty-session") return boolean(settings.kill_empty_session);
-        if (key == "clock") return boolean(settings.clock);
+        if (key == "clock") return enumerated(settings.clock, kClockModes);
     } else if (section == "terminal") {
         if (key == "term") {
             settings.term = written.empty() ? std::string("auto") : written;
@@ -328,6 +333,10 @@ std::optional<std::string> apply_directive(std::string_view line, Settings& sett
 
 std::string bool_setting(bool value) { return value ? "true" : "false"; }
 
+std::string clock_setting(ClockMode value) { return std::string(enum_spelling(value, kClockModes)); }
+
+std::string theme_setting(Theme value) { return std::string(enum_spelling(value, kThemes)); }
+
 std::optional<bool> parse_bool(std::string_view text) {
     const std::string_view body = trim(text);
     if (body == "true") return true;
@@ -405,7 +414,6 @@ std::vector<std::string> keys_not_honoured_yet() {
     return {
         "[general] on-exit (WP-13)",
         "[general] kill-empty-session (WP-8)",
-        "[general] clock (WP-14)",
         "[printer] mode (U1-c, PRINT-1…6)",
         "[printer] ask-cache (U1-c, PRINT-1…6)",
         "[printer] spool-limit (U1-c, PRINT-1…6)",

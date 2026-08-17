@@ -29,11 +29,12 @@ is developed together with it.
 
 ## Status: M1
 
-Early. The client interface is real and usable — menu bar, footer, floating
-terminal windows, the prefix and its which-key popup, window management,
-context help, themes — but terminals still run in the client process and do
-**not** yet survive quitting. The detached server that makes them persistent
-is M2. See [plans/10-roadmap.md](plans/10-roadmap.md).
+Early. The client interface is real and usable — menu bar with a clock and its
+drop-down calendar, footer, floating terminal windows, the prefix and its
+which-key popup, window management, context help, and themes chosen in
+`Settings ▸ General…` — but terminals still run in the client process and do
+**not** yet survive quitting. The detached server that makes them persistent is
+M2. See [plans/10-roadmap.md](plans/10-roadmap.md).
 
 ## Build
 

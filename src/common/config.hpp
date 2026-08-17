@@ -58,6 +58,12 @@ inline constexpr int kMaxFpsMax = 240;
 inline constexpr std::size_t kByteSizeMax = 1024ULL * 1024ULL * 1024ULL;
 
 enum class Theme : unsigned char { Dark, Light, Mono };
+// What the menu bar's clock shows. Three states rather than a bool, because
+// "with seconds" and "without" are as different to a reader as either is to
+// no clock: a second hand is either information or motion in the corner of
+// their eye, and which one it is depends on the person, not on the setting
+// being on.
+enum class ClockMode : unsigned char { Seconds, Minutes, Off };
 enum class ExitPolicy : unsigned char { Close, Hold, HoldOnError };
 enum class SixelMode : unsigned char { Auto, Off };
 enum class PrinterMode : unsigned char { Ask, Capture, Off };
@@ -115,7 +121,12 @@ struct Settings {
     // like one holding an idle shell.
     bool confirm_kill = true;
     bool kill_empty_session = true;
-    bool clock = false;
+    // The clock at the right end of the menu bar, and the calendar that drops
+    // out of it when clicked. Seconds by default: the bar's right end is
+    // otherwise empty, and a clock a reader glances at while a build runs is
+    // more use with a second hand than without. `minutes` and `off` are the
+    // other two answers (Settings ▸ General…).
+    ClockMode clock = ClockMode::Seconds;
 
     // --- [terminal] -----------------------------------------------------
     // $TERM inside terminals. `auto` lets ckmux choose what it can honestly
@@ -199,5 +210,11 @@ bool save_setting(const std::filesystem::path& path, const std::string& section,
 // accepts: plans/08 says `true`/`false` and nothing else, so that a config
 // file reads the same way everywhere.
 std::string bool_setting(bool value);
+// The same, for the two enums a dialog can change. Written here rather than
+// spelled out at each call site: the parser's own table is the authority on
+// what a value is called, and a dialog that invented its own spelling would
+// write a file the parser then warns about.
+std::string clock_setting(ClockMode value);
+std::string theme_setting(Theme value);
 
 }  // namespace ckm

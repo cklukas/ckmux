@@ -11,7 +11,7 @@ ckVision (what exists vs. what we add) is in
 ## Screen layout
 
 ```
- Session  Terminal  Window  View  Settings  Help                    ckmux
+ Session  Terminal  Window  Settings  Help                       09:41:07
 ─────────────────────────────────────────────────────────────────────────
    ┌ 1: vim plans/02-architecture.md ─────────[▫][x]┐
    │ # ckmux — Architecture                         │
@@ -24,7 +24,17 @@ ckVision (what exists vs. what we add) is in
 ```
 
 - **Row 1 — menu bar** (permanent): ckVision MenuBar with drop-down menus.
-  Right edge shows the app name / version.
+  Right edge carries the clock — `HH:MM:SS`, or `HH:MM`, or nothing, per
+  `[general] clock` ([08-configuration.md](08-configuration.md)) and
+  `Settings ▸ General…` — and clicking it drops a
+  calendar out of it, opened on today and marking it. The clock is a title on
+  the bar rather than decoration beside it, so the keyboard reaches it too:
+  open the bar (`^B` then the menu key), walk with `←`/`→` — one step left of
+  `Session` is the clock — and `Enter` opens the calendar. `Esc`, or a click
+  anywhere else, closes it again.
+  The app's own name and version are in `Help ▸ About`, which is where a reader
+  looks for them, rather than spending the one permanent row that has room to
+  spare on text that never changes.
 - **Middle — desktop**: ckVision Desktop holding one floating, movable,
   resizable window per terminal in the attached session. Chrome: close `[x]`,
   zoom `[▫]`, drag-to-move on the title bar, drag-to-resize on the corner.
@@ -39,7 +49,7 @@ ckVision (what exists vs. what we add) is in
   (M3) will pin the caption and stop it following the child.
 - **Last row — footer** (permanent): left side = context-sensitive hotkey
   hints; right side = status (session name · terminal count, prefix-pending
-  indicator, bell/activity flags; optional clock via config).
+  indicator, bell/activity flags).
 
 Modal surfaces (menus, dialogs, the session picker, message boxes) float
 above the desktop. The footer switches to hints for the active modal surface.
@@ -194,7 +204,8 @@ The footer's left side always reflects the **active context**:
 
 Right side (status area): `session-name · N terminals`, prefix indicator,
 per-terminal bell `•` / activity `!` flags, `PRN` while the focused terminal
-is in printer-controller mode (below), optional clock.
+is in printer-controller mode (below). The clock is not here: it is at the
+right end of the menu bar, where the calendar can hang from it.
 
 ## Context-sensitive help
 
@@ -396,7 +407,8 @@ asked, and also joins the `Settings` menu below.
 
 **Settings ▸ General…** (M1) is the top-level settings menu this file
 anticipated, arriving before Printer Settings did. It holds what is not
-specific to one terminal — today a checkbox and a number:
+specific to one terminal — today a checkbox, a number, and the two pieces of
+chrome a reader chooses for themselves:
 
 ```
 ╔ Settings ══════════════════════════════════════════════════════════╗
@@ -410,9 +422,13 @@ specific to one terminal — today a checkbox and a number:
 ║                                                 ^^^^^^^^^^^^^^^^^^ ║
 ║   Pictures larger than the window are cut off at its edge, so this ║
 ║   only stops an absurd one: 64 is far more than a full screen at   ║
-║   4K and 2x scaling, which is about 33. Between 1 and 4096.        ║
+║   4K and 2x scaling. Between 1 and 4096; a larger one is refused,  ║
+║   with the reason. Both take effect for terminals opened from now  ║
+║   on.                                                              ║
 ║                                                                    ║
-║   Both take effect for terminals opened from now on.               ║
+║ Clock in the menu bar: With seconds                             ▾  ║
+║                                                                    ║
+║ Colour theme: Dark                                              ▾  ║
 ║                                                                    ║
 ║                                                 Save      Cancel   ║
 ╚════════════════════════════════════════════════════════════════════╝
@@ -436,11 +452,28 @@ an unreadable number keeps the dialog up with that field focused rather than
 storing something nobody chose ([08](08-configuration.md) owns the accepted
 range).
 
-Saving writes `[general] login-shell` and `[terminal] sixel-max-megapixels`
-([08](08-configuration.md)) and applies to terminals opened afterwards —
-existing ones keep what they started with, which the dialog says rather than
-leaving to be discovered. A configuration file that cannot be written is
-reported once for the pair, not once per setting.
+The clock and the theme are here rather than in a menu of their own because
+they are settings: a `View` menu once held three themes, changed the theme for
+the session and left the file saying something else, so a reader who liked
+Light chose it again every morning. Both are combo boxes rather than radio
+groups — three visible alternatives are a radio group's job, but two of those
+cost eight rows, and this dialog has to keep fitting a 24-row terminal, where
+the desktop is 22 rows between the menu bar and the footer. It asks for exactly
+those 22, which a test pins: a settings form whose buttons are off the bottom
+edge cannot be answered at all.
+
+Saving writes `[general] login-shell`, `[terminal] sixel-max-megapixels`,
+`[general] clock` and `[general] theme` ([08](08-configuration.md)). The first
+two apply to terminals opened afterwards — existing ones keep what they started
+with, which the dialog says rather than leaving to be discovered; the clock and
+the theme change as the dialog closes, because they are what the reader was
+looking at while they chose. A configuration file that cannot be written is
+reported once for the lot, not once per setting.
+
+Cancel closes the dialog and stores nothing, exactly as `Esc` does. That it
+does anything at all is a ckVision fix (D-050 there): a dialog button used to
+carry only its own handler, so a Cancel with nothing of its own to do was an
+inert control — pressing it left the dialog exactly where it was.
 
 **Print Output** (`^B P`, `Terminal ▸ Print output…`): a `Table` of jobs
 (kind, time, size) beside a preview, with `Save…` / `Save All…` (ckVision's
@@ -467,7 +500,9 @@ removes.
 
 - Themes: follow ckVision's Dark / Light / Mono schemes; ckmux adds semantic
   roles (footer hint key vs. label, status flags, prefix indicator, exited
-  badge) on top of the stock palette. Default: Dark.
+  badge) on top of the stock palette. Default: Dark. Chosen in
+  `Settings ▸ General…`, which stores it in `[general] theme` — there is no
+  View menu, because a theme is a setting rather than a command.
 - Terminal content rendering is verbatim (truecolor, attributes, Sixel);
   ckmux chrome never restyles inner-app output.
 - Bell: visual flash of the window border + footer flag (audible bell to the

@@ -369,7 +369,7 @@ theme = light
 on-exit = hold
 confirm-kill = false
 kill-empty-session = false
-clock = true
+clock = minutes
 
 [terminal]
 term = screen-256color
@@ -404,7 +404,7 @@ max-fps = 60
     CK_CHECK(s.on_exit == ckm::ExitPolicy::Hold);
     CK_CHECK(!s.confirm_kill);
     CK_CHECK(!s.kill_empty_session);
-    CK_CHECK(s.clock);
+    CK_CHECK(s.clock == ckm::ClockMode::Minutes);
     CK_CHECK(s.term == "screen-256color");
     CK_CHECK(!s.mouse);
     CK_CHECK(!s.alternate_scroll);
@@ -435,7 +435,7 @@ CK_TEST(the_defaults_are_the_ones_the_plan_prints) {
     CK_CHECK(s.on_exit == ckm::ExitPolicy::HoldOnError);
     CK_CHECK(s.confirm_kill);
     CK_CHECK(s.kill_empty_session);
-    CK_CHECK(!s.clock);
+    CK_CHECK(s.clock == ckm::ClockMode::Seconds);
     CK_CHECK(s.term == "auto");
     CK_CHECK(s.mouse);
     CK_CHECK(s.alternate_scroll);

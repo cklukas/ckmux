@@ -19,6 +19,7 @@
 #include "common/config.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/ui/standard_roles.hpp"
+#include "cvision/widgets/common_components.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 
@@ -31,12 +32,20 @@ using ckv::ui::Application;
 
 namespace {
 
+// 09:41 on 17 August 2026, wherever this test is run. Injected exactly where
+// main.cpp injects the host's own reading, so the menu-bar clock and the
+// calendar under it are as deterministic as everything else here — a test that
+// asserted on the real time would pass until midnight.
+constexpr ckv::widgets::DateValue kToday{2026, 8, 17};
+constexpr ckv::widgets::TimeValue kNow{9, 41, 0};
+
 ClientOptions test_options() {
     ClientOptions options;
     // A program that simply stays alive, so a window has a live child
     // without the run depending on whose shell is installed. The login
     // form only renames argv[0], which cat does not mind.
     options.settings.shell = "/bin/cat";
+    options.local_now = [] { return ckm::client::LocalMoment{kToday, kNow}; };
     return options;
 }
 
@@ -45,6 +54,16 @@ struct Fixture {
     ManualClock clock;
     Application app{terminal, clock};
     ClientApp client{app, test_options()};
+};
+
+// The same fixture with the settings a test wants to change first.
+struct ConfiguredFixture {
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client;
+
+    explicit ConfiguredFixture(ClientOptions options) : client{app, std::move(options)} {}
 };
 
 // A command's id, looked up the way everything durable does: by key. Ids are
@@ -65,6 +84,15 @@ ckv::widgets::MenuBar* menu_bar(ClientApp& client) {
     return dynamic_cast<ckv::widgets::MenuBar*>(client.desktop().top_dock());
 }
 
+// The calendar currently hanging off the clock, if any. It is a desktop popup
+// like a menu is, and dismissing it destroys it, so its absence is the whole
+// of "closed".
+ckv::widgets::CalendarDropdown* dropped_calendar(ClientApp& client) {
+    for (ckv::ui::View* popup : client.desktop().popups())
+        if (auto* const calendar = dynamic_cast<ckv::widgets::CalendarDropdown*>(popup)) return calendar;
+    return nullptr;
+}
+
 // Windows that host a terminal. A desktop also owns whatever dialog is
 // currently up, so a plain windows().size() would count the confirmation box
 // it is being asked about.
@@ -73,6 +101,29 @@ std::size_t terminal_window_count(ClientApp& client) {
     for (ckv::widgets::Window* window : client.desktop().windows())
         if (dynamic_cast<ckv::widgets::TerminalView*>(window->content()) != nullptr) ++count;
     return count;
+}
+
+// Walks the focus to the combo box currently showing `showing`, then chooses
+// the entry `steps` further down its list — Down opens the list, each further
+// Down moves one entry, Enter chooses. The reader's own path: a closed combo
+// does not step in place while there is room to drop a list.
+template <typename FixtureType>
+ckv::widgets::ComboBox* choose_in_combo(FixtureType& f, std::string_view showing, int steps) {
+    ckv::widgets::ComboBox* combo = nullptr;
+    for (int step = 0; step < 12 && combo == nullptr; ++step) {
+        f.app.focus_next();
+        auto* const box = dynamic_cast<ckv::widgets::ComboBox*>(f.app.focused());
+        if (box != nullptr && box->text() == showing) combo = box;
+    }
+    if (combo == nullptr) return nullptr;
+    const auto press = [&f](ckv::Key key) {
+        f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{key, ckv::Modifier::None, {}}});
+        f.app.step(0);
+    };
+    press(ckv::Key::Down);  // opens the list on the entry it is showing
+    for (int step = 0; step < steps; ++step) press(ckv::Key::Down);
+    press(ckv::Key::Enter);  // chosen; the list closes and the combo keeps focus
+    return combo;
 }
 
 bool any_label_contains(const std::vector<std::string>& labels, std::string_view needle) {
@@ -89,8 +140,9 @@ CK_TEST(the_client_opens_with_a_menu_bar_a_footer_and_one_terminal) {
 
     ckv::widgets::MenuBar* const bar = menu_bar(f.client);
     CK_CHECK(bar != nullptr);
-    // Session, Terminal, Window, View, Settings, Help
-    CK_CHECK(bar->menus().size() == 6U);
+    // Session, Terminal, Window, Settings, Help — no View menu: the colour
+    // theme is a stored setting, chosen in Settings ▸ General…
+    CK_CHECK(bar->menus().size() == 5U);
     CK_CHECK(f.client.desktop().bottom_dock() == &f.client.footer());
     CK_CHECK(f.client.desktop().windows().size() == 1U);
     CK_CHECK(f.client.desktop().windows()[0]->title() == "Terminal 1");
@@ -114,9 +166,125 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTile)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kCascade)));
-    CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckm::client::commands::kThemeDark)));
-    CK_CHECK(menu_has_command(bar->menus()[4], id_of(f.app, ckm::client::commands::kSettings)));
-    CK_CHECK(menu_has_command(bar->menus()[5], id_of(f.app, ckm::client::commands::kAbout)));
+    CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckm::client::commands::kSettings)));
+    CK_CHECK(menu_has_command(bar->menus()[4], id_of(f.app, ckm::client::commands::kAbout)));
+}
+
+CK_TEST(the_menu_bar_carries_the_clock_at_its_right_end_and_keeps_it_there) {
+    Fixture f;
+    f.app.step(0);
+
+    ckv::widgets::MenuBar* const bar = menu_bar(f.client);
+    ckv::widgets::ClockView* const clock = f.client.clock();
+    CK_CHECK(bar != nullptr);
+    CK_CHECK(clock != nullptr);
+    CK_CHECK(bar->trailing_view() == clock);
+    // What the reader reads, at the end of the row they read it at — seconds
+    // included, which is what ckmux ships with.
+    CK_CHECK(clock->show_seconds());
+    CK_CHECK(clock->text() == std::string("09:41:00"));
+    CK_CHECK(clock->absolute_bounds().right() == bar->absolute_bounds().right());
+    // And it reached the frame, not merely the widget tree.
+    std::string top_row;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int x = 0; x < frame.size().width; ++x) top_row += frame.at(ckv::Point{x, 0}).grapheme();
+    CK_CHECK(top_row.find("09:41:00") != std::string::npos);
+
+    // A narrower terminal moves the right end, and the clock with it — the
+    // failure this pins is a clock left sitting where the edge used to be.
+    f.terminal.resize(Size{72, 24});
+    f.app.step(0);
+    CK_CHECK(bar->absolute_bounds().right() == 72);
+    CK_CHECK(clock->absolute_bounds().right() == 72);
+}
+
+CK_TEST(clicking_the_clock_drops_a_calendar_opened_on_today) {
+    Fixture f;
+    f.app.step(0);
+    ckv::widgets::ClockView* const clock = f.client.clock();
+    CK_CHECK(clock != nullptr);
+    CK_CHECK(dropped_calendar(f.client) == nullptr);
+
+    // The reader's own path: press and release on the clock.
+    const ckv::Rect on_screen = clock->absolute_bounds();
+    const ckv::Point hit{on_screen.x + on_screen.width / 2, on_screen.y};
+    f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Left, hit, std::nullopt,
+                                   ckv::Modifier::None});
+    f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Up, ckv::MouseButton::Left, hit, std::nullopt,
+                                   ckv::Modifier::None});
+    f.app.step(0);
+
+    ckv::widgets::CalendarDropdown* const calendar = dropped_calendar(f.client);
+    CK_CHECK(calendar != nullptr);
+    // It hangs under the clock, right edges aligned, and the clock draws as an
+    // open title while it does — the way a menu title does under its menu.
+    CK_CHECK(calendar->absolute_bounds().right() == on_screen.right());
+    CK_CHECK(calendar->absolute_bounds().y == on_screen.bottom());
+    CK_CHECK(clock->open());
+    // Opened on today, with today chosen: a calendar that opens on a month the
+    // reader has to go and find is a calendar they have to operate.
+    CK_CHECK(calendar->calendar().selected() == kToday);
+    CK_CHECK(calendar->year_field().text() == std::string("2026"));
+    CK_CHECK(calendar->month_picker().selected_index() == std::optional<std::size_t>{7});
+
+    // Esc closes it, gives the keyboard back, and the clock stops drawing as
+    // open — the last of which is the wiring that is easy to leave out.
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Escape, ckv::Modifier::None, {}}});
+    f.app.step(0);
+    CK_CHECK(dropped_calendar(f.client) == nullptr);
+    CK_CHECK(!clock->open());
+    CK_CHECK(f.app.input_capture() == nullptr);
+}
+
+CK_TEST(the_keyboard_reaches_the_clock_by_walking_the_menu_bar) {
+    // A ckmux reader gets to the bar with the prefix and then the menu key, so
+    // the clock has to be reachable from there too: one step left of the first
+    // menu is the trailing title, and Enter opens what hangs from it.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kMenu)));
+    f.app.step(0);
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Left, ckv::Modifier::None, {}}});
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, {}}});
+    f.app.step(0);
+
+    CK_CHECK(dropped_calendar(f.client) != nullptr);
+    CK_CHECK(f.client.clock()->open());
+}
+
+CK_TEST(a_reader_who_turns_the_clock_off_gets_a_bar_without_one) {
+    ClientOptions options = test_options();
+    options.settings.clock = ckm::ClockMode::Off;
+    ConfiguredFixture f{std::move(options)};
+    f.app.step(0);
+
+    CK_CHECK(f.client.clock() == nullptr);
+    CK_CHECK(menu_bar(f.client)->trailing_view() == nullptr);
+}
+
+CK_TEST(a_clock_without_seconds_shows_hours_and_minutes_only) {
+    ClientOptions options = test_options();
+    options.settings.clock = ckm::ClockMode::Minutes;
+    ConfiguredFixture f{std::move(options)};
+    f.app.step(0);
+
+    CK_CHECK(f.client.clock() != nullptr);
+    CK_CHECK(!f.client.clock()->show_seconds());
+    CK_CHECK(f.client.clock()->text() == std::string("09:41"));
+}
+
+CK_TEST(a_client_with_no_way_to_read_the_time_shows_no_clock_at_all) {
+    // A clock that guesses is worse than no clock, so the absence of an
+    // injected reading is the absence of the widget — not a 00:00 in the
+    // chrome.
+    ClientOptions options = test_options();
+    CK_CHECK(options.settings.clock != ckm::ClockMode::Off);  // on, the way it ships
+    options.local_now = nullptr;                              // and no way to know the time
+    ConfiguredFixture f{std::move(options)};
+    f.app.step(0);
+
+    CK_CHECK(f.client.clock() == nullptr);
+    CK_CHECK(menu_bar(f.client)->trailing_view() == nullptr);
 }
 
 CK_TEST(commands_that_need_the_server_are_visible_but_disabled_until_it_exists) {
@@ -288,17 +456,17 @@ CK_TEST(the_help_text_is_generated_from_the_same_table_that_dispatches_the_keys)
     CK_CHECK(topic_key == "ckmux.terminal");
 }
 
-CK_TEST(the_client_renders_under_every_built_in_theme) {
-    // Named rather than held as ids: each iteration builds its own
-    // application, and an id is meaningful only to the registry that assigned
-    // it — one carried in from a previous fixture would mean nothing here.
-    const std::array<std::string_view, 3> themes{ckm::client::commands::kThemeDark,
-                                                 ckm::client::commands::kThemeLight,
-                                                 ckm::client::commands::kThemeMono};
-    for (const std::string_view theme : themes) {
-        Fixture f;
-        f.app.step(0);
-        CK_CHECK(f.app.execute_command(id_of(f.app, theme)));
+CK_TEST(the_client_renders_under_every_built_in_theme_and_uses_the_configured_one) {
+    // The theme is a stored setting rather than a menu item, so this drives it
+    // the way a reader's configuration file does. What it also pins is that the
+    // chrome does not overrule the file: the shell used to be handed a Dark
+    // theme of its own after the configured one had been applied, so `theme =
+    // light` drew dark and the setting looked broken rather than ignored.
+    const std::array<ckm::Theme, 3> themes{ckm::Theme::Dark, ckm::Theme::Light, ckm::Theme::Mono};
+    for (const ckm::Theme theme : themes) {
+        ClientOptions options = test_options();
+        options.settings.theme = theme;
+        ConfiguredFixture f{std::move(options)};
         f.app.step(0);
         // A real frame reached the terminal, and it is not the too-small
         // refusal state.
@@ -306,6 +474,18 @@ CK_TEST(the_client_renders_under_every_built_in_theme) {
         CK_CHECK(!f.app.terminal_too_small());
         CK_CHECK(f.client.desktop().windows().size() == 1U);
     }
+
+    // Two of them, compared: the same frame drawn under Dark and under Light
+    // cannot be identical, which is what "the setting reached the renderer"
+    // means when the assertion cannot name a colour.
+    const auto first_frame_bytes = [](ckm::Theme theme) {
+        ClientOptions options = test_options();
+        options.settings.theme = theme;
+        ConfiguredFixture f{std::move(options)};
+        f.app.step(0);
+        return std::string(f.terminal.written_bytes());
+    };
+    CK_CHECK(first_frame_bytes(ckm::Theme::Dark) != first_frame_bytes(ckm::Theme::Light));
 }
 
 #endif
@@ -487,6 +667,154 @@ CK_TEST(the_settings_dialog_offers_the_login_shell_choice_and_stores_what_it_is_
     const ckm::LoadedSettings stored = ckm::load_settings(config);
     CK_CHECK(!stored.settings.login_shell);
     CK_CHECK(stored.warnings.empty());
+
+    (void)::unsetenv("CKMUX_CONFIG");
+    std::filesystem::remove_all(config.parent_path());
+}
+
+CK_TEST(the_settings_dialog_still_fits_an_eighty_by_twentyfour_terminal) {
+    // Two more settings are two more rows, and 80x24 is a real size for a
+    // multiplexer to be run in: the desktop is 22 rows between the menu bar and
+    // the footer, which is exactly what this dialog asks for. The failure this
+    // pins is a form whose last field or whose buttons are off the bottom.
+    Fixture f;
+    f.terminal.resize(Size{80, 24});
+    f.app.step(0);
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+    CK_CHECK(!f.app.terminal_too_small());
+
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    // Top of the form, both new fields, and the actions: nothing pushed off.
+    CK_CHECK(screen.find("Start terminals") != std::string::npos);
+    CK_CHECK(screen.find("megapixels") != std::string::npos);
+    CK_CHECK(screen.find("Clock in the menu bar") != std::string::npos);
+    CK_CHECK(screen.find("Colour theme") != std::string::npos);
+    CK_CHECK(screen.find("Save") != std::string::npos);
+    CK_CHECK(screen.find("Cancel") != std::string::npos);
+}
+
+CK_TEST(cancel_closes_the_settings_dialog_and_stores_nothing) {
+    // Reported from a running ckmux: Cancel did nothing at all and the dialog
+    // could only be left with Esc. A button that is on screen and inert is
+    // worse than one that is not there.
+    const std::filesystem::path config =
+        std::filesystem::temp_directory_path() / "ckmux-settings-cancel" / "ckmux.conf";
+    std::filesystem::remove_all(config.parent_path());
+    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+
+    // Untick the login-shell box on the way, so a Cancel that stored anything
+    // would leave evidence.
+    f.terminal.inject_bytes(" ", 0);
+    f.app.step(0);
+
+    // Tab to Cancel and press it, the way a reader who dislikes Esc does.
+    ckv::widgets::Button* cancel = nullptr;
+    for (int step = 0; step < 12 && cancel == nullptr; ++step) {
+        f.app.focus_next();
+        auto* const button = dynamic_cast<ckv::widgets::Button*>(f.app.focused());
+        if (button != nullptr && button->text() == "&Cancel") cancel = button;
+    }
+    CK_CHECK(cancel != nullptr);
+    f.terminal.inject_bytes(" ", 0);
+    f.app.step(0);
+    f.app.step(0);
+
+    // The dialog is gone, the setting is untouched, and nothing was written.
+    CK_CHECK(!f.app.is_modal());
+    CK_CHECK(!std::filesystem::exists(config));
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    CK_CHECK(screen.find(".zprofile") == std::string::npos);
+
+    (void)::unsetenv("CKMUX_CONFIG");
+    std::filesystem::remove_all(config.parent_path());
+}
+
+CK_TEST(the_settings_dialog_chooses_the_clock_and_the_theme_and_keeps_both) {
+    // Both are chrome the reader is looking at while they choose, so this pins
+    // the two halves that matter: the bar changes as the dialog closes, and the
+    // answer is in the file for tomorrow.
+    const std::filesystem::path config =
+        std::filesystem::temp_directory_path() / "ckmux-settings-chrome" / "ckmux.conf";
+    std::filesystem::remove_all(config.parent_path());
+    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.client.clock() != nullptr);
+    CK_CHECK(f.client.clock()->show_seconds());
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+
+    // Both choices are on screen with their current values in them.
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    CK_CHECK(screen.find("Clock in the menu bar") != std::string::npos);
+    CK_CHECK(screen.find("With seconds") != std::string::npos);
+    CK_CHECK(screen.find("Colour theme") != std::string::npos);
+    CK_CHECK(screen.find("Dark") != std::string::npos);
+
+    // One entry down in each list: seconds → without seconds, Dark → Light.
+    ckv::widgets::ComboBox* const clock_choice = choose_in_combo(f, "With seconds", 1);
+    CK_CHECK(clock_choice != nullptr);
+    CK_CHECK(clock_choice->text() == std::string("Without seconds"));
+    ckv::widgets::ComboBox* const theme_choice = choose_in_combo(f, "Dark", 1);
+    CK_CHECK(theme_choice != nullptr);
+    CK_CHECK(theme_choice->text() == std::string("Light"));
+
+    f.terminal.inject_bytes("\r", 0);  // Save
+    f.app.step(0);
+    f.app.step(0);
+
+    // On screen at once...
+    CK_CHECK(f.client.clock() != nullptr);
+    CK_CHECK(!f.client.clock()->show_seconds());
+    CK_CHECK(f.client.clock()->text() == std::string("09:41"));
+    // ...and in the file for next time.
+    const ckm::LoadedSettings stored = ckm::load_settings(config);
+    CK_CHECK(stored.settings.clock == ckm::ClockMode::Minutes);
+    CK_CHECK(stored.settings.theme == ckm::Theme::Light);
+    CK_CHECK(stored.warnings.empty());
+
+    (void)::unsetenv("CKMUX_CONFIG");
+    std::filesystem::remove_all(config.parent_path());
+}
+
+CK_TEST(turning_the_clock_off_in_the_dialog_takes_it_off_the_bar) {
+    const std::filesystem::path config =
+        std::filesystem::temp_directory_path() / "ckmux-settings-clock-off" / "ckmux.conf";
+    std::filesystem::remove_all(config.parent_path());
+    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+
+    ckv::widgets::ComboBox* const clock_choice = choose_in_combo(f, "With seconds", 2);
+    CK_CHECK(clock_choice != nullptr);
+    CK_CHECK(clock_choice->text() == std::string("No clock"));
+    f.terminal.inject_bytes("\r", 0);  // Save
+    f.app.step(0);
+    f.app.step(0);
+
+    CK_CHECK(f.client.clock() == nullptr);
+    CK_CHECK(menu_bar(f.client)->trailing_view() == nullptr);
+    CK_CHECK(ckm::load_settings(config).settings.clock == ckm::ClockMode::Off);
 
     (void)::unsetenv("CKMUX_CONFIG");
     std::filesystem::remove_all(config.parent_path());

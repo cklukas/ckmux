@@ -51,9 +51,9 @@ inline constexpr std::string_view kSessions = "ckmux.session.list";
 inline constexpr std::string_view kKeyReference = "ckmux.help.keys";
 inline constexpr std::string_view kAbout = "ckmux.help.about";
 inline constexpr std::string_view kSendPrefix = "ckmux.terminal.send-prefix";
-inline constexpr std::string_view kThemeDark = "ckmux.view.theme-dark";
-inline constexpr std::string_view kThemeLight = "ckmux.view.theme-light";
-inline constexpr std::string_view kThemeMono = "ckmux.view.theme-mono";
+// There is no theme command. The colour theme is a stored setting, chosen and
+// kept in Settings ▸ General… — three commands that changed it for one session
+// and left the file saying otherwise were a menu that could not be trusted.
 // Display-only: the digit keys are dispatched by value rather than through a
 // single handler, but the reader still has to be told they exist.
 inline constexpr std::string_view kFocusByNumber = "ckmux.terminal.focus-by-number";

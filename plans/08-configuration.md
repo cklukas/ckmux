@@ -31,11 +31,14 @@ prefix          = C-b          # the one stolen key; C-a, F12, … accepted
 shell           = $SHELL       # what New Terminal runs
 login-shell     = true         # start it as a login shell (Settings ▸ General…)
 scrollback      = 10000        # lines per terminal (0 = off)
-theme           = dark         # dark | light | mono
+theme           = dark         # dark | light | mono (Settings ▸ General…)
 on-exit         = hold-on-error# close | hold | hold-on-error
 confirm-kill    = true         # confirm dialogs for kill/close of live apps
 kill-empty-session = true      # session dies when its last terminal closes
-clock           = false        # clock in the footer status area
+clock           = seconds      # seconds | minutes | off — the clock at the
+                               # right end of the menu bar, with a calendar
+                               # that drops out of it when clicked
+                               # (Settings ▸ General…)
 
 [terminal]
 term            = auto         # value of $TERM inside terminals (see plan 04)
@@ -100,8 +103,8 @@ waits for.
   session scopes are server session state and are never written.
 - **A dialog may write this file back.** Printer settings are edited in
   `Terminal ▸ Printer Settings…` ([06](06-ui-design.md)); `Global` /
-  `Save as default` persists them. `login-shell` and
-  `sixel-max-megapixels` are edited in `Settings ▸ General…`. The write is
+  `Save as default` persists them. `login-shell`, `sixel-max-megapixels`,
+  `clock` and `theme` are edited in `Settings ▸ General…`. The write is
   key-targeted — matching `key = value`
   lines are rewritten in place, a missing key joins its section, and a
   missing section is appended — so comments, ordering, inline notes and
@@ -125,13 +128,15 @@ Three states, and the difference between them is the point:
 | **Unknown** | No such key. Warns with its line, and the rest of the file is still read. |
 
 Honoured today: `prefix`, `shell`, `login-shell`, `scrollback` (including
-`0`), `theme`, `confirm-kill`, `term`, `mouse`, `alternate-scroll`, `sixel`,
-`sixel-max-megapixels`, `osc52`, `clipboard`, and the whole of `[keys]`.
+`0`), `theme`, `clock`, `confirm-kill`, `term`, `mouse`, `alternate-scroll`,
+`sixel`, `sixel-max-megapixels`, `osc52`, `clipboard`, and the whole of
+`[keys]`.
 
 Read but not yet honoured: `on-exit` (WP-13), `kill-empty-session` (WP-8),
-`clock` (WP-14), all of `[printer]` (U1-c and PRINT-1…6), and
-`[render] max-fps` (WP-2). A key leaves that list in the commit that wires it
-up — `[terminal] clipboard` left it with WP-17, which is where copying began.
+all of `[printer]` (U1-c and PRINT-1…6), and `[render] max-fps` (WP-2). A key
+leaves that list in the commit that wires it up — `[terminal] clipboard` left
+it with WP-17, which is where copying began, and `clock` left it with the
+menu-bar clock.
 
 Notes on the parts that are easy to get wrong:
 
@@ -154,8 +159,12 @@ Notes on the parts that are easy to get wrong:
   so every name a file can contain is a name that does something. Copy mode's
   own keys are not among them: they are modal motions rather than commands,
   and are fixed in v1 ([06-ui-design.md](06-ui-design.md)).
-- **The View menu's theme choice is for this session only.** The file is the
-  reader's; a passing look at Monochrome should not rewrite it.
+- **The theme is chosen in `Settings ▸ General…` and stored.** It used to be
+  three items in a View menu that changed the theme for the session only, on
+  the reasoning that a passing look at Monochrome should not rewrite the file —
+  but a reader who chose Light then had to choose it again every morning, and
+  the setting they had actually made was the one the file kept saying. A
+  dialog with a Save button is a decision; a menu item is a look.
 
 Two keys landed before the rest, because both are edited in a dialog and a
 settings dialog that forgets what it was told is not a setting:
