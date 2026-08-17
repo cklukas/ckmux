@@ -67,10 +67,10 @@ per ckVision's own verification rules; ckmux tracks them in
 | Pri | Gap (today's behavior) | Why ckmux needs it |
 |---|---|---|
 | U0 | **No damage/dirty reporting; `snapshot()` deep-copies grid + scrollback + rasters per call** | Server diffing at tick rate × N terminals must not copy ~MB per frame. Need damage spans or a borrowed/zero-copy view, and a snapshot-without-scrollback option. The single biggest perf risk in the design. |
-| U0 | **BEL ignored entirely** | Bell flag per terminal (footer/title badges, [06](06-ui-design.md)). Tiny: latch a flag in the snapshot. |
-| U0 | **Charset designation `ESC ( 0` unsupported** (fixed diagnostics) | ncurses ACS line-drawing (mc, dialog, old tools) draws `qqq` instead of `───` under xterm-flavored `$TERM`. |
-| U0 | **Scrollback capacity fixed at 2 000 lines** | Config `scrollback` ([08](08-configuration.md)) needs a ctor option; also the "0 = off" case. |
-| U0 | **RIS (`ESC c`) not implemented** | `reset`(1) inside a terminal must actually reset it. DECALN too (test tooling relies on it). |
+| ~~U0~~ | ~~BEL ignored entirely~~ — **done**: counted per terminal as `TerminalSnapshot::bell_serial`, not latched, so a footer badge, a title marker and a session picker can all read the same snapshot and each see every bell. | Bell badges ([06](06-ui-design.md)) and WP-19's monitors. |
+| ~~U0~~ | ~~Charset designation `ESC ( 0` unsupported~~ — **done**, with the whole published DEC Special Graphics range rather than the box-drawing half. | ncurses ACS line-drawing (mc, dialog, old tools) drew `qqq` instead of `───`. |
+| ~~U0~~ | ~~Scrollback capacity fixed at 2 000 lines~~ — **done**: `max_scrollback_lines` is honoured including `0` (nothing is copied at all), and a width change re-lays stored lines instead of shearing the history. | Config `scrollback` ([08](08-configuration.md)), including "0 = off". |
+| ~~U0~~ | ~~RIS (`ESC c`) not implemented~~ — **done**, with DECALN (`ESC # 8`); the caption and the child's own fate survive a reset, everything a child can reach does not. | `reset`(1) inside a terminal now actually resets it; vttest chapters open with DECALN. |
 | U1 | **OSC 4/10/11 palette/fg/bg queries dropped** | vim/nvim probe OSC 11 to pick light/dark defaults. Needs reply plumbing (emulator can already queue replies via `take_pending_input`). |
 | U1 | **Child OSC 52 denied by policy, no allow path** | tmux-style `set-clipboard` ([08](08-configuration.md) `osc52`): needs an opt-in policy + snapshot/event surface, capped. |
 | U1 | **Tab stops fixed at 8 (HTS/TBC ignored); REP ignored** | Correctness for the long tail (and vttest). |

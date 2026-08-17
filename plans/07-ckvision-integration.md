@@ -156,6 +156,20 @@ U1-d is not closed: `Radio`, `Combo` and `Number` remain, and Printer
 Settings ([06](06-ui-design.md)) still wants them at M4. What landed is the
 part `Settings ▸ General…` needed, built so the rest slots in beside it.
 
+### Landed (U0-c — what a terminal does when it is not drawing)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-33 | **BEL is counted in the snapshot** (`TerminalSnapshot::bell_serial`), not latched. A flag that reading clears makes the first reader the only one to see the bell — with a session picker, a footer badge and a title marker all reading the same snapshot, that is three consumers and one winner; a flag that reading does not clear cannot say a second bell arrived. A count is read as often as anyone likes and answers both. The bell deliberately does not flush the printable run: it writes nothing, and flushing there splits a UTF-8 character that has not finished arriving. | WP-19's bell and activity monitors, and the footer/title badges in [06](06-ui-design.md). |
+| L-34 | **RIS (`ESC c`)** — everything a child can reach goes back to the profile's declaration: both screens, the history, the cursor, the scroll region, the charsets, autowrap, insert mode, the mouse/paste/cursor-key modes, alternate scroll, the kitty keyboard stacks and the Sixel colour registers. The window caption and the session's own state are deliberately kept: a program clearing its screen has not renamed the window, and a reset cannot bring a dead child back to life. | `reset(1)` inside a ckmux terminal must actually reset it. Before this, the one thing a reader reaches for when a `cat` of a binary wedges their screen did nothing at all. |
+| L-35 | **DECALN (`ESC # 8`)** and a `Hash` parse state — the screen fills with E, the cursor comes home and the margins go back to the whole screen. `ESC # 3/4/5/6` stay unimplemented, but as a bounded diagnostic: what must not happen is the digit landing on the screen as text. | vttest opens most of its chapters with DECALN, so an emulator that ignores it grades a blank screen — and [09-testing.md](09-testing.md) settles fidelity by measurement. |
+| L-36 | **Scrollback capacity honoured at both ends.** `max_scrollback_lines = 0` now means the line is never copied anywhere, rather than copied into the history and dropped again on the next statement. And a width change re-lays the stored lines to the new width instead of leaving them read at the old one — the history is flat rows of the grid's width, so without it the whole scrollback sheared one column further out per line. That is re-laying, not reflow: a line that wrapped at 80 stays two lines at 100, because nothing records which breaks the child chose. | `scrollback` in [08-configuration.md](08-configuration.md), including `0`. The shear was found while testing the option and belongs to the same package. |
+
+The item's fourth bullet, the `ESC ( 0` DEC line-drawing charset, had already
+landed; the DA1/XTSMGRAPHICS graphics advertisement half is L-24 above. The
+implementation of L-33…L-36 reached ckVision inside `d06bca5`, a batch commit
+another session made across the shared tree; its evidence is `08c3dea`.
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -168,7 +182,6 @@ part `Settings ▸ General…` needed, built so the rest slots in beside it.
 |---|---|---|
 | U0-a | **Attach-an-existing-subsession** entry point on `Application` (today only `launch_terminal_subsession(spec)` exists — no way to hand it a custom/remote subsession). Without it, `TerminalView` change-notification (`notify_terminal_subsession_changed`) and `wait_handles()` aggregation don't reach mirror subsessions. The report calls this "a ~5-line addition"; it is the single cleanest enabler for ckmux. | M2 |
 | U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
-| U0-c | Emulator: BEL → bell flag; `ESC ( 0` DEC line-drawing charset; RIS + DECALN; scrollback capacity option (incl. 0). *(The DA1/XTSMGRAPHICS graphics advertisement half of this item has landed — see L-24 above.)* | M2–M3 |
 | U0-d | OSC title policy: ckmux profile runs with metadata storage on (exists — policy flag), plus OSC 2 alongside OSC 0 if absent. | M2 |
 | U1-a | Tab stops (HTS/TBC). *(The rest of this item — OSC 4/10/11 query replies, child OSC 52 opt-in policy with cap and snapshot surface, REP, mode 1007, underline styles SGR 4:x — has landed; see below.)* | M4 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
