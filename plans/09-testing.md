@@ -99,6 +99,22 @@ private `CKMUX_SOCKET`:
   detach/reattach; `SetPrinterPolicy` at all three scopes with precedence
   asserted, and `off` making the child's `CSI ? 15 n` answer *no printer*.
 
+WP-5 landed the mirror half of the client layer as
+`tests/test_remote_terminal.cpp`: a real server-side `DiffEngine` over a real
+emulator on one side, a real `TerminalMirror` and `RemoteTerminalSubsession` on
+the other, and a real `TerminalView` and `ClientApp` on top — everything except
+the socket, which WP-2 already tests. What it pins: the mirror holds the server's
+terminal cell for cell; a delta that skips a number is refused rather than
+half-applied; the child's dialect survives the wire (the same arrow key encodes
+`ESC [ A` or `ESC O A` depending on the mode the server reported); the history
+arrives in the snapshot, so a reattached reader can page back with no round trip;
+the reader's own `scrollback` bounds what the client keeps; a resize carries the
+text area in pixels; and `^B c` opens a second remote terminal without a byte of
+that chord reaching the child. Screen assertions decode the client's output
+through a `VirtualDisplay` rather than grepping the byte stream — the presenter
+writes runs with cursor moves between them, so "is the text in the bytes" is the
+wrong question and passed for the wrong reasons until it was asked properly.
+
 ### 4. Client UI (labels `script`, `golden`)
 
 `HeadlessTerminal` hosts the real client against a scripted fake server

@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -38,6 +39,19 @@ namespace ckm::client {
 struct LocalMoment {
     ckv::widgets::DateValue date;
     ckv::widgets::TimeValue time;
+};
+
+// What ckmux would run, handed to whatever provides the terminal.
+//
+// The launch spec is composed from the reader's configuration whether or not
+// anything forks: it carries the command, the working directory, the environment
+// and — the part a remote source also needs — the capability profile, which is
+// what decides the cell metric a picture is drawn at and what the child is told
+// its terminal can do.
+struct TerminalRequest {
+    ckv::term::TerminalLaunchSpec launch;
+    ckv::term::TerminalSubsessionOptions options;
+    std::string title;
 };
 
 struct ClientOptions {
@@ -77,6 +91,21 @@ struct ClientOptions {
     // fixed moment. Empty means no clock at all: one that has to guess the
     // time is worse than none.
     std::function<LocalMoment()> local_now;
+    // Where a terminal comes from.
+    //
+    // Unset launches one in this process, which is M1 and what a reader gets
+    // today. A client attached to a server passes a source that adopts a
+    // `RemoteTerminalSubsession` instead (WP-5) — and that substitution is the
+    // ONLY difference between the two worlds. The window and its frame, the
+    // close confirmation, the exited banner, the footer, the prefix and its
+    // which-key popup, copy mode: all of it is the same code reading the same
+    // seam, which is the whole reason M1 was built against
+    // `core::TerminalSubsession` rather than against a PTY.
+    //
+    // Returns a reference because ownership belongs to the `Application` either
+    // way — launched or adopted (ckVision U0-a) — so the lifetime rule "the
+    // session outlives every view that borrows it" is stated in one place.
+    std::function<ckv::term::TerminalSubsession&(TerminalRequest)> terminal_source;
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator

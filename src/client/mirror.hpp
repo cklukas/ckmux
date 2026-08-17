@@ -1,0 +1,109 @@
+// Copyright (c) 2026 C. Klukas. All rights reserved.
+//
+// The client's mirror of one terminal (WP-5).
+//
+// Everything a reader sees from M2 onwards is this: the server owns the program
+// and the emulator, and what arrives here is a snapshot at attach time and a
+// stream of deltas afterwards. So the mirror's only real claim is the one WP-4a
+// pinned — apply what arrives and hold exactly what the server holds — plus the
+// two things a client needs that a server does not: a **history it can page
+// through locally**, and a **damage report of its own**, so a view can repaint
+// the rows that changed rather than the screen.
+//
+// The gap rule lives here too (plans/05). A delta whose sequence does not follow
+// the last one means something was lost, and the answer is not to guess: the
+// mirror says so, and the client resnapshots (WP-6 owns the reconnect).
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "common/grid_delta.hpp"
+#include "common/proto.hpp"
+#include "cvision/core/terminal_subsession.hpp"
+
+namespace ckm::client {
+
+class TerminalMirror {
+public:
+    // The size the mirror starts at, before a snapshot has said otherwise. Not
+    // zero: a view that measures a terminal before the first message arrives
+    // should find a plausible screen rather than nothing at all.
+    TerminalMirror() = default;
+
+    // Everything the server said about this terminal at attach time. Replaces
+    // whatever was held — a snapshot is the server's answer to "we have lost
+    // track", so believing any of the old state would defeat it — and restarts
+    // the sequence, which is what makes the next delta's `seq == 1` meaningful.
+    void adopt(const proto::TerminalState& state);
+
+    // Applies one delta. Returns false when it was refused, which happens for
+    // exactly two reasons: the sequence did not follow (something was lost), or
+    // the ops do not fit the mirror (the server and the client disagree about
+    // the size). Both are answered the same way and by the same code as the
+    // protocol says — resnapshot — so both set `needs_snapshot()`.
+    bool apply(const proto::GridDelta& delta);
+
+    void apply(const proto::TermMeta& meta);
+    void apply(const proto::TermClosed& closed);
+
+    // Whether the mirror knows it is out of date. Cleared by `adopt`, because a
+    // snapshot is the cure.
+    bool needs_snapshot() const noexcept { return needs_snapshot_; }
+    std::uint32_t sequence() const noexcept { return sequence_; }
+    // How many deltas were refused for a gap, ever. A counter rather than a
+    // flag: it is the number a bug report needs, and "it happened once during
+    // startup" and "it happens every second" are different faults.
+    std::uint64_t gaps() const noexcept { return gaps_; }
+
+    const GridState& state() const noexcept { return state_; }
+    const std::string& title() const noexcept { return state_.title; }
+    ckv::Size cells() const noexcept { return state_.cells; }
+    std::optional<int> exit_status() const noexcept { return exit_status_; }
+    bool exited() const noexcept { return exited_; }
+    // What the reader's `[general] scrollback` says this mirror keeps. Set once,
+    // by the client, from configuration: the server's own capacity is its
+    // business, and a client that kept more than it was configured to would be
+    // holding text the reader asked it to forget.
+    void set_history_limit(std::size_t lines);
+
+    // The grid and the history, as a view reads them: borrowed, never copied.
+    // The history is flat — rows of `cells().width`, oldest first — because that
+    // is the shape ckVision's seam hands out and the shape a view indexes.
+    std::span<const ckv::Cell> grid() const noexcept;
+    std::span<const ckv::Cell> history() const noexcept;
+
+    // What changed since the view last said it had caught up. The same contract
+    // as the emulator's: reading never clears, `clear_damage()` is the reader's,
+    // and it starts full so the first frame after an attach draws everything.
+    const ckv::core::TerminalDamage& damage() const noexcept { return damage_; }
+    void clear_damage() noexcept;
+
+private:
+    void note_row(int row, int first, int last);
+    void note_every_row();
+    void rebuild_history_cache();
+
+    GridState state_;
+    // The history as one flat buffer, rebuilt when it changes.
+    //
+    // The mirror stores lines (a line is the unit `SbPush` carries and capacity
+    // is counted in), and every reader wants a flat span. Keeping both costs a
+    // copy of the history when it changes and saves one on every read — and a
+    // view reads on every repaint while the history changes only when a line
+    // scrolls away.
+    std::vector<ckv::Cell> history_cache_;
+    bool history_cache_valid_ = false;
+    ckv::core::TerminalDamage damage_;
+    std::uint32_t sequence_ = 0;
+    std::uint64_t gaps_ = 0;
+    bool needs_snapshot_ = false;
+    bool exited_ = false;
+    bool hold_ = false;
+    std::optional<int> exit_status_;
+};
+
+}  // namespace ckm::client

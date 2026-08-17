@@ -439,8 +439,17 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     // scrollback). Zero is honoured as "remember nothing" rather than as the
     // smallest number — see ckVision's max_scrollback_lines (U0-c).
     subsession.max_scrollback_lines = static_cast<std::size_t>(options_.settings.scrollback);
-    ckv::term::TerminalSubsession& session =
-        app_.launch_terminal_subsession(std::move(launch), subsession);
+    // The one line that differs between a terminal in this process and a
+    // terminal in a server. Everything after it — the view, the prefix, the
+    // selection, the close confirmation, the banner — is the same code either
+    // way, which is what "the UI drives remote terminals unchanged" has to mean
+    // to be worth claiming (plans/12 WP-5).
+    ckv::term::TerminalSubsession& session = [&]() -> ckv::term::TerminalSubsession& {
+        if (options_.terminal_source)
+            return options_.terminal_source(
+                TerminalRequest{std::move(launch), subsession, fallback_title});
+        return app_.launch_terminal_subsession(std::move(launch), subsession);
+    }();
 
     auto view = std::make_unique<w::TerminalView>(session);
     w::TerminalView* const terminal_view = view.get();

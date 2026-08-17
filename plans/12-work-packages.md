@@ -76,8 +76,8 @@ take first.
 | 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | **Done** (2026-08-17) | WP-3 ✓, WP-4a ✓ |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
-| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Ready** | WP-2 ✓, WP-4b ✓, U0-a ✓ |
-| 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
+| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Done** (2026-08-17) | WP-2 ✓, WP-4b ✓, U0-a ✓ |
+| 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Ready** | WP-5 ✓ |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
@@ -348,6 +348,43 @@ and the first row that genuinely cannot start early.
 *Done when*: the M1 UI drives remote terminals with no change to its own
 window, footer, or prefix code; input encoded client-side arrives as opaque
 bytes.
+**Done** (2026-08-17). `src/client/mirror.{hpp,cpp}` (one terminal's client-side
+state: a snapshot, the deltas after it, a history the reader pages through
+locally, and a damage report of its own) and
+`src/client/remote_terminal.{hpp,cpp}` (`RemoteTerminalSubsession`, the seam over
+that state). `ClientOptions::terminal_source` is the substitution point, and it
+is one line inside `open_terminal`: everything after it — the window and its
+frame, the close confirmation, the exited banner, the footer, the prefix and its
+which-key popup, copy mode — is the same code reading the same seam. That the
+substitution is one line is the acceptance criterion, and it is only possible
+because M1 was written against `core::TerminalSubsession` rather than against a
+PTY.
+
+Ten tests, the last of which drives the real `ClientApp` with terminals that live
+in another process and reads the result off a `VirtualDisplay`, including `^B c`
+opening a second one without a byte of that chord reaching the child.
+
+Four things worth knowing:
+
+  * **The client's history is the reader's, not the server's.** Capacity comes
+    from `[general] scrollback`; a client that kept whatever a server sent would
+    hold text its reader asked it to forget, and would spend the memory too.
+  * **Damage is read off the ops, not by comparing grids.** The ops are the
+    statement of what changed; a mirror that compared would be doing the diff
+    engine's work a second time.
+  * **A gap is not repaired, it is reported.** A delta whose sequence does not
+    follow, or ops that do not fit, set `needs_snapshot()` — and the mirror
+    applies nothing. WP-6 owns the reconnect.
+  * **`feed_output` on a mirror is a routing mistake, and is counted.** A
+    terminal whose output silently went nowhere is the hardest fault to find, so
+    a test can now say it never happens.
+
+It needed one upstream change (ckVision 2108568): `TerminalView` was taking a
+whole snapshot eleven times — every repaint and several times per keystroke —
+and on a mirror that means rebuilding a flattened history each time. It now reads
+`status()`, `cells()`, `scrollback()` and the two new borrows `rasters()` and
+`diagnostics()`, with a snapshot only for the clipboard text and only when the
+serial says it changed.
 
 **WP-6 — Attach, detach, reattach, and self-healing.** `Hello`/`Attach`/
 `Detached`, the full snapshot, detach as a closed socket, and the
