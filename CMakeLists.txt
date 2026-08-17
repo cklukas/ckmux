@@ -44,6 +44,21 @@ target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_client PUBLIC ckvision::cvision)
 ckmux_strict(ckmux_client)
 
+# The server is its own library and links only ckVision, so AGENTS.md's layer
+# rule — server code may include core and term, never ui, widgets or scene — is
+# a fact the build enforces rather than a convention a reader has to remember.
+# It is also what lets the server run with no host terminal at all, which is
+# the whole point of the split.
+add_library(ckmux_server STATIC
+    src/common/config.cpp
+    src/common/keymap.cpp
+    src/common/proto.cpp
+    src/common/shell.cpp
+    src/server/terminals.cpp)
+target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(ckmux_server PUBLIC ckvision::cvision)
+ckmux_strict(ckmux_server)
+
 if(UNIX)
     add_executable(ckmux src/main.cpp)
     target_link_libraries(ckmux PRIVATE ckmux_client ckvision::cvision)

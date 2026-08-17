@@ -70,7 +70,7 @@ take first.
 | 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Done** (2026-08-17) | — |
-| 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Ready** | — |
+| 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Done** (2026-08-17) | — |
 | 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Ready** | — |
 | 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Ready** | WP-1 ✓ |
 | 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a |
@@ -197,6 +197,17 @@ terminal: spawn, drain under a byte budget, resize with pixel fields, the
 SIGHUP→SIGTERM→SIGKILL close policy.
 *Done when*: PTY-level tests cover exit status, the grace path, and resize;
 children never outlive an explicit close.
+**Done** (2026-08-17). `src/server/terminals.{hpp,cpp}`: ids that are never
+recycled, the collection, per-terminal drain budgets, `TIOCSWINSZ` with the
+cell metric derived from the client's text area, exit status read where the
+child's exit is actually observed, and close on the process group. Eleven
+PTY-level tests, all with real children. Three findings worth carrying:
+the protocol carries the **window** pixel size while ckVision wants the size
+of **one cell**, and confusing them is silent (every Sixel comes out wrong,
+because XTWINOPS 14/16 derive from it) — the arithmetic is pinned by reading
+`TIOCGWINSZ` back out of the pty; a drain budget has to be measured in bytes
+against a clock, not in iterations; and two library defects fell out of it,
+recorded as L-48 and L-50 in [07-ckvision-integration.md](07-ckvision-integration.md).
 
 **WP-4a — Grid diff algebra.** Two grids → `GridDelta` and back: scroll ops,
 RLE cell runs, cursor, modes, title, scrollback pushes. Pure functions over

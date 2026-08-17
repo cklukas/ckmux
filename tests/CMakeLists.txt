@@ -14,10 +14,11 @@ set(CKMUX_TEST_SOURCES
     test_keymap.cpp
     test_prefix.cpp
     test_proto.cpp
+    test_server_terminals.cpp
     test_shell.cpp)
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
-target_link_libraries(ckmux_tests PRIVATE ckmux_client ckvision::cvision)
+target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server ckvision::cvision)
 ckmux_strict(ckmux_tests)
 
 foreach(source ${CKMUX_TEST_SOURCES})
