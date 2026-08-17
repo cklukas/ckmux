@@ -88,13 +88,13 @@ take first.
 | 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | Blocked | WP-12 |
 | 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
 | 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
-| 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Ready** | — |
+| 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
 | 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Ready** | — |
 | 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-6 |
 | 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
 | 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
-| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | U1-c, U1-d, WP-6 |
+| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | U1-d, WP-6 |
 | 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | Blocked | WP-16 |
 | 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-16…WP-19, WP-20, PRINT-1…6, U1-a |
 | 31 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
