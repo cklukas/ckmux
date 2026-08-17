@@ -24,6 +24,14 @@ namespace {
 
 constexpr std::int64_t kWhichKeyDelay = 500'000'000;
 
+// A command's id, looked up the way everything durable does: by key. Ids are
+// assigned by the registry at runtime (ckVision D-013), so a test cannot hold
+// one as a constant — it asks the registry the application actually declared
+// into.
+ckv::ui::CommandId id_of(Application& app, std::string_view key) {
+    return app.commands().id_for(key).value_or(ckv::ui::kInvalidCommand);
+}
+
 ClientOptions test_options() {
     ClientOptions options;
     // A program that simply stays alive, so a window has a live child
@@ -114,8 +122,8 @@ CK_TEST(an_unbound_key_cancels_rather_than_reaching_the_program) {
 CK_TEST(a_digit_focuses_the_terminal_with_that_number) {
     Fixture f;
     f.settle();
-    f.app.execute_command(ckm::client::commands::kNewTerminal);
-    f.app.execute_command(ckm::client::commands::kNewTerminal);
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
     f.settle();
     CK_CHECK(f.client.desktop().windows().size() == 3U);
 

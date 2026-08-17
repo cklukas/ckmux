@@ -9,14 +9,17 @@
 namespace ckm::client {
 namespace {
 
-using ckv::ui::std_commands::kCascade;
-using ckv::ui::std_commands::kMenu;
-using ckv::ui::std_commands::kNextWindow;
-using ckv::ui::std_commands::kPreviousWindow;
-using ckv::ui::std_commands::kQuit;
-using ckv::ui::std_commands::kTile;
-using ckv::ui::std_commands::kWindowList;
-using ckv::ui::std_commands::kZoom;
+// ckVision's own commands, referenced by the keys the library declares them
+// under rather than by private synonyms: a terminal window is a window, and
+// "Next Terminal" IS the standard next-window command wearing a ckmux label.
+using ckv::ui::std_command_keys::kCascade;
+using ckv::ui::std_command_keys::kMenu;
+using ckv::ui::std_command_keys::kNextWindow;
+using ckv::ui::std_command_keys::kPreviousWindow;
+using ckv::ui::std_command_keys::kQuit;
+using ckv::ui::std_command_keys::kTile;
+using ckv::ui::std_command_keys::kWindowList;
+using ckv::ui::std_command_keys::kZoom;
 
 // The defaults. Order is display order in the which-key popup and the key
 // reference, so it is grouped by what a reader is likely to want first:
@@ -55,7 +58,7 @@ const std::array<KeyBinding, 19>& default_bindings() {
 
 }  // namespace
 
-ckv::ui::CommandId command_for_action(Action action) {
+std::string_view command_for_action(Action action) {
     switch (action) {
         case Action::NewTerminal: return commands::kNewTerminal;
         case Action::CloseTerminal: return commands::kCloseTerminal;
@@ -77,7 +80,18 @@ ckv::ui::CommandId command_for_action(Action action) {
         case Action::SendPrefix: return commands::kSendPrefix;
         case Action::Quit: return kQuit;
     }
-    return ckv::ui::kInvalidCommand;
+    return {};
+}
+
+void Keymap::resolve(const ckv::ui::CommandRegistry& registry) {
+    for (KeyBinding& binding : bindings_) {
+        const std::optional<ckv::ui::CommandId> id = registry.id_for(binding.key);
+        // Left invalid where nothing declared the key. Not asserted: this
+        // runs before the reachability test does, and a table row pointing at
+        // an undeclared command is precisely what that test exists to report
+        // by name rather than to crash on.
+        binding.command = id.value_or(ckv::ui::kInvalidCommand);
+    }
 }
 
 Keymap::Keymap() : bindings_(default_bindings().begin(), default_bindings().end()) {}

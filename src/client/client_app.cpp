@@ -118,10 +118,11 @@ ClientApp::~ClientApp() {
 
 void ClientApp::register_commands() {
     u::CommandRegistry& registry = app_.commands();
-    // Only ckmux's own ids get registered: ckVision's reserved standard
-    // commands already carry fixed titles and default chords, and its Desktop
-    // installs the window-management handlers. Referencing them is the
-    // sanctioned path; re-registering them is rejected by design.
+    // Only ckmux's own commands are declared here. ckVision's standard set is
+    // declared by every registry's constructor with its own titles and default
+    // chords, and its Desktop installs the window-management handlers —
+    // referencing those by their keys is the sanctioned path, and re-declaring
+    // one would replace metadata the library owns.
     //
     // "Installs the handlers" is worth checking rather than assuming, which is
     // what test_command_reachability.cpp does: an unhandled command still
@@ -129,73 +130,63 @@ void ClientApp::register_commands() {
     // does nothing. Window List shipped that way through M1, because Desktop
     // covered every window command except that one (fixed upstream — 07's
     // L-32).
-    const auto register_own = [&](u::CommandId id, std::string_view title, std::string category,
-                                  std::function<void()> handler) {
-        registry.add(u::CommandDescriptor{.id = id,
-                                          .title = std::string(title),
-                                          .category = std::move(category),
-                                          .context = {},
-                                          .chord = {},
-                                          .handler = std::move(handler)});
+    //
+    // Nobody picks a number: `declare()` assigns the id that stands for each
+    // key, and `keymap_.resolve()` at the end of this function is where the
+    // table learns them (ckVision D-013).
+    const auto declare = [&](std::string_view key, std::string_view title, std::string category,
+                             std::function<void()> handler) {
+        return registry.declare(u::CommandDescriptor{.key = std::string(key),
+                                                     .title = std::string(title),
+                                                     .category = std::move(category),
+                                                     .context = {},
+                                                     .chord = {},
+                                                     .visibility = u::CommandVisibility::Palette,
+                                                     .handler = std::move(handler)});
     };
 
     for (const KeyBinding& binding : keymap_.bindings()) {
-        if (binding.command < commands::kBase) continue;  // a ckVision standard command
-        switch (binding.command) {
-            case commands::kNewTerminal:
-                register_own(binding.command, binding.title, "Terminal", [this] { new_terminal(); });
-                break;
-            case commands::kCloseTerminal:
-                register_own(binding.command, binding.title, "Terminal",
-                             [this] { close_terminal(active_terminal()); });
-                break;
-            case commands::kMoveResize:
-                register_own(binding.command, binding.title, "Window", [this] {
-                    if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
-                });
-                break;
-            case commands::kKeyReference:
-                register_own(binding.command, binding.title, "Help", [this] { show_key_reference(); });
-                break;
-            case commands::kAbout:
-                register_own(binding.command, binding.title, "Help", [this] { show_about(); });
-                break;
-            case commands::kSettings:
-                register_own(binding.command, binding.title, "Settings", [this] { show_settings(); });
-                break;
-            case commands::kCopyMode:
-                register_own(binding.command, binding.title, "Terminal", [this] { enter_copy_mode(); });
-                break;
-            case commands::kPaste:
-                register_own(binding.command, binding.title, "Terminal",
-                             [this] { paste_into_terminal(); });
-                // Nothing to paste is not a failure to explain in a dialog; it
-                // is a menu item that is plainly not available yet, which is
-                // what an empty clipboard looks like everywhere else.
-                registry.set_enabled_predicate(binding.command,
-                                               [this] { return !internal_clipboard_.empty(); });
-                break;
-            case commands::kDetach:
-            case commands::kSessions:
-                // Registered so the menu, the footer, and the key reference
-                // all show the real shape of ckmux from the first milestone —
-                // and disabled, so they say plainly that the server does not
-                // exist yet (M2) rather than pretending or hiding.
-                register_own(binding.command, binding.title, "Session", [] {});
-                registry.set_enabled_predicate(binding.command, [] { return false; });
-                break;
-            case commands::kFocusByNumber:
-                // Display-only: the digits carry a value, so they are
-                // dispatched directly rather than through one handler.
-                register_own(binding.command, binding.title, "Terminal", [] {});
-                registry.set_enabled_predicate(binding.command, [] { return false; });
-                break;
-            default:
-                break;
+        // A row whose key belongs to the library is the library's to declare.
+        if (!binding.key.starts_with("ckmux.")) continue;
+        if (binding.key == commands::kNewTerminal) {
+            declare(binding.key, binding.title, "Terminal", [this] { new_terminal(); });
+        } else if (binding.key == commands::kCloseTerminal) {
+            declare(binding.key, binding.title, "Terminal", [this] { close_terminal(active_terminal()); });
+        } else if (binding.key == commands::kMoveResize) {
+            declare(binding.key, binding.title, "Window", [this] {
+                if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
+            });
+        } else if (binding.key == commands::kKeyReference) {
+            declare(binding.key, binding.title, "Help", [this] { show_key_reference(); });
+        } else if (binding.key == commands::kAbout) {
+            declare(binding.key, binding.title, "Help", [this] { show_about(); });
+        } else if (binding.key == commands::kSettings) {
+            declare(binding.key, binding.title, "Settings", [this] { show_settings(); });
+        } else if (binding.key == commands::kCopyMode) {
+            declare(binding.key, binding.title, "Terminal", [this] { enter_copy_mode(); });
+        } else if (binding.key == commands::kPaste) {
+            const u::CommandId paste = declare(binding.key, binding.title, "Terminal",
+                                               [this] { paste_into_terminal(); });
+            // Nothing to paste is not a failure to explain in a dialog; it is
+            // a menu item that is plainly not available yet, which is what an
+            // empty clipboard looks like everywhere else.
+            registry.set_enabled_predicate(paste, [this] { return !internal_clipboard_.empty(); });
+        } else if (binding.key == commands::kDetach || binding.key == commands::kSessions) {
+            // Declared so the menu, the footer, and the key reference all show
+            // the real shape of ckmux from the first milestone — and disabled,
+            // so they say plainly that the server does not exist yet (M2)
+            // rather than pretending or hiding.
+            registry.set_enabled_predicate(declare(binding.key, binding.title, "Session", [] {}),
+                                           [] { return false; });
+        } else if (binding.key == commands::kFocusByNumber) {
+            // Display-only: the digits carry a value, so they are dispatched
+            // directly rather than through one handler.
+            registry.set_enabled_predicate(declare(binding.key, binding.title, "Terminal", [] {}),
+                                           [] { return false; });
         }
     }
 
-    register_own(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
+    declare(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
         if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
             std::string bytes;
             const ckv::KeyChord& p = options_.settings.prefix;
@@ -211,12 +202,17 @@ void ClientApp::register_commands() {
         }
     });
 
-    register_own(commands::kThemeDark, "&Dark", "View",
-                 [this] { set_theme(u::make_dark_theme(app_.roles(), roles_)); });
-    register_own(commands::kThemeLight, "&Light", "View",
-                 [this] { set_theme(u::make_light_theme(app_.roles(), roles_)); });
-    register_own(commands::kThemeMono, "&Monochrome", "View",
-                 [this] { set_theme(u::make_mono_theme(app_.roles(), roles_)); });
+    declare(commands::kThemeDark, "&Dark", "View",
+            [this] { set_theme(u::make_dark_theme(app_.roles(), roles_)); });
+    declare(commands::kThemeLight, "&Light", "View",
+            [this] { set_theme(u::make_light_theme(app_.roles(), roles_)); });
+    declare(commands::kThemeMono, "&Monochrome", "View",
+            [this] { set_theme(u::make_mono_theme(app_.roles(), roles_)); });
+
+    // Everything is declared, so the table can learn what its keys resolve to.
+    // Every surface reads ids from here afterwards, which is why this is the
+    // last line rather than an incremental step inside the loop above.
+    keymap_.resolve(registry);
 }
 
 void ClientApp::build_chrome() {
@@ -228,29 +224,33 @@ void ClientApp::build_chrome() {
         return w::CommandPresentation{binding.command, std::string(binding.title),
                                       binding_label(options_.settings.prefix, binding)};
     };
-    const auto item = [&](u::CommandId command) {
+    // A menu entry names its command the way everything durable does — by key
+    // — and the id comes from the table, which resolved it once at startup.
+    // A key with no row (nothing in ckmux reaches it by a prefix chord) still
+    // makes a menu item; it simply carries no chord hint of ckmux's own.
+    const auto item = [&](std::string_view key) {
         for (const KeyBinding& binding : keymap_.bindings())
-            if (binding.command == command) return w::MenuItem{presentation(binding)};
-        return w::MenuItem{w::CommandPresentation{command}};
+            if (binding.key == key) return w::MenuItem{presentation(binding)};
+        const std::optional<u::CommandId> id = app_.commands().id_for(key);
+        return w::MenuItem{w::CommandPresentation{id.value_or(u::kInvalidCommand)}};
     };
     const w::MenuItem separator{"", u::kInvalidCommand, {}, true};
 
     w::MenuBarItem session_menu{
         "&Session",
         {item(commands::kNewTerminal), separator, item(commands::kDetach), item(commands::kSessions),
-         separator, item(u::std_commands::kQuit)}};
+         separator, item(u::std_command_keys::kQuit)}};
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal), separator,
-         item(u::std_commands::kNextWindow), item(u::std_commands::kPreviousWindow), separator,
-         item(u::std_commands::kWindowList)}};
+         item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow), separator,
+         item(u::std_command_keys::kWindowList)}};
     w::MenuBarItem window_menu{"&Window",
-                               {item(commands::kMoveResize), item(u::std_commands::kZoom), separator,
-                                item(u::std_commands::kTile), item(u::std_commands::kCascade)}};
+                               {item(commands::kMoveResize), item(u::std_command_keys::kZoom), separator,
+                                item(u::std_command_keys::kTile), item(u::std_command_keys::kCascade)}};
     w::MenuBarItem view_menu{"&View",
-                             {w::MenuItem{w::CommandPresentation{commands::kThemeDark}},
-                              w::MenuItem{w::CommandPresentation{commands::kThemeLight}},
-                              w::MenuItem{w::CommandPresentation{commands::kThemeMono}}}};
+                             {item(commands::kThemeDark), item(commands::kThemeLight),
+                              item(commands::kThemeMono)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
     // Settings menu rather than hiding one per feature area.
     w::MenuBarItem settings_menu{"&Settings", {item(commands::kSettings)}};
@@ -529,7 +529,9 @@ void ClientApp::resolve_prefix(const std::string& chord) {
 
     if (!chord.empty()) {
         if (chord == chord_spelling(ckv::KeyEvent{options_.settings.prefix})) {
-            app_.execute_command(commands::kSendPrefix);
+            if (const std::optional<u::CommandId> send_prefix =
+                    app_.commands().id_for(commands::kSendPrefix))
+                app_.execute_command(*send_prefix);
         } else if (const int index = digit_chord(chord); index != 0) {
             desktop_->select_by_number(index);
             focus_active_terminal();
@@ -545,7 +547,7 @@ void ClientApp::set_theme(u::Theme theme) {
     app_.invalidate_all();
 }
 
-void ClientApp::show_key_reference() { app_.execute_command(u::std_commands::kHelp); }
+void ClientApp::show_key_reference() { app_.execute_command(app_.commands().standard().help); }
 
 void ClientApp::show_about() {
     if (desktop_ == nullptr) return;

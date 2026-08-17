@@ -47,6 +47,14 @@ struct Fixture {
     ClientApp client{app, test_options()};
 };
 
+// A command's id, looked up the way everything durable does: by key. Ids are
+// assigned by the registry at runtime (ckVision D-013), so a test cannot hold
+// one as a constant — it asks the registry the application actually declared
+// into.
+ckv::ui::CommandId id_of(Application& app, std::string_view key) {
+    return app.commands().id_for(key).value_or(ckv::ui::kInvalidCommand);
+}
+
 bool menu_has_command(const ckv::widgets::MenuBarItem& menu, ckv::ui::CommandId command) {
     for (const ckv::widgets::MenuItem& item : menu.items)
         if (item.command == command || item.presentation.command == command) return true;
@@ -98,17 +106,17 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     ckv::widgets::MenuBar* const bar = menu_bar(f.client);
     CK_CHECK(bar != nullptr);
 
-    CK_CHECK(menu_has_command(bar->menus()[0], ckm::client::commands::kNewTerminal));
-    CK_CHECK(menu_has_command(bar->menus()[0], ckm::client::commands::kDetach));
-    CK_CHECK(menu_has_command(bar->menus()[0], ckv::ui::std_commands::kQuit));
-    CK_CHECK(menu_has_command(bar->menus()[1], ckm::client::commands::kCloseTerminal));
-    CK_CHECK(menu_has_command(bar->menus()[1], ckv::ui::std_commands::kNextWindow));
-    CK_CHECK(menu_has_command(bar->menus()[1], ckv::ui::std_commands::kWindowList));
-    CK_CHECK(menu_has_command(bar->menus()[2], ckv::ui::std_commands::kTile));
-    CK_CHECK(menu_has_command(bar->menus()[2], ckv::ui::std_commands::kCascade));
-    CK_CHECK(menu_has_command(bar->menus()[3], ckm::client::commands::kThemeDark));
-    CK_CHECK(menu_has_command(bar->menus()[4], ckm::client::commands::kSettings));
-    CK_CHECK(menu_has_command(bar->menus()[5], ckm::client::commands::kAbout));
+    CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kNewTerminal)));
+    CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kDetach)));
+    CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckv::ui::std_command_keys::kQuit)));
+    CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckm::client::commands::kCloseTerminal)));
+    CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kNextWindow)));
+    CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTile)));
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kCascade)));
+    CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckm::client::commands::kThemeDark)));
+    CK_CHECK(menu_has_command(bar->menus()[4], id_of(f.app, ckm::client::commands::kSettings)));
+    CK_CHECK(menu_has_command(bar->menus()[5], id_of(f.app, ckm::client::commands::kAbout)));
 }
 
 CK_TEST(commands_that_need_the_server_are_visible_but_disabled_until_it_exists) {
@@ -117,9 +125,9 @@ CK_TEST(commands_that_need_the_server_are_visible_but_disabled_until_it_exists) 
     // hidden, or worse, pretending.
     Fixture f;
     f.app.step(0);
-    CK_CHECK(!f.app.command_available(ckm::client::commands::kDetach));
-    CK_CHECK(!f.app.command_available(ckm::client::commands::kSessions));
-    CK_CHECK(f.app.command_available(ckm::client::commands::kNewTerminal));
+    CK_CHECK(!f.app.command_available(id_of(f.app, ckm::client::commands::kDetach)));
+    CK_CHECK(!f.app.command_available(id_of(f.app, ckm::client::commands::kSessions)));
+    CK_CHECK(f.app.command_available(id_of(f.app, ckm::client::commands::kNewTerminal)));
 }
 
 CK_TEST(the_footer_advertises_the_keys_for_whatever_currently_has_focus) {
@@ -148,7 +156,7 @@ CK_TEST(new_terminal_opens_an_independent_window_and_takes_focus) {
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 1U);
 
-    CK_CHECK(f.app.execute_command(ckm::client::commands::kNewTerminal));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 2U);
     ckv::widgets::Window* const second = f.client.desktop().active_window();
@@ -184,26 +192,26 @@ CK_TEST(the_public_mouse_menu_path_opens_a_new_terminal) {
 CK_TEST(window_management_commands_arrange_and_cycle_the_terminals) {
     Fixture f;
     f.app.step(0);
-    f.app.execute_command(ckm::client::commands::kNewTerminal);
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 2U);
     ckv::widgets::Window* const second = f.client.desktop().active_window();
 
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kPreviousWindow));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kPreviousWindow)));
     CK_CHECK(f.client.desktop().active_window()->title() == "Terminal 1");
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kNextWindow));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kNextWindow)));
     CK_CHECK(f.client.desktop().active_window() == second);
 
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kTile));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTile)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().width ==
              f.client.desktop().windows()[1]->bounds().width);
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kCascade));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kCascade)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().x < f.client.desktop().windows()[1]->bounds().x);
 
     // Zoom fills the desktop's content area — never the docked chrome.
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kZoom));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().active_window()->zoomed());
     CK_CHECK(f.client.desktop().active_window()->bounds() == f.client.desktop().content_area());
@@ -225,13 +233,13 @@ CK_TEST(a_terminal_resize_resizes_the_child_endpoint) {
 CK_TEST(closing_a_terminal_whose_child_is_alive_asks_first) {
     Fixture f;
     f.app.step(0);
-    f.app.execute_command(ckm::client::commands::kNewTerminal);
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 2U);
 
     // /bin/cat is still running, so the close is vetoed and a confirmation
     // appears instead. Both terminals survive until the reader answers.
-    CK_CHECK(f.app.execute_command(ckm::client::commands::kCloseTerminal));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kCloseTerminal)));
     f.app.step(0);
     CK_CHECK(terminal_window_count(f.client) == 2U);
     CK_CHECK(f.app.is_modal());
@@ -252,7 +260,7 @@ CK_TEST(help_opens_for_whatever_has_focus_and_lists_the_real_keys) {
 
     // F1 is ckVision's standard help command; ckmux answers it with the page
     // for the focused view's help context.
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kHelp));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kHelp)));
     f.app.step(0);
     // The viewer is a window, and it is not one of the terminals.
     CK_CHECK(f.client.desktop().windows().size() == 2U);
@@ -275,19 +283,22 @@ CK_TEST(the_help_text_is_generated_from_the_same_table_that_dispatches_the_keys)
         asked = true;
         topic_key = key;
     });
-    CK_CHECK(f.app.execute_command(ckv::ui::std_commands::kHelp));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kHelp)));
     CK_CHECK(asked);
     CK_CHECK(topic_key == "ckmux.terminal");
 }
 
 CK_TEST(the_client_renders_under_every_built_in_theme) {
-    constexpr std::array<ckv::ui::CommandId, 3> themes{ckm::client::commands::kThemeDark,
-                                                       ckm::client::commands::kThemeLight,
-                                                       ckm::client::commands::kThemeMono};
-    for (const ckv::ui::CommandId theme : themes) {
+    // Named rather than held as ids: each iteration builds its own
+    // application, and an id is meaningful only to the registry that assigned
+    // it — one carried in from a previous fixture would mean nothing here.
+    const std::array<std::string_view, 3> themes{ckm::client::commands::kThemeDark,
+                                                 ckm::client::commands::kThemeLight,
+                                                 ckm::client::commands::kThemeMono};
+    for (const std::string_view theme : themes) {
         Fixture f;
         f.app.step(0);
-        CK_CHECK(f.app.execute_command(theme));
+        CK_CHECK(f.app.execute_command(id_of(f.app, theme)));
         f.app.step(0);
         // A real frame reached the terminal, and it is not the too-small
         // refusal state.
@@ -348,7 +359,7 @@ CK_TEST(a_window_caption_returns_to_its_own_name_when_the_program_stops_claiming
 CK_TEST(each_terminal_keeps_its_own_caption_and_its_own_fallback) {
     Fixture f;
     f.app.step(0);
-    f.app.execute_command(ckm::client::commands::kNewTerminal);
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
     f.app.step(0);
     CK_CHECK(terminal_window_count(f.client) == 2U);
 
@@ -380,7 +391,7 @@ CK_TEST(the_settings_dialog_shows_the_picture_limit_as_a_field_and_stores_a_new_
 
     Fixture f;
     f.app.step(0);
-    CK_CHECK(f.app.commands().execute(ckm::client::commands::kSettings));
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
     f.app.step(0);
 
     std::string screen;
@@ -421,7 +432,7 @@ CK_TEST(the_settings_dialog_refuses_a_picture_limit_it_cannot_read) {
 
     Fixture f;
     f.app.step(0);
-    CK_CHECK(f.app.commands().execute(ckm::client::commands::kSettings));
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
     f.app.step(0);
     f.terminal.inject_bytes("\t", 0);
     f.app.step(0);
@@ -453,7 +464,7 @@ CK_TEST(the_settings_dialog_offers_the_login_shell_choice_and_stores_what_it_is_
 
     Fixture f;
     f.app.step(0);
-    CK_CHECK(f.app.commands().execute(ckm::client::commands::kSettings));
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
     f.app.step(0);
 
     // The dialog is on screen, saying what the setting does rather than only

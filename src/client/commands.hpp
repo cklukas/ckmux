@@ -27,29 +27,39 @@ namespace ckm::client {
 
 namespace commands {
 
-// ckVision reserves every id below kFirstApplicationCommandId for its own
-// standard set (Quit, Zoom, NextWindow, Tile, WindowList, Menu, Help, ...).
-// ckmux references those directly rather than defining private synonyms, and
-// numbers only its own commands here.
-inline constexpr ckv::ui::CommandId kBase = ckv::ui::kFirstApplicationCommandId;
-
-inline constexpr ckv::ui::CommandId kNewTerminal = kBase + 0;
-inline constexpr ckv::ui::CommandId kCloseTerminal = kBase + 1;
-inline constexpr ckv::ui::CommandId kMoveResize = kBase + 2;
-inline constexpr ckv::ui::CommandId kDetach = kBase + 3;
-inline constexpr ckv::ui::CommandId kSessions = kBase + 4;
-inline constexpr ckv::ui::CommandId kKeyReference = kBase + 5;
-inline constexpr ckv::ui::CommandId kAbout = kBase + 6;
-inline constexpr ckv::ui::CommandId kSendPrefix = kBase + 7;
-inline constexpr ckv::ui::CommandId kThemeDark = kBase + 8;
-inline constexpr ckv::ui::CommandId kThemeLight = kBase + 9;
-inline constexpr ckv::ui::CommandId kThemeMono = kBase + 10;
+// What ckmux calls its own commands. A command's identity is the string it is
+// declared under; the `CommandId` that stands for it is assigned by the
+// registry at runtime and is meaningful only to that registry (ckVision's
+// D-013). Nobody picks a number, so ckmux and the library cannot collide over
+// one — which is what the previous `base + index` scheme could not promise.
+//
+// The `ckmux.` prefix is this application's own half of that flat space. The
+// library's commands live under `ckv.`, and ckmux references those by their
+// own keys (`ckv::ui::std_command_keys`) rather than declaring synonyms: a
+// terminal window is a window, and Next Terminal IS the standard next-window
+// command wearing a ckmux label.
+//
+// These are also the durable names. A `bind` line in a config file, a menu
+// definition and — at M3 — a CLI subcommand naming a command all key on the
+// string, because a runtime-assigned id means nothing outside the process
+// that assigned it.
+inline constexpr std::string_view kNewTerminal = "ckmux.terminal.new";
+inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
+inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
+inline constexpr std::string_view kDetach = "ckmux.session.detach";
+inline constexpr std::string_view kSessions = "ckmux.session.list";
+inline constexpr std::string_view kKeyReference = "ckmux.help.keys";
+inline constexpr std::string_view kAbout = "ckmux.help.about";
+inline constexpr std::string_view kSendPrefix = "ckmux.terminal.send-prefix";
+inline constexpr std::string_view kThemeDark = "ckmux.view.theme-dark";
+inline constexpr std::string_view kThemeLight = "ckmux.view.theme-light";
+inline constexpr std::string_view kThemeMono = "ckmux.view.theme-mono";
 // Display-only: the digit keys are dispatched by value rather than through a
 // single handler, but the reader still has to be told they exist.
-inline constexpr ckv::ui::CommandId kFocusByNumber = kBase + 11;
-inline constexpr ckv::ui::CommandId kSettings = kBase + 12;
-inline constexpr ckv::ui::CommandId kCopyMode = kBase + 13;
-inline constexpr ckv::ui::CommandId kPaste = kBase + 14;
+inline constexpr std::string_view kFocusByNumber = "ckmux.terminal.focus-by-number";
+inline constexpr std::string_view kSettings = "ckmux.settings";
+inline constexpr std::string_view kCopyMode = "ckmux.terminal.copy-mode";
+inline constexpr std::string_view kPaste = "ckmux.terminal.paste";
 
 }  // namespace commands
 
@@ -68,7 +78,9 @@ struct KeyBinding {
     // reader's `bind`/`unbind` directives (plans/08) — which is why it owns
     // its storage rather than pointing into the default table.
     std::string chord;
-    ckv::ui::CommandId command;
+    // What this row commands, as its durable name — one of `commands::`
+    // above, or one of ckVision's own `std_command_keys`.
+    std::string_view key;
     // The title, '&' marking its menu mnemonic. For a ckmux-owned command
     // this is what gets registered in ckVision's CommandRegistry, so menus
     // and this table cannot disagree. For one of ckVision's reserved
@@ -87,6 +99,13 @@ struct KeyBinding {
     // action — the digits carry a value rather than selecting a handler, so
     // nothing can be bound to them.
     std::optional<Action> action;
+    // The id this row's key currently stands for, filled in by `resolve()`
+    // once a registry has assigned one — last in the aggregate because the
+    // table is written positionally and this is the one member no author of a
+    // row supplies. `kInvalidCommand` until resolution, and still that
+    // afterwards if the command was never declared, which is a state
+    // tests/test_command_reachability.cpp fails on rather than lets ship.
+    ckv::ui::CommandId command = ckv::ui::kInvalidCommand;
 };
 
 // The bindings, with a reader's rebinding applied. One object rather than a
@@ -105,6 +124,13 @@ public:
     // rather than dropped: a binding that silently does nothing is the defect
     // this project pins tests against (plans/12, the reachability rule).
     void apply(std::span<const BindDirective> directives, std::vector<std::string>& problems);
+
+    // Fills in each row's `command` from the registry that declared it.
+    // Called once, after the application has declared everything, because an
+    // id is assigned at declaration time and is meaningful only to the
+    // registry that assigned it: a table of ids built any earlier would be a
+    // table of numbers that mean nothing yet.
+    void resolve(const ckv::ui::CommandRegistry& registry);
 
     // Every binding, in the order the which-key popup and help pages list
     // them. Declaration order is deliberate and is the display order.
@@ -142,10 +168,11 @@ std::string prefix_label(const ckv::KeyChord& prefix);
 // "^B c" — how a binding is written in the footer and help.
 std::string binding_label(const ckv::KeyChord& prefix, const KeyBinding& binding);
 
-// The ckVision command an action is carried out by. The two vocabularies are
-// deliberately separate: `Action` is what a reader writes in a file and what
-// `check-config` validates without a user interface, `CommandId` is what
-// ckVision dispatches. This is the one place they meet.
-ckv::ui::CommandId command_for_action(Action action);
+// The command an action is carried out by, as its durable name. The two
+// vocabularies are deliberately separate: `Action` is the short word a reader
+// writes in a config file and `check-config` validates without a user
+// interface, while a command key is what the registry resolves to an id. This
+// is the one place they meet.
+std::string_view command_for_action(Action action);
 
 }  // namespace ckm::client

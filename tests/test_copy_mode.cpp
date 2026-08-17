@@ -47,6 +47,14 @@ std::vector<CopyLine> document(const std::vector<std::string>& rows, int width) 
     return lines;
 }
 
+// A command's id, looked up the way everything durable does: by key. Ids are
+// assigned by the registry at runtime (ckVision D-013), so a test cannot hold
+// one as a constant — it asks the registry the application actually declared
+// into.
+ckv::ui::CommandId id_of(Application& app, std::string_view key) {
+    return app.commands().id_for(key).value_or(ckv::ui::kInvalidCommand);
+}
+
 ClientOptions test_options() {
     ClientOptions options;
     options.settings.shell = "/bin/cat";
@@ -381,8 +389,8 @@ CK_TEST(paste_sends_what_copy_mode_yanked) {
 
     // Through the command, which is the route the menu takes and the one
     // `^B ]` resolves to. It reaches a live handler and runs.
-    CK_CHECK(f.app.commands().has_handler(ckm::client::commands::kPaste));
-    CK_CHECK(f.app.execute_command(ckm::client::commands::kPaste));
+    CK_CHECK(f.app.commands().has_handler(id_of(f.app, ckm::client::commands::kPaste)));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kPaste)));
     // ...and pasting does not consume what was copied: a reader pastes the
     // same thing into three windows.
     CK_CHECK(f.client.internal_clipboard() == "pasteable");
@@ -393,7 +401,7 @@ CK_TEST(paste_is_unavailable_until_something_has_been_copied) {
     // not a dialog explaining why nothing happened.
     Fixture f;
     f.settle();
-    CK_CHECK(!f.app.command_available(ckm::client::commands::kPaste));
+    CK_CHECK(!f.app.command_available(id_of(f.app, ckm::client::commands::kPaste)));
     auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(f.app.focused());
     CK_CHECK(view != nullptr);
     if (view == nullptr) return;
@@ -403,7 +411,7 @@ CK_TEST(paste_is_unavailable_until_something_has_been_copied) {
     f.press_char("g");
     f.press_char("y");
     f.settle();
-    CK_CHECK(f.app.command_available(ckm::client::commands::kPaste));
+    CK_CHECK(f.app.command_available(id_of(f.app, ckm::client::commands::kPaste)));
 }
 
 #endif  // !_WIN32
