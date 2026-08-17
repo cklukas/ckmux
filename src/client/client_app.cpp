@@ -74,8 +74,23 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     // session should run the same shell, and a reader who changes $SHELL
     // mid-session has not asked for their next window to differ from the
     // last one.
-    if (options_.shell.empty()) options_.shell = ckm::resolve_shell();
+    if (options_.settings.shell.empty()) options_.settings.shell = ckm::resolve_shell();
+    // The reader's rebinding, applied once and before anything reads the
+    // table: the commands are registered from it, the menus quote it, and the
+    // footer advertises it. Anything the file asked for that ckmux cannot do
+    // joins the warnings the reader is shown at startup, in the same list as
+    // a misspelled key — a binding that quietly does nothing is the failure
+    // this project pins tests against.
+    keymap_.apply(options_.settings.binds, options_.config_warnings);
     roles_ = u::intern_standard_roles(app_.roles());
+    // [general] theme, chosen before anything is drawn. The View menu changes
+    // it for this session only: the file is the reader's, and a menu that
+    // rewrote it would make a passing look at Monochrome permanent.
+    switch (options_.settings.theme) {
+        case Theme::Dark: set_theme(u::make_dark_theme(app_.roles(), roles_)); break;
+        case Theme::Light: set_theme(u::make_light_theme(app_.roles(), roles_)); break;
+        case Theme::Mono: set_theme(u::make_mono_theme(app_.roles(), roles_)); break;
+    }
     register_commands();
     build_chrome();
     populate_help();
@@ -124,7 +139,7 @@ void ClientApp::register_commands() {
                                           .handler = std::move(handler)});
     };
 
-    for (const KeyBinding& binding : bindings()) {
+    for (const KeyBinding& binding : keymap_.bindings()) {
         if (binding.command < commands::kBase) continue;  // a ckVision standard command
         switch (binding.command) {
             case commands::kNewTerminal:
@@ -171,7 +186,7 @@ void ClientApp::register_commands() {
     register_own(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
         if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
             std::string bytes;
-            const ckv::KeyChord& p = options_.prefix;
+            const ckv::KeyChord& p = options_.settings.prefix;
             if (p.key == ckv::Key::Char && !p.text.empty() &&
                 has_modifier(p.modifiers, ckv::Modifier::Ctrl)) {
                 const char letter = p.text[0];
@@ -199,10 +214,10 @@ void ClientApp::build_chrome() {
     // that works where a ckmux reader spends their time.
     const auto presentation = [this](const KeyBinding& binding) {
         return w::CommandPresentation{binding.command, std::string(binding.title),
-                                      binding_label(options_.prefix, binding)};
+                                      binding_label(options_.settings.prefix, binding)};
     };
     const auto item = [&](u::CommandId command) {
-        for (const KeyBinding& binding : bindings())
+        for (const KeyBinding& binding : keymap_.bindings())
             if (binding.command == command) return w::MenuItem{presentation(binding)};
         return w::MenuItem{w::CommandPresentation{command}};
     };
@@ -260,7 +275,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
                                  std::max(20, area.width - 8 - offset),
                                  std::max(6, area.height - 4 - offset)});
 
-    const ckm::ShellLaunch shell = ckm::shell_launch(options_.shell, options_.login_shell);
+    const ckm::ShellLaunch shell = ckm::shell_launch(options_.settings.shell, options_.settings.login_shell);
     ckv::term::TerminalLaunchSpec launch =
         ckv::term::TerminalLaunchSpec::program(shell.executable, shell.arguments);
     launch.argv0 = shell.argv0;
@@ -270,7 +285,24 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     // The emulator neutralises control bytes in that text before it reaches
     // us, and its length is bounded there too.
     launch.profile.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
+    // What the reader's configuration says this terminal can do (plans/08).
+    // Told to the child through the profile rather than enforced afterwards:
+    // a program asks a terminal what it supports and then behaves as though
+    // the answer were true, so the answer has to be the setting.
+    launch.profile.mouse_reporting = options_.settings.mouse;
+    launch.profile.alternate_scroll = options_.settings.alternate_scroll;
+    launch.profile.sixel = options_.settings.sixel == SixelMode::Auto;
+    launch.profile.clipboard_policy = options_.settings.osc52
+                                          ? ckv::core::TerminalClipboardPolicy::AllowWrite
+                                          : ckv::core::TerminalClipboardPolicy::Deny;
     launch.environment = options_.environment;
+    // `term = auto` leaves the host's own answer (default_environment()'s
+    // xterm-256color); anything else is what the reader named, verbatim,
+    // because a reader who names a terminfo entry has a reason.
+    if (options_.settings.term != "auto") {
+        for (std::pair<std::string, std::string>& variable : launch.environment)
+            if (variable.first == "TERM") variable.second = options_.settings.term;
+    }
     // A shell opens where a shell opens. Left at the spec's default a
     // terminal starts in "/", which is nobody's working directory.
     if (!options_.working_directory.empty()) launch.working_directory = options_.working_directory;
@@ -279,7 +311,11 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     // the window: a picture too large for the window is cut off at its edge.
     ckv::term::TerminalSubsessionOptions subsession;
     subsession.max_image_pixels =
-        static_cast<std::size_t>(options_.sixel_max_megapixels) * 1024U * 1024U;
+        static_cast<std::size_t>(options_.settings.sixel_max_megapixels) * 1024U * 1024U;
+    // How much of what scrolls off the top this terminal keeps ([general]
+    // scrollback). Zero is honoured as "remember nothing" rather than as the
+    // smallest number — see ckVision's max_scrollback_lines (U0-c).
+    subsession.max_scrollback_lines = static_cast<std::size_t>(options_.settings.scrollback);
     ckv::term::TerminalSubsession& session =
         app_.launch_terminal_subsession(std::move(launch), subsession);
 
@@ -289,7 +325,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     view->set_help_context_key("ckmux.terminal");
     // The prefix rides on ckVision's parent-escape hook: the one key the
     // terminal view does not hand to the child.
-    view->set_parent_escape(options_.prefix);
+    view->set_parent_escape(options_.settings.prefix);
     view->on_parent_escape = [this] { arm_prefix(); };
     view->on_selection_copy = [this](std::string text) { app_.set_clipboard_text(std::move(text)); };
     window->set_content(std::move(view));
@@ -298,6 +334,10 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     ckv::term::TerminalSubsession* const terminal_session = &session;
     window->close_request = [this, terminal_window] {
         if (!child_is_live(terminal_window)) return true;
+        // [general] confirm-kill = false means the reader has said they do
+        // not want to be asked. Honoured here rather than by suppressing the
+        // dialog later, so "no confirmation" really is no round trip.
+        if (!options_.settings.confirm_kill) return true;
         if (confirmed_close_ == terminal_window) {
             confirmed_close_ = nullptr;
             return true;
@@ -378,7 +418,7 @@ void ClientApp::refresh_footer() {
     if (footer_ == nullptr) return;
     const Context current = context();
     std::vector<w::StatusLineItem> items;
-    for (const KeyBinding* binding : footer_bindings(current)) {
+    for (const KeyBinding* binding : keymap_.footer(current)) {
         // In the prefix context the reader has already pressed the prefix, so
         // the bare key is what they need to see next; otherwise the full
         // "^B c" is the reachable spelling. Either way the key is stated
@@ -388,7 +428,7 @@ void ClientApp::refresh_footer() {
         // that never arrives.
         const std::string key = current == Context::Prefix
                                     ? std::string(binding->chord)
-                                    : binding_label(options_.prefix, *binding);
+                                    : binding_label(options_.settings.prefix, *binding);
         items.emplace_back(w::CommandPresentation{binding->command, std::string(binding->hint), key},
                            binding->footer_priority);
     }
@@ -410,7 +450,13 @@ std::vector<std::string> ClientApp::footer_labels() const {
 
 void ClientApp::arm_prefix() {
     if (overlay_ != nullptr || desktop_ == nullptr) return;
-    auto overlay = std::make_unique<PrefixOverlay>(options_.prefix, roles_);
+    // The key table as it stands, handed over as values: the popup shows
+    // what a reader's rebinding actually did, and does not have to reach back
+    // into the client to find out.
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (const KeyBinding* binding : keymap_.footer(Context::Prefix))
+        rows.emplace_back(binding->chord, std::string(binding->hint));
+    auto overlay = std::make_unique<PrefixOverlay>(options_.settings.prefix, std::move(rows), roles_);
     overlay->on_chord = [this](std::string chord) {
         // The overlay is mid-callback inside its own on_key; unwinding first
         // keeps its teardown off the stack that is still running it.
@@ -447,12 +493,12 @@ void ClientApp::resolve_prefix(const std::string& chord) {
     focus_active_terminal();
 
     if (!chord.empty()) {
-        if (chord == chord_spelling(ckv::KeyEvent{options_.prefix})) {
+        if (chord == chord_spelling(ckv::KeyEvent{options_.settings.prefix})) {
             app_.execute_command(commands::kSendPrefix);
         } else if (const int index = digit_chord(chord); index != 0) {
             desktop_->select_by_number(index);
             focus_active_terminal();
-        } else if (const KeyBinding* const binding = find_binding(chord)) {
+        } else if (const KeyBinding* const binding = keymap_.find(chord)) {
             app_.execute_command(binding->command);
         }
     }
@@ -489,7 +535,7 @@ void ClientApp::show_settings() {
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "&Start terminals the way your desktop terminal does",
                            .kind = w::FieldKind::Check,
-                           .initial_checked = options_.login_shell});
+                           .initial_checked = options_.settings.login_shell});
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "  Runs your login startup files (~/.zprofile, ~/.profile), so a",
                            .kind = w::FieldKind::Note});
@@ -508,7 +554,7 @@ void ClientApp::show_settings() {
     const std::size_t sixel_field = descriptor.fields.size();
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "&Largest picture a program may draw (megapixels):",
-                           .initial_text = std::to_string(options_.sixel_max_megapixels),
+                           .initial_text = std::to_string(options_.settings.sixel_max_megapixels),
                            .validate = [](const std::string& text) {
                                return ckm::parse_sixel_megapixels(text).has_value();
                            },
@@ -560,8 +606,8 @@ void ClientApp::show_settings() {
 }
 
 bool ClientApp::apply_login_shell(bool login_shell) {
-    if (options_.login_shell == login_shell) return true;
-    options_.login_shell = login_shell;
+    if (options_.settings.login_shell == login_shell) return true;
+    options_.settings.login_shell = login_shell;
     // Stored where the reader can also edit it by hand, and where it will be
     // found again next time (plans/08-configuration.md). A save that cannot
     // happen is said out loud rather than swallowed: the setting is live
@@ -573,8 +619,8 @@ bool ClientApp::apply_login_shell(bool login_shell) {
 }
 
 bool ClientApp::apply_sixel_max_megapixels(int megapixels) {
-    if (options_.sixel_max_megapixels == megapixels) return true;
-    options_.sixel_max_megapixels = megapixels;
+    if (options_.settings.sixel_max_megapixels == megapixels) return true;
+    options_.settings.sixel_max_megapixels = megapixels;
     return ckm::save_setting(ckm::platform::config_file_path(), "terminal", "sixel-max-megapixels",
                              std::to_string(megapixels));
 }
@@ -609,13 +655,13 @@ void ClientApp::populate_help() {
     // Generated from the keymap table, never hand-copied: a rebinding changes
     // this page as a matter of course (plans/06-ui-design.md).
     std::string keys;
-    for (const KeyBinding& binding : bindings()) {
+    for (const KeyBinding& binding : keymap_.bindings()) {
         if (binding.chord.empty()) continue;
-        std::string label = binding_label(options_.prefix, binding);
+        std::string label = binding_label(options_.settings.prefix, binding);
         label.resize(std::max<std::size_t>(label.size(), 8), ' ');
         keys += label + "  " + std::string(binding.hint) + "\n";
     }
-    const std::string prefix_text = prefix_label(options_.prefix);
+    const std::string prefix_text = prefix_label(options_.settings.prefix);
 
     // Prose is written as paragraphs and left to the viewer to wrap, which it
     // does to whatever width the reader has given the window. Only the key

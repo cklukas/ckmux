@@ -27,7 +27,6 @@
 #include "cvision/testing/cktest.hpp"
 #include "cvision/widgets/menu.hpp"
 
-using ckm::client::bindings;
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
 using ckm::client::KeyBinding;
@@ -39,7 +38,7 @@ namespace {
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.shell = "/bin/cat";  // stays alive, says nothing (test_client_smoke)
+    options.settings.shell = "/bin/cat";  // stays alive, says nothing (test_client_smoke)
     return options;
 }
 
@@ -64,7 +63,7 @@ bool is_deliberately_dark(ckv::ui::CommandId command) {
 CK_TEST(every_binding_either_works_or_is_visibly_disabled) {
     Fixture fixture;
     std::string dead;
-    for (const KeyBinding& binding : bindings()) {
+    for (const KeyBinding& binding : fixture.client.keymap().bindings()) {
         const bool handled = fixture.app.commands().has_handler(binding.command);
         const bool available = fixture.app.command_available(binding.command);
         if (handled) continue;     // live
@@ -79,7 +78,7 @@ CK_TEST(every_binding_either_works_or_is_visibly_disabled) {
 
 CK_TEST(deliberately_dark_commands_are_actually_dark) {
     Fixture fixture;
-    for (const KeyBinding& binding : bindings()) {
+    for (const KeyBinding& binding : fixture.client.keymap().bindings()) {
         if (!is_deliberately_dark(binding.command)) continue;
         // Not merely unhandled: a predicate must refuse it, which is what
         // greys the menu item and stops the key doing nothing in silence.

@@ -29,10 +29,11 @@ int main() {
         options.working_directory = home;
 
     // The stored settings, on top of the built-in defaults. A missing file is
-    // the ordinary case and changes nothing (plans/08-configuration.md).
+    // the ordinary case and changes nothing (plans/08-configuration.md). The
+    // whole of it is handed over rather than a field at a time, so a key the
+    // file gained is a key the client already has.
     ckm::LoadedSettings stored = ckm::load_settings(ckm::platform::config_file_path());
-    options.login_shell = stored.settings.login_shell;
-    options.sixel_max_megapixels = stored.settings.sixel_max_megapixels;
+    options.settings = std::move(stored.settings);
     options.config_warnings = std::move(stored.warnings);
 
     ckm::client::ClientApp client(app, std::move(options));

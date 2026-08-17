@@ -29,7 +29,7 @@ ClientOptions test_options() {
     // A program that simply stays alive, so a window has a live child
     // without the run depending on whose shell is installed. The login
     // form only renames argv[0], which cat does not mind.
-    options.shell = "/bin/cat";
+    options.settings.shell = "/bin/cat";
     options.which_key_delay_nanos = kWhichKeyDelay;
     return options;
 }
@@ -207,6 +207,105 @@ CK_TEST(ordinary_keys_still_belong_entirely_to_the_program) {
     // F10 is ckVision's own menu key, but a focused terminal consumes it
     // first — mc's F10 must reach mc.
     CK_CHECK(f.client.context() == Context::Terminal);
+}
+
+// --- Rebinding (WP-12) ---------------------------------------------------
+
+namespace {
+
+// A client whose configuration rebound some keys, built the way the real one
+// is: directives from a file, applied at construction.
+struct ReboundFixture {
+    static ClientOptions options() {
+        ClientOptions o = test_options();
+        // Only bindings ckmux can honour: one that cannot would be reported
+        // as a warning, and a warning opens a dialog over the desktop at
+        // startup — which is the right behaviour and the wrong fixture. The
+        // refusal has its own test below.
+        o.settings.binds = {
+            ckm::BindDirective{ckm::KeyContext::Terminal, "C", ckm::Action::NewTerminal},
+            ckm::BindDirective{ckm::KeyContext::Terminal, "c", std::nullopt},  // unbind
+        };
+        return o;
+    }
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client{app, options()};
+
+    bool press(ckv::KeyChord chord) { return app.dispatch(ckv::KeyEvent{std::move(chord)}); }
+    bool press_char(const std::string& text) {
+        return press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, text});
+    }
+    bool press_prefix() { return press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "b"}); }
+    void settle() { app.step(clock.now_nanos()); }
+};
+
+bool any_contains(const std::vector<std::string>& labels, std::string_view text) {
+    for (const std::string& label : labels)
+        if (label.find(text) != std::string::npos) return true;
+    return false;
+}
+
+}  // namespace
+
+CK_TEST(a_rebound_key_opens_the_terminal_and_the_old_one_no_longer_does) {
+    ReboundFixture f;
+    f.settle();
+    CK_CHECK(f.client.desktop().windows().size() == 1U);
+
+    // The old chord reaches nothing: it was unbound, so the prefix resolves
+    // to no command rather than to whatever used to hold it.
+    CK_CHECK(f.press_prefix());
+    CK_CHECK(f.press_char("c"));
+    f.settle();
+    CK_CHECK(f.client.desktop().windows().size() == 1U);
+
+    // The new one does what the file said.
+    CK_CHECK(f.press_prefix());
+    CK_CHECK(f.press_char("C"));
+    f.settle();
+    CK_CHECK(f.client.desktop().windows().size() == 2U);
+}
+
+CK_TEST(a_rebinding_reaches_the_footer_that_advertises_it) {
+    // The whole point of one table: what dispatches and what the reader is
+    // shown cannot disagree. Before this, the footer read "^B c new term"
+    // while `c` did nothing.
+    ReboundFixture f;
+    f.settle();
+    const std::vector<std::string> labels = f.client.footer_labels();
+    CK_CHECK(any_contains(labels, "^B C"));
+    CK_CHECK(!any_contains(labels, "^B c "));
+}
+
+CK_TEST(a_binding_ckmux_cannot_honour_is_reported_rather_than_ignored) {
+    // A copy-mode bind: the context has no keys yet, so it is refused out
+    // loud. A binding that looks live in a file and does nothing in the
+    // program is the defect this project pins tests against.
+    ckm::client::Keymap keymap;
+    std::vector<std::string> problems;
+    const std::vector<ckm::BindDirective> directives{
+        ckm::BindDirective{ckm::KeyContext::Terminal, "C", ckm::Action::NewTerminal},
+        ckm::BindDirective{ckm::KeyContext::Terminal, "c", std::nullopt},
+        ckm::BindDirective{ckm::KeyContext::CopyMode, "v", ckm::Action::Zoom}};
+    keymap.apply(directives, problems);
+    CK_CHECK(problems.size() == 1U);
+    CK_CHECK(problems[0].find("copy-mode") != std::string::npos);
+    // ...and the honoured ones still took effect.
+    CK_CHECK(keymap.find("C") != nullptr);
+    CK_CHECK(keymap.find("c") == nullptr);
+}
+
+CK_TEST(the_digits_cannot_be_rebound_because_they_carry_a_value) {
+    ckm::client::Keymap keymap;
+    std::vector<std::string> problems;
+    const std::vector<ckm::BindDirective> directives{
+        ckm::BindDirective{ckm::KeyContext::Terminal, "4", ckm::Action::Detach}};
+    keymap.apply(directives, problems);
+    CK_CHECK(problems.size() == 1U);
+    CK_CHECK(problems[0].find("cannot be rebound") != std::string::npos);
+    CK_CHECK(keymap.find("4") == nullptr);
 }
 
 #endif

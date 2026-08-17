@@ -19,6 +19,7 @@
 
 #include "client/commands.hpp"
 #include "client/prefix_overlay.hpp"
+#include "common/config.hpp"
 #include "cvision/term/terminal_subsession.hpp"
 #include "cvision/ui/application.hpp"
 #include "cvision/ui/standard_roles.hpp"
@@ -30,21 +31,17 @@
 namespace ckm::client {
 
 struct ClientOptions {
-    // What a new terminal runs. Explicit rather than read from the ambient
-    // environment: ckVision requires a launch spec to name its program and
-    // environment outright, and a test needs the same run to be reproducible.
-    // Empty asks for resolve_shell(), which is what the real host does.
-    std::string shell;
-    // Whether that shell is started as a login shell. True is tmux's default
-    // and ckmux's; it is the one part of this a reader can change, in
-    // Settings, and it is stored as [general] login-shell (plans/08). See
-    // shell.hpp for what the two forms actually differ in.
-    bool login_shell = true;
-    // The largest picture a program in a terminal may draw, in megapixels.
-    // Changeable in Settings and stored as [terminal] sixel-max-megapixels
-    // (plans/08). See config.hpp for why this is a guard against absurdity
-    // rather than a budget anyone meets in ordinary use.
-    int sixel_max_megapixels = 64;
+    // Everything the configuration file said, defaults included (plans/08).
+    // The client reads its own settings out of this rather than holding a
+    // second copy of each one, so a key added to the file is a key the client
+    // can honour without a parallel field appearing here.
+    //
+    // What a new terminal runs lives in `settings.shell`: explicit rather
+    // than read from the ambient environment, because ckVision requires a
+    // launch spec to name its program and environment outright and a test
+    // needs the same run to be reproducible. Empty asks for resolve_shell(),
+    // which is what the real host does.
+    Settings settings;
     // Whatever load_settings() had to say about the file this session's
     // settings came from. Carried rather than printed at the point of
     // reading: by then the terminal belongs to the UI, and a line written
@@ -56,7 +53,6 @@ struct ClientOptions {
     // default; the client fills it with the reader's home directory, since
     // that is where a shell opens.
     std::string working_directory;
-    ckv::KeyChord prefix{ckv::Key::Char, ckv::Modifier::Ctrl, "b"};
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator
@@ -90,7 +86,10 @@ public:
     Context context() const;
     bool prefix_pending() const noexcept { return overlay_ != nullptr; }
     PrefixOverlay* prefix_overlay() noexcept { return overlay_; }
-    const ckv::KeyChord& prefix() const noexcept { return options_.prefix; }
+    const ckv::KeyChord& prefix() const noexcept { return options_.settings.prefix; }
+    // The bindings in force, a reader's `bind` lines applied. Every surface
+    // that mentions a key reads this one table.
+    const Keymap& keymap() const noexcept { return keymap_; }
     // The footer's rendered item labels, in order.
     std::vector<std::string> footer_labels() const;
 
@@ -132,6 +131,11 @@ private:
 
     ckv::ui::Application& app_;
     ClientOptions options_;
+    // Built from the defaults with the file's `bind`/`unbind` lines applied,
+    // once, at construction: a rebinding is a startup-time decision (plans/08
+    // — client-side options are read at attach) and every surface reads the
+    // result rather than re-deriving it.
+    Keymap keymap_;
     ckv::ui::StandardRoles roles_{};
     ckv::widgets::Desktop* desktop_ = nullptr;
     ckv::widgets::StatusLine* footer_ = nullptr;

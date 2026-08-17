@@ -36,7 +36,7 @@ ClientOptions test_options() {
     // A program that simply stays alive, so a window has a live child
     // without the run depending on whose shell is installed. The login
     // form only renames argv[0], which cat does not mind.
-    options.shell = "/bin/cat";
+    options.settings.shell = "/bin/cat";
     return options;
 }
 

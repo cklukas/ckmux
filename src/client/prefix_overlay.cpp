@@ -15,21 +15,19 @@ constexpr int kColumnGap = 3;
 
 }  // namespace
 
-PrefixOverlay::PrefixOverlay(ckv::KeyChord prefix, const ckv::ui::StandardRoles& roles)
+PrefixOverlay::PrefixOverlay(ckv::KeyChord prefix,
+                             std::vector<std::pair<std::string, std::string>> rows,
+                             const ckv::ui::StandardRoles& roles)
     : prefix_(std::move(prefix)),
       frame_role_(roles.dialog_frame),
       text_role_(roles.static_text),
       key_role_(roles.hotkey) {
+    rows_.reserve(rows.size());
+    for (std::pair<std::string, std::string>& row : rows)
+        rows_.push_back(Row{std::move(row.first), std::move(row.second)});
     // Focusable because holding the keyboard is this view's whole purpose.
     set_focus_policy(ckv::ui::FocusPolicy::TabStop);
     set_help_context_key("ckmux.prefix");
-}
-
-std::vector<PrefixOverlay::Row> PrefixOverlay::rows() const {
-    std::vector<Row> result;
-    for (const KeyBinding* binding : footer_bindings(Context::Prefix))
-        result.push_back(Row{std::string(binding->chord), std::string(binding->hint)});
-    return result;
 }
 
 ckv::Rect PrefixOverlay::preferred_bounds(ckv::Rect available) const {
@@ -38,7 +36,7 @@ ckv::Rect PrefixOverlay::preferred_bounds(ckv::Rect available) const {
     // the next keystroke.
     if (!expanded_) return ckv::Rect{};
 
-    const std::vector<Row> table = rows();
+    const std::vector<Row>& table = rows();
     int key_width = 0;
     int hint_width = 0;
     for (const Row& row : table) {
@@ -82,7 +80,7 @@ void PrefixOverlay::draw(ckv::scene::Painter& painter) {
     const std::string title = " " + prefix_label(prefix_) + " … ";
     painter.draw_text(ckv::Point{2, 0}, title, key);
 
-    const std::vector<Row> table = rows();
+    const std::vector<Row>& table = rows();
     int key_width = 0;
     for (const Row& row : table) key_width = std::max(key_width, ckv::text::text_width(row.key));
     const int rows_per_column =

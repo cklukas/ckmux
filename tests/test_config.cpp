@@ -122,19 +122,22 @@ CK_TEST(the_same_key_in_another_section_is_not_this_key) {
 }
 
 CK_TEST(an_unknown_key_warns_with_its_line_and_leaves_everything_else_read) {
-    // The plan's second promise: a bad key never aborts. Half of this file
-    // is keys ckmux honours in later milestones, and a reader who wrote them
-    // ahead of time must still get the ones that work today.
+    // The plan's second promise: a bad key never aborts, and the rest of the
+    // file is still read. A typo is the case that matters — a key the plan
+    // documents is read even before the milestone that acts on it, so
+    // "unknown" now means "no such key", not "not yet".
     ScratchConfig scratch("unknown");
     scratch.write(
         "[general]\n"
-        "scrollback = 10000\n"
+        "shel = /bin/sh\n"
         "login-shell = false\n");
     const ckm::LoadedSettings loaded = load_settings(scratch.path());
     CK_CHECK(!loaded.settings.login_shell);
     CK_CHECK(loaded.warnings.size() == 1U);
-    CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") != std::string::npos);
-    CK_CHECK(loaded.warnings[0].find("scrollback") != std::string::npos);
+    if (loaded.warnings.size() == 1U) {
+        CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") != std::string::npos);
+        CK_CHECK(loaded.warnings[0].find("shel") != std::string::npos);
+    }
 }
 
 CK_TEST(a_value_that_is_not_true_or_false_warns_and_keeps_the_default) {
@@ -345,4 +348,188 @@ CK_TEST(with_nowhere_to_look_there_is_no_config_file_rather_than_a_relative_one)
     // ...and an empty path reads as "unconfigured" rather than crashing.
     CK_CHECK(load_settings(std::filesystem::path{}).settings == Settings{});
     CK_CHECK(!save_setting(std::filesystem::path{}, "general", "login-shell", "true"));
+}
+
+// --- Config v1: the rest of the key table, and `bind` (WP-12) -------------
+
+CK_TEST(every_key_the_plans_example_file_documents_is_read) {
+    // plans/08-configuration.md's annotated example claims to show the
+    // defaults. This is that file, with every value changed, so a key that
+    // was documented and never wired up fails here rather than in a reader's
+    // hands. It also pins that the shipped defaults ARE what the plan says:
+    // each assertion below differs from Settings{}'s value.
+    ScratchConfig scratch("v1-keys");
+    scratch.write(R"(
+[general]
+prefix = C-a
+shell = /bin/zsh
+login-shell = false
+scrollback = 500
+theme = light
+on-exit = hold
+confirm-kill = false
+kill-empty-session = false
+clock = true
+
+[terminal]
+term = screen-256color
+mouse = false
+alternate-scroll = false
+sixel = off
+sixel-max-megapixels = 128
+osc52 = false
+clipboard = exec:pbcopy -x, osc52
+
+[printer]
+mode = capture
+ask-cache = 64K
+spool-limit = 2M
+save-format = ansi
+save-folder = /tmp/prints
+save-ask-name = false
+
+[render]
+max-fps = 60
+)");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    for (const std::string& warning : loaded.warnings) std::fprintf(stderr, "unexpected: %s\n", warning.c_str());
+    CK_CHECK(loaded.warnings.empty());
+
+    const Settings& s = loaded.settings;
+    CK_CHECK(ckm::chord_spelling(s.prefix) == "C-a");
+    CK_CHECK(s.shell == "/bin/zsh");
+    CK_CHECK(!s.login_shell);
+    CK_CHECK(s.scrollback == 500);
+    CK_CHECK(s.theme == ckm::Theme::Light);
+    CK_CHECK(s.on_exit == ckm::ExitPolicy::Hold);
+    CK_CHECK(!s.confirm_kill);
+    CK_CHECK(!s.kill_empty_session);
+    CK_CHECK(s.clock);
+    CK_CHECK(s.term == "screen-256color");
+    CK_CHECK(!s.mouse);
+    CK_CHECK(!s.alternate_scroll);
+    CK_CHECK(s.sixel == ckm::SixelMode::Off);
+    CK_CHECK(s.sixel_max_megapixels == 128);
+    CK_CHECK(!s.osc52);
+    CK_CHECK(s.clipboard.size() == 2U);
+    CK_CHECK(s.clipboard[0].kind == ckm::ClipboardTarget::Kind::Exec);
+    CK_CHECK(s.clipboard[0].command == "pbcopy -x");
+    CK_CHECK(s.clipboard[1].kind == ckm::ClipboardTarget::Kind::Osc52);
+    CK_CHECK(s.printer_mode == ckm::PrinterMode::Capture);
+    CK_CHECK(s.printer_ask_cache_bytes == 64U * 1024U);
+    CK_CHECK(s.printer_spool_limit_bytes == 2U * 1024U * 1024U);
+    CK_CHECK(s.printer_save_format == ckm::PrinterSaveFormat::Ansi);
+    CK_CHECK(s.printer_save_folder == "/tmp/prints");
+    CK_CHECK(!s.printer_save_ask_name);
+    CK_CHECK(s.max_fps == 60);
+}
+
+CK_TEST(the_defaults_are_the_ones_the_plan_prints) {
+    // The empty config, key for key against plans/08's annotated example.
+    const Settings s;
+    CK_CHECK(ckm::chord_spelling(s.prefix) == "C-b");
+    CK_CHECK(s.shell.empty());  // $SHELL, resolved at launch
+    CK_CHECK(s.login_shell);
+    CK_CHECK(s.scrollback == 10'000);
+    CK_CHECK(s.theme == ckm::Theme::Dark);
+    CK_CHECK(s.on_exit == ckm::ExitPolicy::HoldOnError);
+    CK_CHECK(s.confirm_kill);
+    CK_CHECK(s.kill_empty_session);
+    CK_CHECK(!s.clock);
+    CK_CHECK(s.term == "auto");
+    CK_CHECK(s.mouse);
+    CK_CHECK(s.alternate_scroll);
+    CK_CHECK(s.sixel == ckm::SixelMode::Auto);
+    CK_CHECK(s.sixel_max_megapixels == 64);
+    CK_CHECK(s.osc52);
+    CK_CHECK(s.printer_mode == ckm::PrinterMode::Ask);
+    CK_CHECK(s.printer_ask_cache_bytes == 256U * 1024U);
+    CK_CHECK(s.printer_spool_limit_bytes == 1024U * 1024U);
+    CK_CHECK(s.printer_save_format == ckm::PrinterSaveFormat::Text);
+    CK_CHECK(s.max_fps == 30);
+    CK_CHECK(s.binds.empty());
+}
+
+CK_TEST(a_bad_value_names_its_line_says_what_it_wanted_and_keeps_the_default) {
+    ScratchConfig scratch("bad-values");
+    scratch.write("[general]\ntheme = drak\nscrollback = -1\n[render]\nmax-fps = 5000\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.size() == 3U);
+    CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") == 0);
+    // All four parts: what was wanted, what was written, and what is in force.
+    CK_CHECK(loaded.warnings[0].find("dark | light | mono") != std::string::npos);
+    CK_CHECK(loaded.warnings[0].find("'drak'") != std::string::npos);
+    CK_CHECK(loaded.warnings[0].find("keeping dark") != std::string::npos);
+    CK_CHECK(loaded.warnings[1].find("ckmux.conf:3") == 0);
+    CK_CHECK(loaded.warnings[2].find("ckmux.conf:5") == 0);
+    // And nothing was half-applied.
+    CK_CHECK(loaded.settings == Settings{});
+}
+
+CK_TEST(a_byte_size_is_read_with_its_suffix_and_bounded) {
+    CK_CHECK(ckm::parse_byte_size("512") == 512U);
+    CK_CHECK(ckm::parse_byte_size("256K") == 256U * 1024U);
+    CK_CHECK(ckm::parse_byte_size("1M") == 1024U * 1024U);
+    CK_CHECK(ckm::parse_byte_size("1G") == 1024U * 1024U * 1024U);
+    CK_CHECK(!ckm::parse_byte_size("2G").has_value());   // past the ceiling
+    CK_CHECK(!ckm::parse_byte_size("1m").has_value());   // one spelling only
+    CK_CHECK(!ckm::parse_byte_size("K").has_value());
+    CK_CHECK(!ckm::parse_byte_size("1 M").has_value());
+    CK_CHECK(!ckm::parse_byte_size("").has_value());
+}
+
+CK_TEST(bind_and_unbind_are_read_in_file_order) {
+    ScratchConfig scratch("binds");
+    scratch.write(
+        "[keys]\n"
+        "bind terminal C new-terminal\n"
+        "unbind terminal q\n"
+        "bind terminal M-x menu-bar   # a trailing comment is still a comment\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.binds.size() == 3U);
+    CK_CHECK(loaded.settings.binds[0].context == ckm::KeyContext::Terminal);
+    CK_CHECK(loaded.settings.binds[0].chord == "C");
+    CK_CHECK(loaded.settings.binds[0].action == ckm::Action::NewTerminal);
+    CK_CHECK(!loaded.settings.binds[1].action.has_value());  // unbind
+    CK_CHECK(loaded.settings.binds[1].chord == "q");
+    // Stored canonically, so M-x and A-x cannot become two entries for one key.
+    CK_CHECK(loaded.settings.binds[2].chord == "A-x");
+}
+
+CK_TEST(a_bad_bind_line_lists_what_could_have_been_written_instead) {
+    ScratchConfig scratch("bad-binds");
+    scratch.write(
+        "[keys]\n"
+        "bind termianl d detach\n"
+        "bind terminal Nosuchkey detach\n"
+        "bind terminal d no-such-action\n"
+        "bind terminal d\n"
+        "unbind terminal\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.size() == 5U);
+    CK_CHECK(loaded.warnings[0].find("terminal, desktop") != std::string::npos);
+    CK_CHECK(loaded.warnings[1].find("is not a chord") != std::string::npos);
+    CK_CHECK(loaded.warnings[2].find("new-terminal") != std::string::npos);
+    CK_CHECK(loaded.warnings[3].find("bind <context> <chord> <action>") != std::string::npos);
+    CK_CHECK(loaded.warnings[4].find("unbind <context> <chord>") != std::string::npos);
+    CK_CHECK(loaded.settings.binds.empty());
+}
+
+CK_TEST(a_key_that_is_read_but_not_yet_acted_on_says_so_rather_than_warning) {
+    // The two failure modes this avoids: warning "unknown key" at a key the
+    // plan documents, and accepting one silently so a reader believes it did
+    // something. The list is the third answer.
+    ScratchConfig scratch("not-yet");
+    scratch.write("[render]\nmax-fps = 60\n");
+    CK_CHECK(load_settings(scratch.path()).warnings.empty());
+    const std::vector<std::string> pending = ckm::keys_not_honoured_yet();
+    bool names_max_fps = false;
+    for (const std::string& entry : pending)
+        if (entry.find("max-fps") != std::string::npos) names_max_fps = true;
+    CK_CHECK(names_max_fps);
+    // Every entry names the package it waits for, so the list cannot rot into
+    // "someday".
+    for (const std::string& entry : pending)
+        CK_CHECK(entry.find('(') != std::string::npos);
 }

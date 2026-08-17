@@ -95,9 +95,11 @@ every other terminal on the machine. That is a choice, so it is settable —
 which brought with it `Settings ▸ General…` and the first slice of config v1:
 the file format, its location precedence, warnings, and the key-targeted
 write-back, carrying exactly one key ([08-configuration.md](08-configuration.md)
-"What exists today"). The rest of config v1 — the remaining keys, `bind`
-directives, `check-config` — is still M3, and is now a matter of adding keys
-to a parser that exists.
+"What exists today"). The rest of config v1 — the remaining keys and the
+`bind` directives — landed on 2026-08-17 as WP-12, ahead of the milestone it
+belongs to, because file parsing and a keymap table do not know whether a
+server exists. `check-config` is what is left of it, and waits for WP-11's
+CLI.
 
 **Deliberately not yet true**: terminals live in the client process, so
 quitting kills them — that is precisely what M2 changes. `Detach` and
@@ -125,10 +127,10 @@ use; flood budget gate passes at protocol level.
 
 Multiple sessions; startup session picker; new/rename/kill with
 confirmations; **move-terminal between sessions**; CLI subcommands
-(`ls`/`new`/`attach`/`kill-session`/`kill-server`/`check-config`); the rest
-of config v1 ([08-configuration.md](08-configuration.md)) incl. rebinding —
-the file format, its location, and the write-back landed in M1 carrying
-`login-shell`, so this is the remaining keys and the CLI around them; help pages
+(`ls`/`new`/`attach`/`kill-session`/`kill-server`/`check-config`); of config
+v1 ([08-configuration.md](08-configuration.md)) only `check-config` is left —
+the keys, the `bind` directives and the rebinding path landed as WP-12 on
+2026-08-17; help pages
 complete (registry-generated key tables); exit banners + respawn;
 `NotificationCenter` toasts; takeover flow polished.
 

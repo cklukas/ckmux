@@ -10,6 +10,7 @@ set(CKMUX_TEST_SOURCES
     test_command_reachability.cpp
     test_client_smoke.cpp
     test_config.cpp
+    test_keymap.cpp
     test_prefix.cpp
     test_shell.cpp)
 

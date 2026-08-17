@@ -13,11 +13,13 @@
 // because the help pages list them too.
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "common/keymap.hpp"
 #include "cvision/core/event.hpp"
 #include "cvision/ui/command.hpp"
 
@@ -60,8 +62,10 @@ enum class Context {
 
 struct KeyBinding {
     // The key pressed AFTER the prefix, spelled the way chord_spelling()
-    // renders a KeyEvent. Empty for menu-only commands.
-    std::string_view chord;
+    // renders a KeyEvent. Empty for menu-only commands, and rewritten by a
+    // reader's `bind`/`unbind` directives (plans/08) — which is why it owns
+    // its storage rather than pointing into the default table.
+    std::string chord;
     ckv::ui::CommandId command;
     // The title, '&' marking its menu mnemonic. For a ckmux-owned command
     // this is what gets registered in ckVision's CommandRegistry, so menus
@@ -77,21 +81,55 @@ struct KeyBinding {
     // 0 never appears in the footer. Higher survives a narrower terminal —
     // ckVision's StatusLine drops low-priority items first.
     int footer_priority;
+    // What a config file calls this row. Empty for the one row that is not an
+    // action — the digits carry a value rather than selecting a handler, so
+    // nothing can be bound to them.
+    std::optional<Action> action;
 };
 
-// Every ckmux binding, in the order the which-key popup and help pages list
-// them. Declaration order is deliberate and is the display order.
-std::span<const KeyBinding> bindings();
+// The bindings, with a reader's rebinding applied. One object rather than a
+// free table, because a rebinding has to reach every surface at once: what
+// dispatches, what the footer advertises, what the which-key popup lists and
+// what the help pages print all read this, so a chord cannot be shown in one
+// place and honoured in another.
+class Keymap {
+public:
+    // The built-in defaults of plans/06-ui-design.md.
+    Keymap();
 
-// The binding for a chord, or nullptr. Digit chords are deliberately absent:
-// they carry a value rather than selecting a handler, so dispatch resolves
-// them before consulting this table (see ClientApp::dispatch_prefix_key).
-const KeyBinding* find_binding(std::string_view chord);
+    // Applies `directives` in file order — a later `bind` of the same chord
+    // wins, an `unbind` after a `bind` leaves neither. Anything that cannot
+    // be honoured is appended to `problems` in the reader's own vocabulary
+    // rather than dropped: a binding that silently does nothing is the defect
+    // this project pins tests against (plans/12, the reachability rule).
+    void apply(std::span<const BindDirective> directives, std::vector<std::string>& problems);
+
+    // Every binding, in the order the which-key popup and help pages list
+    // them. Declaration order is deliberate and is the display order.
+    std::span<const KeyBinding> bindings() const noexcept { return bindings_; }
+
+    // The binding for a chord, or nullptr. Digit chords are deliberately
+    // absent: they carry a value rather than selecting a handler, so dispatch
+    // resolves them before consulting this table (see ClientApp::resolve_prefix).
+    const KeyBinding* find(std::string_view chord) const;
+
+    // The footer hints for `context`, highest priority first. The caller turns
+    // these into ckVision StatusLine items; this owns WHICH keys a context
+    // advertises and in what order.
+    std::vector<const KeyBinding*> footer(Context context) const;
+
+private:
+    KeyBinding* row_for(Action action);
+
+    std::vector<KeyBinding> bindings_;
+};
 
 // How a key event is spelled for lookup and for display: "c", "T", "?",
-// "C-b", "Esc". One spelling function for both, so a binding that dispatches
-// is a binding the reader was shown.
+// "C-b", "Esc". The one spelling authority lives in common/keymap.hpp so that
+// a config file, the dispatcher and every surface agree; this is the overload
+// for an event that has just arrived.
 std::string chord_spelling(const ckv::KeyEvent& event);
+using ckm::chord_spelling;
 
 // 1-9 for a digit chord, otherwise 0.
 int digit_chord(std::string_view chord);
@@ -102,9 +140,10 @@ std::string prefix_label(const ckv::KeyChord& prefix);
 // "^B c" — how a binding is written in the footer and help.
 std::string binding_label(const ckv::KeyChord& prefix, const KeyBinding& binding);
 
-// The footer hints for `context`, highest priority first. The caller turns
-// these into ckVision StatusLine items; this function owns WHICH keys a
-// context advertises and in what order.
-std::vector<const KeyBinding*> footer_bindings(Context context);
+// The ckVision command an action is carried out by. The two vocabularies are
+// deliberately separate: `Action` is what a reader writes in a file and what
+// `check-config` validates without a user interface, `CommandId` is what
+// ckVision dispatches. This is the one place they meet.
+ckv::ui::CommandId command_for_action(Action action);
 
 }  // namespace ckm::client

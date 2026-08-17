@@ -79,7 +79,7 @@ take first.
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
-| 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Ready** | — |
+| 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
 | 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | Blocked | WP-8 |
@@ -240,12 +240,15 @@ PTY, emulator, scrollback, and id all unchanged; both sessions' clients see the
 layout update; the child never notices.
 **WP-11 — CLI subcommands.** `ls`, `new`, `attach`, `kill-session`,
 `kill-server`, `check-config`, over the same protocol with `client_kind = cli`.
-**WP-12 — Config v1 remainder.** The keys beyond `login-shell` and
-`sixel-max-megapixels`, `bind` directives, and the rebinding path — a parser
-and a write-back already exist ([08-configuration.md](08-configuration.md)).
-*Startable today*, despite sitting in M3: it is file parsing and a keymap
-table, and neither knows the server exists. Only `check-config`'s CLI entry
-point waits for WP-11.
+**WP-12 — Config v1 remainder.** *Done, 2026-08-17.* Every key in
+[08-configuration.md](08-configuration.md)'s table is read, validated and
+defaulted; `bind`/`unbind` work and a rebinding reaches dispatch, the footer,
+the which-key popup and the help pages together, because all four read one
+`Keymap`. A key the plan documents but no package has wired up yet is
+*neither* warned about as unknown *nor* silently accepted: it is read, and
+`keys_not_honoured_yet()` names it with the package it waits for. Only
+`check-config`'s CLI entry point still waits for WP-11, and both halves of
+its output already exist as return values.
 **WP-13 — Exit policy, banners, respawn.** `on-exit` = close/hold/
 hold-on-error, the exit banner, and respawn-in-window.
 **WP-14 — Notifications and help.** `NotificationCenter` toasts; help pages

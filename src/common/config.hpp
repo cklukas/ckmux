@@ -8,17 +8,26 @@
 // it warns, naming the line, and the rest of the file is still read, because
 // a typo in one setting is no reason to refuse to start.
 //
-// Only the keys ckmux actually honours today are listed. The plan's full
-// table lands with config v1 in M3; this is its first key and its file
-// format, written now because a settings dialog that forgets what it was
-// told is not a setting.
+// Config v1 is the whole key table of that plan. A key is *read and
+// validated* here whether or not the milestone that acts on it has arrived:
+// `scrollback` reaches a terminal today, `max-fps` waits for a server that
+// does not exist yet. That is deliberate. The alternative — warn "unknown
+// key" at a key the plan documents — teaches a reader that the file they were
+// handed is wrong, and the one after it (accept silently, do nothing) is the
+// live-looking-and-dead failure this project pins tests against. `Settings`
+// carries every value; `honoured_today()` says which ones currently reach
+// anything, and `check-config` reads it (plans/12 WP-11).
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "common/keymap.hpp"
+#include "cvision/core/key.hpp"
 
 namespace ckm {
 
@@ -36,14 +45,86 @@ inline constexpr int kSixelMegapixelsMax = 4096;
 // Digits only: a unit suffix would invite `64M` to mean megabytes.
 std::optional<int> parse_sixel_megapixels(std::string_view text);
 
+// The bounds the file's numbers are held to. Each one is a range a reader
+// could plausibly want all of, with an end that is absurdity insurance rather
+// than a judgement about taste.
+inline constexpr int kScrollbackMin = 0;          // 0 = remember nothing
+inline constexpr int kScrollbackMax = 1'000'000;  // ~2 GB of cells at 80 columns
+inline constexpr int kMaxFpsMin = 1;
+inline constexpr int kMaxFpsMax = 240;
+// Byte sizes accept a K/M/G suffix, since that is how the plan's own example
+// file writes them (`256K`, `1M`). The ceiling is one gigabyte: a spool is
+// held in memory and shown to a person.
+inline constexpr std::size_t kByteSizeMax = 1024ULL * 1024ULL * 1024ULL;
+
+enum class Theme : unsigned char { Dark, Light, Mono };
+enum class ExitPolicy : unsigned char { Close, Hold, HoldOnError };
+enum class SixelMode : unsigned char { Auto, Off };
+enum class PrinterMode : unsigned char { Ask, Capture, Off };
+enum class PrinterSaveFormat : unsigned char { Text, Ansi };
+
+// One entry of [terminal] clipboard, in the order the file listed them: the
+// copy targets are tried in turn, so the order is the setting.
+struct ClipboardTarget {
+    enum class Kind : unsigned char { Osc52, Pbcopy, Exec } kind = Kind::Osc52;
+    // The command for `exec:<command>`, empty otherwise.
+    std::string command;
+
+    friend bool operator==(const ClipboardTarget&, const ClipboardTarget&) = default;
+};
+
+// The one reading of each value's grammar, shared by the config parser, the
+// settings dialogs and `check-config`. Two readings would eventually
+// disagree, and a reader would meet a value one accepted and the other
+// rejected.
+std::optional<bool> parse_bool(std::string_view text);
+std::optional<int> parse_int_in_range(std::string_view text, int minimum, int maximum);
+std::optional<std::size_t> parse_byte_size(std::string_view text);
+std::optional<std::vector<ClipboardTarget>> parse_clipboard_targets(std::string_view text);
+
 // Everything ckmux reads from the file, with the built-in defaults that
 // apply when it says nothing. A struct rather than a lookup, so a caller
-// cannot ask for a key that has no default.
+// cannot ask for a key that has no default. Defaults are
+// plans/08-configuration.md's annotated example, key for key: that file
+// claims to show the defaults, so it is the specification of this struct.
 struct Settings {
+    // --- [general] ------------------------------------------------------
+    // The one key ckmux steals from the programs running inside it. C-b, as
+    // tmux's is, because the readers this is for already have it in their
+    // fingers.
+    ckv::KeyChord prefix{ckv::Key::Char, ckv::Modifier::Ctrl, "b"};
+    // What New Terminal runs. Empty means $SHELL, resolved at launch — the
+    // file says `$SHELL` and means "whatever the reader's shell is", not the
+    // literal five characters.
+    std::string shell;
     // [general] login-shell. True — a login shell — is the default because
     // it is what tmux does, what login(1) does, and what every terminal
     // window on the machine does; a reader's PATH usually depends on it.
     bool login_shell = true;
+    // Lines of history per terminal. 0 is "remember nothing", which is a real
+    // request and not merely the smallest number (ckVision's
+    // `max_scrollback_lines`, U0-c).
+    int scrollback = 10'000;
+    Theme theme = Theme::Dark;
+    // What happens to a window when its program exits. hold-on-error keeps
+    // the window when the exit status is non-zero, which is the one case
+    // where the text on screen is the only evidence of what went wrong.
+    ExitPolicy on_exit = ExitPolicy::HoldOnError;
+    // Whether closing or killing something with a live program in it asks
+    // first. A terminal holding an editor with unsaved work looks exactly
+    // like one holding an idle shell.
+    bool confirm_kill = true;
+    bool kill_empty_session = true;
+    bool clock = false;
+
+    // --- [terminal] -----------------------------------------------------
+    // $TERM inside terminals. `auto` lets ckmux choose what it can honestly
+    // claim (plans/04); anything else is used verbatim, because a reader who
+    // names a terminfo entry has a reason.
+    std::string term = "auto";
+    bool mouse = true;
+    bool alternate_scroll = true;
+    SixelMode sixel = SixelMode::Auto;
 
     // [terminal] sixel-max-megapixels. The largest picture a program running
     // in a terminal may draw. A picture too large for the window it is drawn
@@ -55,8 +136,40 @@ struct Settings {
     // ckVision behave alike.
     int sixel_max_megapixels = 64;
 
+    // Whether a program inside a terminal may put text on the system
+    // clipboard with OSC 52. On, and capped upstream at 64 KiB: it is how
+    // copying out of a program running under ckmux works at all.
+    bool osc52 = true;
+    // Where a copy goes, in order. The default is the plan's: the outer
+    // terminal first, a local helper after it.
+    std::vector<ClipboardTarget> clipboard{ClipboardTarget{ClipboardTarget::Kind::Osc52, {}},
+                                           ClipboardTarget{ClipboardTarget::Kind::Pbcopy, {}}};
+
+    // --- [printer] (WP-PRINT) -------------------------------------------
+    PrinterMode printer_mode = PrinterMode::Ask;
+    std::size_t printer_ask_cache_bytes = 256U * 1024U;
+    std::size_t printer_spool_limit_bytes = 1024U * 1024U;
+    PrinterSaveFormat printer_save_format = PrinterSaveFormat::Text;
+    std::string printer_save_folder = "~/Documents";
+    bool printer_save_ask_name = true;
+
+    // --- [render] -------------------------------------------------------
+    int max_fps = 30;
+
+    // --- [keys] ---------------------------------------------------------
+    // The `bind` and `unbind` lines, in file order, because order decides:
+    // two binds of one chord mean the later one, and an unbind after a bind
+    // means neither.
+    std::vector<BindDirective> binds;
+
     friend bool operator==(const Settings&, const Settings&) = default;
 };
+
+// Which keys currently reach anything, as key names ("scrollback",
+// "[render] max-fps"). The honest answer to "I set this — why did nothing
+// happen?", and what `check-config` prints. A key leaves this list by being
+// wired up, in the commit that wires it up.
+std::vector<std::string> keys_not_honoured_yet();
 
 struct LoadedSettings {
     Settings settings;

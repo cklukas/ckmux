@@ -14,6 +14,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "client/commands.hpp"
@@ -33,7 +34,12 @@ public:
     // cannot see the application's role struct — but this view can, and a
     // mistyped role name resolves to an invalid id that only fails when it
     // is finally painted.
-    PrefixOverlay(ckv::KeyChord prefix, const ckv::ui::StandardRoles& roles);
+    // `rows` is the key table as it stands right now, copied rather than
+    // referenced: the popup can outlive the client that made it (the desktop
+    // owns it, and a destroyed client leaves its keymap behind), and a
+    // rebinding cannot change under an overlay that is already on screen.
+    PrefixOverlay(ckv::KeyChord prefix, std::vector<std::pair<std::string, std::string>> rows,
+                  const ckv::ui::StandardRoles& roles);
 
     // Runs with the chord spelling of the key that ended the prefix state, or
     // an empty string when it was cancelled (Esc, or a click elsewhere).
@@ -58,10 +64,11 @@ private:
         std::string key;
         std::string hint;
     };
-    std::vector<Row> rows() const;
+    const std::vector<Row>& rows() const noexcept { return rows_; }
     void finish(std::string chord);
 
     ckv::KeyChord prefix_;
+    std::vector<Row> rows_;
     bool expanded_ = false;
     bool finished_ = false;
     ckv::ui::RoleId frame_role_ = ckv::ui::kInvalidRole;

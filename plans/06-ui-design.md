@@ -126,7 +126,13 @@ the chord state machine from there (details in
 | `^B q` | Quit ckmux client (= detach; never kills anything) |
 | `^B ^B` | Send literal prefix to the app |
 
-All rebindable via config ([08-configuration.md](08-configuration.md)).
+All rebindable via config ([08-configuration.md](08-configuration.md)) —
+implemented, WP-12 — with two exceptions that are exceptions for a reason.
+`^B 1`…`^B 9` carry a value rather than choosing a handler, so there is
+nothing for a binding to point at; and a row of this table that ckmux has not
+built yet has no action name, because a name that parses and then does
+nothing is the defect the reachability rule exists for. The names appear as
+their packages do.
 
 ### Keymap registry (single source of truth)
 

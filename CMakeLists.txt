@@ -34,6 +34,7 @@ add_library(ckmux_client STATIC
     src/client/commands.cpp
     src/client/prefix_overlay.cpp
     src/common/config.cpp
+    src/common/keymap.cpp
     src/common/shell.cpp
     src/platform/paths.cpp)
 target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
