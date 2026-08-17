@@ -265,6 +265,7 @@ and the cost stops depending on how long the session has been alive.
 | # | Item | For |
 |---|---|---|
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
+| U3 | **A scroll op in the `Presenter`.** It diffs the composed frame against the last one and writes only changed cell runs, which is right for everything except the one case a multiplexer sees constantly: when a window's text shifts up a row, every row differs and the whole window is re-emitted. A scrolled band that is full host width, unobstructed, and aligned to real host rows can be shifted with `DECSTBM` + `SU`/`IND` instead, leaving one new row to draw; a band narrower than the host needs left-right margins (`DECLRMM`/`DECSLRM`), so it is capability-gated and falls back to what happens today. Wins most where few rows move per frame — paging in `less`, a `git log` — because a flood already coalesces into one repaint per tick. Needs the occlusion test the compositor already does, since shifting rows another window overlaps would move cells that are not ours. | after WP-4b, once the wire side (`op Scroll`) is real and the same question has been answered once |
 | U2 | XTGETTCAP/DECRQSS/rectangles when an app demands them; `OSC 8` hyperlinks, inner side; `SGR 53` overline. *(Kitty keyboard child side and indexed-colour preservation have landed; see below.)* | later |
 
 Process note: each item goes through ckVision's own decision/verification
