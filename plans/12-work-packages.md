@@ -48,6 +48,19 @@ requires. M1 is the worked example: it was recorded as landed with a menu item
 that did nothing, and the correction is written down rather than quietly fixed
 ([10-roadmap.md](10-roadmap.md), M1).
 
+**`Blocked` means a package cannot technically be started, not that it comes
+later.** Priority lives in the row order; the state column answers only "could
+someone begin this today?". The first draft of this queue got that wrong — it
+chained every row onto the one above it in milestone order and reported a
+single `Ready` package with thirty-four `Blocked` behind it, which is a
+different way of saying nothing is open. Several tracks here are genuinely
+independent: the protocol codec is ckmux-local serialization, the server's
+terminal ownership needs no `Application` at all
+(`PosixTerminalSubsession` includes only `term/` headers), the diff algebra is
+pure, and most emulator and widget U-items touch files nothing else in M2
+goes near. They are `Ready` because they are, and the order below says which to
+take first.
+
 ## Current execution queue
 
 | Order | Package | Where | Est. | State | Prerequisite |
@@ -55,40 +68,41 @@ that did nothing, and the correction is written down rather than quietly fixed
 | — | M0 — Scaffolding | ckmux | — | **Done** | — |
 | — | M1 — Single-process shell | ckmux | — | **Done** (corrected 2026-08-17) | — |
 | 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Ready** | — |
-| 2 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | Blocked | U0-a |
-| 3 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | Blocked | U0-a |
-| 4 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | Blocked | WP-1 |
-| 5 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | Blocked | WP-2 |
-| 6 | **WP-4** — Grid diff engine | ckmux | 4–6 d | Blocked | WP-3, U0-b |
-| 7 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | Blocked | U0-b |
-| 8 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | Blocked | U0-c |
-| 9 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-4, U0-a |
-| 10 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
-| 11 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
-| 12 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
-| 13 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
-| 14 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | Blocked | WP-8 |
-| 15 | **WP-11** — CLI subcommands | ckmux | 3–4 d | Blocked | WP-8 |
-| 16 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | Blocked | WP-11 |
-| 17 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | Blocked | WP-8 |
-| 18 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | Blocked | WP-12 |
-| 19 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
-| 20 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | Blocked | WP-15 |
-| 21 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-15 |
-| 22 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | Blocked | WP-15 |
-| 23 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-15 |
-| 24 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-15 |
-| 25 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | Blocked | U1-a |
-| 26 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | Blocked | U1-c |
-| 27 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | U1-c, U1-d |
-| 28 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | Blocked | WP-16 |
-| 29 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-16…WP-19, WP-20, PRINT-1…6 |
-| 30 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
-| 31 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
-| 32 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
-| 33 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24 |
-| 34 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | Blocked | — (a decision, not a build) |
-| 35 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
+| 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Ready** | — |
+| 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Ready** | — |
+| 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Ready** | — |
+| 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Ready** | — |
+| 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | Blocked | WP-1 |
+| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a, U0-b |
+| 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Ready** | — |
+| 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Ready** | — |
+| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
+| 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
+| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
+| 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Ready** | — |
+| 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
+| 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
+| 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | Blocked | WP-8 |
+| 17 | **WP-11** — CLI subcommands | ckmux | 3–4 d | Blocked | WP-2, WP-8 |
+| 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | Blocked | WP-8 |
+| 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | Blocked | WP-12 |
+| 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
+| 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Ready** | — |
+| 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Ready** | — |
+| 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Ready** | — |
+| 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Ready** | — |
+| 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-6 |
+| 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
+| 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
+| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | U1-c, U1-d, WP-6 |
+| 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | Blocked | WP-16 |
+| 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-16…WP-19, WP-20, PRINT-1…6, U1-a |
+| 31 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
+| 32 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
+| 33 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
+| 34 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
+| 35 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
+| 36 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
 
 Roughly **90–120 focused days**, of which ~12–18 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -170,18 +184,30 @@ SIGHUP→SIGTERM→SIGKILL close policy.
 *Done when*: PTY-level tests cover exit status, the grace path, and resize;
 children never outlive an explicit close.
 
-**WP-4 — Grid diff engine.** Snapshot → `GridDelta`: scroll ops, RLE cell runs,
-cursor, modes, title, scrollback pushes, coalesced at the flush tick, monotonic
-per-terminal `seq`.
+**WP-4a — Grid diff algebra.** Two grids → `GridDelta` and back: scroll ops,
+RLE cell runs, cursor, modes, title, scrollback pushes. Pure functions over
+values, with no server, socket, PTY or clock anywhere near them — which is why
+this is startable today and why [09-testing.md](09-testing.md) puts it in the
+unit layer.
 *Done when*: property test — random edit scripts, scroll ops included, applied
 to a mirror yield a byte-identical grid; a full-screen scroll costs a `Scroll`
-op rather than a cell resend.
+op rather than a cell resend; a decoder fed random bytes errors and never
+crashes.
+
+**WP-4b — The diff engine on the live snapshot path.** WP-4a wired to real
+terminals: read changed cells through U0-b rather than a deep copy, coalesce
+per terminal at the flush tick, monotonic per-terminal `seq`, and the gap rule
+(a client observing a gap reconnects and resnapshots).
+*Done when*: N terminals diffed at tick rate without copying scrollback, with
+the cost measured rather than asserted; `seq` monotonicity has an adversarial
+test.
 
 **WP-5 — `RemoteTerminalSubsession` and the client mirror.** The ckmux class
 implementing `core::TerminalSubsession` over mirror state, adopted through
 U0-a, so ckVision's `TerminalView` is reused verbatim — its input encoding,
 mouse translation, selection, scrollback paging, and Sixel drawing all
-unchanged.
+unchanged. This is the junction where the four independent tracks above meet,
+and the first row that genuinely cannot start early.
 *Done when*: the M1 UI drives remote terminals with no change to its own
 window, footer, or prefix code; input encoded client-side arrives as opaque
 bytes.
@@ -217,6 +243,9 @@ layout update; the child never notices.
 **WP-12 — Config v1 remainder.** The keys beyond `login-shell` and
 `sixel-max-megapixels`, `bind` directives, and the rebinding path — a parser
 and a write-back already exist ([08-configuration.md](08-configuration.md)).
+*Startable today*, despite sitting in M3: it is file parsing and a keymap
+table, and neither knows the server exists. Only `check-config`'s CLI entry
+point waits for WP-11.
 **WP-13 — Exit policy, banners, respawn.** `on-exit` = close/hold/
 hold-on-error, the exit banner, and respawn-in-window.
 **WP-14 — Notifications and help.** `NotificationCenter` toasts; help pages
@@ -231,13 +260,24 @@ author's tmux muscle-memory set is covered.
 Any app, correctly. [04-terminal-emulation.md](04-terminal-emulation.md) is the
 spec and holds the reference-app matrix.
 
-**U1-a** tab stops. **U1-c** Media Copy capture behind a policy defaulting to
-deny. **U1-d** the rest of the typed dialog fields — `Radio`, `Combo`,
-`Number`; `Check` and `Note` landed for `Settings ▸ General…` (L-29/L-30).
-**WP-16** Sixel over the wire: chunked image add, place, remove, and the DA1
-advertisement end to end. **WP-17** copy mode: search, vi keys, rectangular
-selection, clipboard targets. **WP-18** paste credit flow. **WP-19** bell and
-activity monitors. **PRINT-1…6** the virtual printer, whose six pieces are
+Three of its ckVision items are startable today and none of them waits on M2:
+**U1-a** tab stops, **U1-c** Media Copy capture behind a policy defaulting to
+deny, and **U1-d** the rest of the typed dialog fields — `Radio`, `Combo`,
+`Number` (`Check` and `Note` landed for `Settings ▸ General…`, L-29/L-30). They
+are emulator and widget work in files nothing in M2 touches; they sit late in
+the order because M2 is the promise, not because anything stops them.
+
+**WP-17 copy mode** — search, vi keys, rectangular selection, clipboard targets
+— is likewise startable now. It lives above the `TerminalSubsession` seam, over
+a `TerminalView`'s scrollback, so it is written the same way against M1's
+in-process terminals as against M2's mirrors; nothing about it changes when the
+terminal moves behind the socket. That is worth knowing on a day when the
+server is not the thing to work on.
+
+The rest of M4 does wait on the wire: **WP-16** Sixel over it (chunked image
+add, place, remove, and the DA1 advertisement end to end), **WP-18** the paste
+credit flow, **WP-19** bell and activity monitors, and **PRINT-1…6** the
+virtual printer, whose six pieces are
 already itemized in [10-roadmap.md](10-roadmap.md) and behave per
 [04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md).
 **WP-20** the performance budget gates under floods. **WP-21** M4 acceptance:
