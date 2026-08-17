@@ -25,7 +25,18 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
   policies, takeover, empty-session reaping ([03-session-model.md](03-session-model.md)
   is the spec; each table row becomes at least one test).
 - **Diff engine**: grid → deltas → apply-to-mirror ⇒ byte-identical grid
-  (property-tested with random edit scripts, scroll ops included).
+  (property-tested with random edit scripts, scroll ops included). Landed with
+  WP-4a as `tests/test_grid_delta.cpp`: six hundred rounds of random writes,
+  region scrolls both ways, cursor moves, single mode bits, titles and history
+  pushes, comparing the mirror against the model after every delta — with the
+  script asserting it actually exercised scrolls, since a run whose scroll arm
+  never fired would pass while proving nothing. The generator is a fixed-seed
+  LCG rather than a clock-seeded engine: a property test that cannot be
+  replayed reports "something is wrong somewhere" once and then never again.
+  Three deliberate mutations were checked to fail it (a mispredicted shift, a
+  repaint pass that stops at the first changed row, an `apply` that skips its
+  fit check), because a property test nobody has seen fail is a claim about
+  itself.
 
 ### 2. Emulator conformance pins (label `golden`)
 

@@ -71,9 +71,9 @@ take first.
 | 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Done** (2026-08-17) | — |
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Done** (2026-08-17) | — |
-| 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Ready** | — |
+| 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Done** (2026-08-17) | — |
 | 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Ready** | WP-1 ✓ |
-| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a |
+| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | **Ready** | WP-3 ✓, WP-4a ✓ |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
@@ -218,6 +218,35 @@ unit layer.
 to a mirror yield a byte-identical grid; a full-screen scroll costs a `Scroll`
 op rather than a cell resend; a decoder fed random bytes errors and never
 crashes.
+**Done** (2026-08-17). `src/common/grid_delta.{hpp,cpp}`: `GridState` (the same
+type on both ends, because a delta is only correct with respect to what the
+other end is believed to hold), `diff`, `apply`, and `same_state` — which is
+public because "the mirror is byte-identical" has to be a claim something can
+evaluate. Measured on a 120x40 screen scrolling one line: **1 477 bytes**
+against **30 712** for the same screen re-sent row by row, and most of what
+remains is the history line and the new row, which no encoding avoids.
+
+Four decisions worth knowing before WP-4b builds on it:
+
+  * **The lines that entered the history are an argument, not a derivation.**
+    Two histories cannot say what moved between them — with capacity in play
+    lines leave the front while lines arrive at the back, so the alignment is
+    ambiguous and costs O(history) on a path that runs at the flush tick. The
+    emulator already says it exactly (`TerminalDamage::scrollback_pushed`).
+  * **The shift search is a byte question, never a correctness one.** Rows are
+    compared by hash while a shift is being looked for (quadratic in the
+    changed band, so it must be cheap) and by real cells once one is chosen: a
+    wrong guess costs a repaint the mirror was going to get anyway. That is
+    what lets the search score candidate shifts and pick the best rather than
+    demand a perfect match — which is how the commonest scroll a multiplexer
+    carries, a pager scrolling everything above its status line, stays a scroll.
+  * **`apply` is all-or-nothing.** A mirror holding half a delta shows a stripe
+    of some other moment and nothing downstream can tell; the ops are checked
+    against the mirror's geometry before any of them are performed, and a
+    refusal is the client's cue to resnapshot (plans/05's gap rule).
+  * **A size change is not a delta.** `GridDelta` carries no geometry on
+    purpose, so `TermMeta` goes first and a mirror that has not taken it
+    refuses the delta instead of applying it to the wrong shape.
 
 **WP-4b — The diff engine on the live snapshot path.** WP-4a wired to real
 terminals: read changed cells through U0-b rather than a deep copy, coalesce

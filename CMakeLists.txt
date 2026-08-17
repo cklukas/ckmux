@@ -51,6 +51,7 @@ ckmux_strict(ckmux_client)
 # the whole point of the split.
 add_library(ckmux_server STATIC
     src/common/config.cpp
+    src/common/grid_delta.cpp
     src/common/keymap.cpp
     src/common/proto.cpp
     src/common/shell.cpp
