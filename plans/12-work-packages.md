@@ -75,7 +75,7 @@ take first.
 | 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | Blocked | WP-1 |
 | 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a, U0-b |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
-| 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Ready** | — |
+| 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |

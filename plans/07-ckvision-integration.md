@@ -170,6 +170,17 @@ landed; the DA1/XTSMGRAPHICS graphics advertisement half is L-24 above. The
 implementation of L-33…L-36 reached ckVision inside `d06bca5`, a batch commit
 another session made across the shared tree; its evidence is `08c3dea`.
 
+### Landed (U0-d — the caption a program borrowed)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-37 | **XTWINOPS 22/23, the window-title stack.** A program that renames the window saves the old name first and restores it on the way out; without the pair, a shell keeps the name of the editor that exited an hour ago, because the editor said what it was and nothing ever said otherwise. Both are gated on the same `osc_policy` flag as the title, so a profile that keeps no captions keeps no stack of them either. Ps 0 and 2 act, Ps 1 (icon name) does nothing in both directions, popping an empty stack leaves the caption alone rather than blanking it, the depth is bounded (`max_title_stack_depth`), and RIS empties it. | ckmux window captions follow the running program (L-10, [06](06-ui-design.md)). Following it *down* again is the half that was missing. |
+| L-38 | **`max_title_bytes`** — a title is cut to 1 KiB, on a character boundary, with a diagnostic. A caption is one line on a frame, but the reason for the bound is ckmux's: the snapshot carries the title by value, and a multiplexer reads one snapshot per terminal per frame. An unbounded title is an unbounded copy at frame rate for as long as the terminal lives. | The M2 diff engine reads snapshots at tick rate × N terminals ([10-roadmap.md](10-roadmap.md), R1). |
+
+The rest of the item — the policy flag itself, and OSC 2 alongside OSC 0 —
+was already in place (L-10); ckmux's client sets `StoreMetadata` on every
+terminal it opens.
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -182,7 +193,6 @@ another session made across the shared tree; its evidence is `08c3dea`.
 |---|---|---|
 | U0-a | **Attach-an-existing-subsession** entry point on `Application` (today only `launch_terminal_subsession(spec)` exists — no way to hand it a custom/remote subsession). Without it, `TerminalView` change-notification (`notify_terminal_subsession_changed`) and `wait_handles()` aggregation don't reach mirror subsessions. The report calls this "a ~5-line addition"; it is the single cleanest enabler for ckmux. | M2 |
 | U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
-| U0-d | OSC title policy: ckmux profile runs with metadata storage on (exists — policy flag), plus OSC 2 alongside OSC 0 if absent. | M2 |
 | U1-a | Tab stops (HTS/TBC). *(The rest of this item — OSC 4/10/11 query replies, child OSC 52 opt-in policy with cap and snapshot surface, REP, mode 1007, underline styles SGR 4:x — has landed; see below.)* | M4 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
 | U1-c | **Emulator: Media Copy capture** (WP-PRINT, [04](04-terminal-emulation.md)). `TerminalPrinterPolicy{Deny, Capture}` on the capability profile, **defaulting to `Deny`** so no existing ckVision application changes behavior; printer-controller parse state with a terminator match that survives `feed_output()` chunk boundaries; print-screen / print-line / autoprint; DECPFF + DECPEX; honest `CSI ? 15 n` replies (ready / not-ready / no-printer); `max_printer_spool_bytes`; overflow → free the buffer and **sink** (never resume the screen mid-stream); `take_printer_jobs()` drain with only three scalars added to `TerminalSnapshot`. | M4 |

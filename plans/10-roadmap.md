@@ -115,9 +115,10 @@ snapshot/self-healing backpressure), one auto-created session,
 `RemoteTerminalSubsession` mirror wired into the M1 UI, lazy server start,
 detach/quit/reattach, stale-socket + version-mismatch handling.
 Needs **U0-a** (attach-existing-subsession) and **U0-b** (damage/no-copy
-snapshots); U0-d (title policy) lands in this window too. **U0-c** — bell,
-charset, DA1, RIS/DECALN and the scrollback capacity option — is done
-(2026-08-17, ckVision `08c3dea`; [07](07-ckvision-integration.md), L-33…L-36).
+snapshots). **U0-c** — bell, charset, DA1, RIS/DECALN and the scrollback
+capacity option — and **U0-d** — the title policy, its bound and the
+window-title stack — are both done (2026-08-17, ckVision `08c3dea` and
+`2a7d78d`; [07](07-ckvision-integration.md), L-33…L-38).
 
 **Done when**: the core-promise test is green (spawn → attach → `kill -9`
 client → reattach → advanced state, golden-verified); author starts daily
