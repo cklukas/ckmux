@@ -69,11 +69,11 @@ take first.
 | — | M1 — Single-process shell | ckmux | — | **Done** (corrected 2026-08-17) | — |
 | 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Done** (2026-08-17) | — |
-| 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Ready** | — |
+| 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Done** (2026-08-17) | — |
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Ready** | — |
 | 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Ready** | — |
-| 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | Blocked | WP-1 |
-| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a, U0-b |
+| 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Ready** | WP-1 ✓ |
+| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | Blocked | WP-3, WP-4a |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
@@ -158,16 +158,14 @@ closed would be drained on every step for the life of the client — which was
 already true of every terminal ckmux closed. It is safe to call from inside a
 change notification, since that is where a host learns a session ended.
 
-**U0-b — damage/no-copy snapshots.** `snapshot()` returns `TerminalSnapshot`
-by value — grid, rasters, and up to `max_scrollback_lines` of scrollback, deep
-copied on every call. At tick rate × N terminals that is the R1 risk in
-[10-roadmap.md](10-roadmap.md). Wanted: dirty spans or a borrowed view, plus
-snapshot-without-scrollback.
-*Done when*: the server can read a terminal's changed cells without copying its
-scrollback; a benchmark records the before/after on the pinned machine; existing
-callers are unchanged or updated in the same commit.
-*Sequencing*: land this **before** WP-4 hardens the hot path — R1's mitigation
-is that the fix goes in the library first, never a ckmux workaround.
+**U0-b — damage/no-copy snapshots.** *Done, 2026-08-17 (ckVision `c4f96d2`;
+[07](07-ckvision-integration.md) L-45…L-47).* Damage as a column span per row
+with flags beside it, `snapshot(TerminalSnapshotOptions)` for a caller that
+declines the history, and borrowed `cells()`/`scrollback()` forwarded through
+`PosixTerminalSubsession`. Measured before and after on the pinned machine:
+574 µs → 126 µs → 57 µs per read, and the last two do not grow with the
+history. R1's mitigation is in the library, which is where it had to be — WP-4b
+now has nothing to work around.
 
 **WP-1 — Protocol codec and framing.** *Done, 2026-08-17.* Framing, the
 handshake, the version integer, and every message in

@@ -219,6 +219,22 @@ the item. `release` takes the `core::TerminalSubsession` seam because that is
 what `on_terminal_subsession_changed` hands over — writing the test is what
 showed that the first signature made every caller downcast.
 
+### Landed (U0-b — reading a terminal without copying it)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-45 | **`TerminalDamage`** — a column span per row, plus flags for cursor, modes, title and rasters, plus a count of lines that entered the history. Read with `damage()`, cleared by the host with `clear_damage()` when it has sent everything; reading never clears, because three consumers read one terminal (a diff engine, a title poll, a bell badge) and a read that cleared would give the news to whichever looked first. Damage starts **full** on a fresh terminal, or the first frame after an attach would send nothing. | WP-4b's whole job. Without it the only way to know what a child touched is to keep the previous screen and walk both — a full copy per terminal per frame before any comparison begins. |
+| L-46 | **`snapshot(TerminalSnapshotOptions)`** — a caller may decline the scrollback and the rasters, and the declined members are built empty rather than copied and cleared. The no-argument overload is unchanged, so every existing caller gets what it got. | The attach snapshot wants the history; the flush tick does not. Paying for it 30 times a second per terminal is R1. |
+| L-47 | **`cells()` and `scrollback()` borrow** instead of copying, so a host reads the damaged rows out of the emulator's own storage and copies only the cells it is about to send. Forwarded through `PosixTerminalSubsession`, which is the seam the server actually holds. | The server links only `core`+`term`; it should not have to reach through to an embedded emulator to avoid a copy. |
+
+Measured on the pinned machine (120×40, 256 lines of history, one status row
+rewritten per tick — the same mutation in all three, so the difference is the
+read): **574 µs/op** for a full snapshot, **126 µs/op** declining the history,
+**57 µs/op** for damage plus borrowed cells, the last including the mutation.
+At 30 fps the first saturates a core at about sixty terminals and the other two
+do not grow with the history at all. R1 is therefore mitigated in the library,
+which is where [10-roadmap.md](10-roadmap.md) said it had to be.
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -229,7 +245,6 @@ showed that the first signature made every caller downcast.
 
 | # | Item | For |
 |---|---|---|
-| U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
 | U2 | XTGETTCAP/DECRQSS/rectangles when an app demands them; `OSC 8` hyperlinks, inner side; `SGR 53` overline. *(Kitty keyboard child side and indexed-colour preservation have landed; see below.)* | later |
 

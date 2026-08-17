@@ -117,7 +117,9 @@ stream-reassembled, with no socket anywhere near it) — one auto-created
 session,
 `RemoteTerminalSubsession` mirror wired into the M1 UI, lazy server start,
 detach/quit/reattach, stale-socket + version-mismatch handling.
-Needs **U0-b** (damage/no-copy snapshots). **U0-a** — hosting a subsession
+**U0-b** (damage/no-copy snapshots) is done too — 2026-08-17, ckVision
+`c4f96d2`, measured at 574 µs → 57 µs per terminal read — so R1's mitigation is
+in the library rather than pending. **U0-a** — hosting a subsession
 the application did not launch, with the release path that makes it two-way —
 is done (2026-08-17, ckVision `2355bc3`). **U0-c** — bell, charset, DA1, RIS/DECALN and the scrollback
 capacity option — and **U0-d** — the title policy, its bound and the
@@ -206,7 +208,7 @@ over a child-controlled stream is the exact hazard WP-PRINT removes.
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | **Snapshot deep-copy cost** (U0-b) makes tick-rate diffing expensive until we land the ckVision fix | Implement U0-b in ckVision first, before the M2 hot path hardens; M2 prototypes on deep-copy at reduced fps to measure the win honestly; budget gate pins the target — the fix is in the library, never a ckmux workaround |
+| ~~R1~~ | ~~**Snapshot deep-copy cost** (U0-b) makes tick-rate diffing expensive~~ — **closed 2026-08-17**: U0-b landed in ckVision (`c4f96d2`) before any ckmux hot path existed to work around it. Measured on the pinned machine: 574 µs/op for a full snapshot, 126 µs declining the history, 57 µs for damage plus borrowed cells. The last two do not grow with the history, which was the risk. | The mitigation was carried out as written — the fix went in the library first, and `scene_budget_gate` now pins the steady-state tick. |
 | R2 | **ckVision is pre-1.0 and in an acceptance-audit phase**; behavior may shift under us — and our U-items add churn of our own | Pin by commit; conformance-pin goldens ([09](09-testing.md) §2) catch drift at bump time; U-items are small, well-scoped, and land under ckVision's full gates — we develop both repos, so sequencing is ours to schedule |
 | R3 | Emulator fidelity long tail (some app misbehaves) | Per-terminal diagnostics surfaced in UI (`Terminal → Info…` shows unknown-sequence log); reference matrix per milestone; upstream fix loop per adopter policy |
 | R4 | Protocol/perf under floods or huge scrollbacks | Scroll ops + RLE + coalescing designed in ([05](05-protocol.md)); budget gates from M2 on; backpressure self-healing tested |
