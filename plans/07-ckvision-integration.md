@@ -206,6 +206,19 @@ writes a file.
 | L-41 | **`FieldKind::Radio`, `Combo` and `Number`**, with `MaterializedDialog::radios`/`combos` and `DialogResult::selected`/`numbers` parallel to the fields. Radio is captioned by the field's own label rather than labelled beside it — a set of alternatives is one question, and a left-column label would put it level with the first answer. Number stays an InputLine and is checked at accept time, like every other validator, then hands the caller a parsed value rather than text to parse again. Every new member carries an explicit initializer and goes on the end of the aggregate, because most dialogs in the tree brace-initialize the first three positionally. | Printer Settings ([06](06-ui-design.md)) is a radio group, a combo, two numbers and a checkbox. Hand-building it is exactly the "every settings form is hand-built" complaint U1-d exists about — and PRINT-1…6 now has no widget work left in front of it. |
 | L-42 | **A closed `ComboBox` no longer swallows `Enter`.** It committed to history and reported the key handled, so a dialog's default button was unreachable from the keyboard for as long as any combo had focus — in a settings dialog that opens on one, from the moment it appears. It now records the value and passes the key on; an open dropdown still takes Enter, because the choice is what Enter means there. Found by building the first descriptor form that contained a combo. | The same defect as L-31, in the third of the three option widgets. ckmux drives its dialogs from the keyboard by design ([06](06-ui-design.md)), so a control that eats the accept key is a dialog nobody can finish. |
 
+### Landed (U0-a — hosting a session the application did not launch)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-43 | **`Application::adopt_terminal_subsession()`** — a caller's own `TerminalSubsession` joins the same vector `step()`'s three loops walk, so it is drained under the same byte budget, folded into the same combined wait, and notified to every view exactly as a launched one is. `launch_terminal_subsession` is now a thin wrapper over it, and the raster identity comes from the same counter — a session left at the default has its pictures silently dropped by the view that would have drawn them. | The whole of `RemoteTerminalSubsession` (WP-5). A mirror is a subsession ckmux builds from protocol state, and without this it could not be hosted at all: ckmux would have had to reproduce `step()`'s child handling, including the second drain after the poll, which is invisible until it is missing. |
+| L-44 | **`Application::release_terminal_subsession()`** — the way back out, returning the session to the caller. Adoption without it is a one-way door, and the sessions worth adopting are the ones that come and go. Safe from inside a change notification, which is where a host learns a session ended: the slot empties and the next `step()` compacts, and the drain loop indexes rather than iterates because a notification may also adopt. Verified by perturbation — an immediate erase fails the test under ASan with a container-overflow. | A mirror whose far end closed is not a session any more; without release it would be drained every step and polled every wait for the life of the client. The same was already true of ckmux's *launched* terminals: every closed window left its subsession in `Application` forever. |
+
+The report had called this "a ~5-line addition", and adoption alone nearly is.
+Release is the rest, and it is not optional for the use case that motivated
+the item. `release` takes the `core::TerminalSubsession` seam because that is
+what `on_terminal_subsession_changed` hands over — writing the test is what
+showed that the first signature made every caller downcast.
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -216,7 +229,6 @@ writes a file.
 
 | # | Item | For |
 |---|---|---|
-| U0-a | **Attach-an-existing-subsession** entry point on `Application` (today only `launch_terminal_subsession(spec)` exists — no way to hand it a custom/remote subsession). Without it, `TerminalView` change-notification (`notify_terminal_subsession_changed`) and `wait_handles()` aggregation don't reach mirror subsessions. The report calls this "a ~5-line addition"; it is the single cleanest enabler for ckmux. | M2 |
 | U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
 | U2 | XTGETTCAP/DECRQSS/rectangles when an app demands them; `OSC 8` hyperlinks, inner side; `SGR 53` overline. *(Kitty keyboard child side and indexed-colour preservation have landed; see below.)* | later |

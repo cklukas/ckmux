@@ -114,8 +114,9 @@ Server process + protocol v1 (`Hello`/`Attach`/`Input`/`GridDelta`/
 snapshot/self-healing backpressure), one auto-created session,
 `RemoteTerminalSubsession` mirror wired into the M1 UI, lazy server start,
 detach/quit/reattach, stale-socket + version-mismatch handling.
-Needs **U0-a** (attach-existing-subsession) and **U0-b** (damage/no-copy
-snapshots). **U0-c** — bell, charset, DA1, RIS/DECALN and the scrollback
+Needs **U0-b** (damage/no-copy snapshots). **U0-a** — hosting a subsession
+the application did not launch, with the release path that makes it two-way —
+is done (2026-08-17, ckVision `2355bc3`). **U0-c** — bell, charset, DA1, RIS/DECALN and the scrollback
 capacity option — and **U0-d** — the title policy, its bound and the
 window-title stack — are both done (2026-08-17, ckVision `08c3dea` and
 `2a7d78d`; [07](07-ckvision-integration.md), L-33…L-38).

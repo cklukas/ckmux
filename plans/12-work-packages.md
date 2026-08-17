@@ -67,7 +67,7 @@ take first.
 |---:|---|---|---:|---|---|
 | — | M0 — Scaffolding | ckmux | — | **Done** | — |
 | — | M1 — Single-process shell | ckmux | — | **Done** (corrected 2026-08-17) | — |
-| 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Ready** | — |
+| 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Ready** | — |
 | 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Ready** | — |
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Ready** | — |
@@ -143,15 +143,20 @@ polish; all of it is the machinery that makes `kill -9` on a client harmless.
 [02-architecture.md](02-architecture.md) and [05-protocol.md](05-protocol.md)
 are the specs.
 
-**U0-a — attach-an-existing-subsession.** `Application` can only
-`launch_terminal_subsession(spec)`, which constructs and owns the session
-itself. Its loop already drains every subsession, calls
-`notify_terminal_subsession_changed`, and folds each one's `wait_handles()`
-into the poll — a ckmux mirror needs exactly that and cannot get in. Add an
-adopt entry point over the same owning vector.
-*Done when*: a custom `TerminalSubsession` handed to `Application` is drained,
-polled, and notified identically to a launched one, proven by a test using a
-fake subsession, with the whole ckVision suite green.
+**U0-a — attach-an-existing-subsession.** *Done, 2026-08-17
+(ckVision 2355bc3; [07](07-ckvision-integration.md) L-43/L-44).*
+`adopt_terminal_subsession()` puts a caller's session into the same owning
+vector, so `step()` drains it, notifies it and folds its `wait_handles()` into
+the poll identically to a launched one — `launch` is now a wrapper over it.
+Proven with a fake subsession, and the suite is green apart from one failure
+that predates it and belongs to another package's file
+(`posix_terminal_withdraws_runtime_sixel_geometry…`, red at ckVision b73290e).
+
+**Added to the package while implementing it:** `release_terminal_subsession()`.
+Adoption without a way out is a one-way door, and a mirror whose far end
+closed would be drained on every step for the life of the client — which was
+already true of every terminal ckmux closed. It is safe to call from inside a
+change notification, since that is where a host learns a session ended.
 
 **U0-b — damage/no-copy snapshots.** `snapshot()` returns `TerminalSnapshot`
 by value — grid, rasters, and up to `max_scrollback_lines` of scrollback, deep
