@@ -54,6 +54,16 @@ struct TerminalRequest {
     std::string title;
 };
 
+// One session, as a reader is shown it.
+struct SessionRow {
+    std::uint64_t id = 0;
+    std::string name;
+    int terminals = 0;
+    // Whether somebody is watching it — which for the reader looking at this
+    // list is themselves, and worth saying plainly.
+    bool attached = false;
+};
+
 struct ClientOptions {
     // Everything the configuration file said, defaults included (plans/08).
     // The client reads its own settings out of this rather than holding a
@@ -122,6 +132,28 @@ struct ClientOptions {
     // answer to give. Returning false means the request could not be sent, and
     // the client falls back to saying so rather than to opening one locally.
     std::function<bool()> request_new_terminal;
+    // What Detach does, and what Quit does when there is a server to detach
+    // FROM.
+    //
+    // A multiplexer's client quitting is not an application closing its
+    // documents: the programs go on running, which is the entire point, so
+    // quitting must not ask a reader whether to kill anything. Unset is the M1
+    // world — no server, nothing to detach from, and quit means quit.
+    std::function<void()> detach_from_server;
+    // Asks the server what sessions exist. The answer arrives later, through
+    // `ClientApp::show_session_list`: sessions come and go without this
+    // client's involvement, so "what is running?" is a question with an answer
+    // rather than a value a client can hold.
+    std::function<void()> list_sessions;
+    // Whether to open a terminal at startup.
+    //
+    // True is M1: a client with no server has nothing to attach to, so an empty
+    // desktop would be an empty program. An attached client says false and
+    // decides after the snapshot arrives — because the session it joins usually
+    // ALREADY has terminals, and opening one anyway means a reader gains a
+    // stray shell every time they restart. That is not hypothetical: it is what
+    // ckmux did until a reader restarted it twice.
+    bool open_terminal_at_startup = true;
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator
@@ -151,6 +183,9 @@ public:
     // client does when the server announces one, including every terminal that
     // was already running when it attached.
     ckv::widgets::Window* open_terminal(std::string title);
+    // Shows what the server answered. Called by the host when the list arrives;
+    // `rows` is in the server's order, and the attached one is marked.
+    void show_session_list(std::vector<SessionRow> rows);
 
     // --- State the UI derives from, exposed so tests can assert on the
     // same values the rendering does rather than scraping cells ----------

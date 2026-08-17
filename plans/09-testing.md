@@ -138,6 +138,22 @@ rather than by reading it — including the one that mattered most, that with no
 configuration file at all *no terminal could ever start*, because every other
 test had named a shell explicitly.
 
+**The layer that was missing, and the report that found it.** A reader ran ckmux
+and said: "it seems the app is like a prototype where you say it's done but
+actually nothing works or is tested". That was fair, and the reason is visible in
+what the tests above ask. Everything underneath was covered — the protocol, the
+mirror, the diff engine, the server, the emulator — and the tests that covered
+COMMANDS asked whether a handler existed and whether a window appeared. A handler
+that opens a dialog nobody can see passes both. So does a menu item wired to a
+callback nothing ever set, a dialog with no room for its list, a terminal sized
+so its content sits above the window, and a client that opens a stray shell on
+every restart. All five shipped.
+
+`tests/test_menu_commands.cpp` is the answer: the real `ckmux` binary, in a real
+terminal, against a real server, pressing the keys a reader presses and reading
+the screen a reader sees. Anything a reader can invoke belongs here, and a
+command is not done until it is.
+
 ### 4. Client UI (labels `script`, `golden`)
 
 `HeadlessTerminal` hosts the real client against a scripted fake server

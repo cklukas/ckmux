@@ -113,6 +113,10 @@ bool ServerSession::handle(const proto::Message& message) {
             terminal->mirror().apply(*meta);
         return true;
     }
+    if (const auto* sessions = std::get_if<proto::SessionList>(&message)) {
+        if (on_sessions) on_sessions(sessions->sessions);
+        return true;
+    }
     if (std::holds_alternative<proto::Pong>(message)) return true;
     return false;
 }

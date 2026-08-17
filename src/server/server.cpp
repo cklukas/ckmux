@@ -316,6 +316,26 @@ void Server::handle(Client& client, const proto::Message& message) {
         drop(client, "said Hello twice");
         return;
     }
+    if (std::holds_alternative<proto::ListSessions>(message)) {
+        // One session, and it is real: it exists from the moment the server
+        // does, it holds whatever terminals have been opened, and it says
+        // whether somebody is watching it. WP-8 makes them plural and named;
+        // until then a reader asking "what is running?" gets a true answer
+        // rather than a disabled menu item.
+        proto::SessionList list;
+        proto::SessionInfo info;
+        info.id = session_;
+        info.name = "default";
+        info.terminals = static_cast<std::uint16_t>(terminals_.size());
+        info.attached = attached_client() != nullptr ? 1 : 0;
+        // Timestamps stay zero: a server's clock is monotonic by design
+        // (ckVision's determinism rule), so "created at" needs a wall-clock
+        // reading nothing here is entitled to take. WP-8 gives sessions their
+        // own creation time along with their names.
+        list.sessions.push_back(info);
+        send(client, list);
+        return;
+    }
     if (const auto* request = std::get_if<proto::Attach>(&message)) {
         attach(client, *request);
         return;

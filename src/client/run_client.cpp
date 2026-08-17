@@ -78,15 +78,59 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         session.request(ask);
         return true;
     };
+    // Detaching, and quitting, are the same act for an attached client: say so
+    // to the server, and stop drawing. The programs go on running — which is
+    // the whole point, and why quitting must not ask a reader whether to close
+    // anything.
+    bool detached = false;
+    options.client.detach_from_server = [&session, &app, &detached]() {
+        detached = true;
+        session.request(proto::Detach{});
+        app.request_quit();
+    };
+    options.client.list_sessions = [&session]() { session.request(proto::ListSessions{}); };
+    // The session usually has terminals already — that is what attaching to one
+    // MEANS. One is asked for only if it turns out to be empty, once the
+    // snapshot has said so.
+    options.client.open_terminal_at_startup = false;
 
     ClientApp application(app, std::move(options.client));
     client = &application;
+
+    // The answer to `ListSessions`, shown as it arrives. Asking and being told
+    // are separate moments, because a session list is a fact about the server
+    // rather than a value this client holds.
+    session.on_sessions = [&client](const std::vector<proto::SessionInfo>& sessions) {
+        if (client == nullptr) return;
+        std::vector<SessionRow> rows;
+        rows.reserve(sessions.size());
+        for (const proto::SessionInfo& info : sessions)
+            rows.push_back(SessionRow{info.id, info.name, info.terminals, info.attached != 0});
+        client->show_session_list(std::move(rows));
+    };
 
     session.on_terminal_opened = [&pending, &client](RemoteTerminalSubsession& remote) {
         pending.push_back(&remote);
         // The window, now that there is something behind it. `open_terminal` is
         // the same call M1 makes; what differs is only when it happens.
-        if (client != nullptr) (void)client->open_terminal("Terminal");
+        // Empty: the client numbers and places it, exactly as it does for a
+        // local one. The child's own caption replaces the name as soon as it
+        // sets one.
+        if (client != nullptr) (void)client->open_terminal({});
+    };
+
+    // An empty session gets a terminal; a session with programs in it gets left
+    // alone. Checked once, after the first snapshot, because that is the first
+    // moment the answer exists.
+    bool asked_for_the_first_terminal = false;
+    const auto open_one_if_the_session_is_empty = [&session, &asked_for_the_first_terminal,
+                                                   &options]() {
+        if (asked_for_the_first_terminal || !session.attached()) return;
+        asked_for_the_first_terminal = true;
+        if (!session.terminal_ids().empty()) return;
+        proto::NewTerminal ask;
+        ask.command = options.client.settings.shell;
+        session.request(ask);
     };
 
     const ckv::Size size = terminal.size();
@@ -128,6 +172,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             (void)session.handle(message);
         }
         session.heal_if_needed();
+        open_one_if_the_session_is_empty();
         // Every window whose terminal has news repaints, which is the same
         // notification a local terminal raises — the client does not care where
         // the bytes came from.
@@ -140,8 +185,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             return 0;
         }
     }
-    proto::Detach detach;
-    (void)connection.stream.send(proto::encode(detach));
+    if (!detached) (void)connection.stream.send(proto::encode(proto::Detach{}));
     (void)connection.stream.flush();
     return 0;
 }

@@ -145,7 +145,7 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
         if (key == "ckmux.terminal") return "keys go to the program in this window";
         return {};
     });
-    new_terminal();
+    if (options_.open_terminal_at_startup) new_terminal();
     refresh_footer();
     report_config_warnings();
     title_timer_ = app_.start_timer(options_.title_poll_nanos, /*repeating=*/true,
@@ -212,19 +212,49 @@ void ClientApp::register_commands() {
             // a menu item that is plainly not available yet, which is what an
             // empty clipboard looks like everywhere else.
             registry.set_enabled_predicate(paste, [this] { return !internal_clipboard_.empty(); });
-        } else if (binding.key == commands::kDetach || binding.key == commands::kSessions) {
-            // Declared so the menu, the footer, and the key reference all show
-            // the real shape of ckmux from the first milestone — and disabled,
-            // so they say plainly that the server does not exist yet (M2)
-            // rather than pretending or hiding.
-            registry.set_enabled_predicate(declare(binding.key, binding.title, "Session", [] {}),
-                                           [] { return false; });
+        } else if (binding.key == commands::kDetach) {
+            // Detaching leaves everything running and closes this client. It is
+            // available exactly when there is a server to detach from: in the
+            // M1 world there is nothing to leave, and a menu item that pretends
+            // otherwise is worse than one that is plainly not available.
+            const u::CommandId detach = declare(binding.key, binding.title, "Session", [this] {
+                if (options_.detach_from_server) options_.detach_from_server();
+            });
+            registry.set_enabled_predicate(
+                detach, [this] { return static_cast<bool>(options_.detach_from_server); });
+        } else if (binding.key == commands::kSessions) {
+            // What is running, and which of it this client is watching. Not the
+            // picker — switching between sessions is WP-9 — but a reader asking
+            // "what is on this server?" gets a true answer instead of a greyed
+            // menu item.
+            const u::CommandId sessions = declare(binding.key, binding.title, "Session", [this] {
+                if (options_.list_sessions) options_.list_sessions();
+            });
+            registry.set_enabled_predicate(
+                sessions, [this] { return static_cast<bool>(options_.list_sessions); });
         } else if (binding.key == commands::kFocusByNumber) {
             // Display-only: the digits carry a value, so they are dispatched
             // directly rather than through one handler.
             registry.set_enabled_predicate(declare(binding.key, binding.title, "Terminal", [] {}),
                                            [] { return false; });
         }
+    }
+
+    // Quitting an attached client DETACHES it.
+    //
+    // ckVision's standard quit sweeps the windows first and lets any of them
+    // veto — right for an application with documents, wrong for a multiplexer:
+    // a reader who quits ckmux while `htop` is running was asked "Terminal is
+    // still running a program. Close it anyway?", which is a question about the
+    // wrong thing entirely. Their program is not being closed; their view of it
+    // is. `set_handler` on a standard command is the sanctioned way to say so
+    // (ckVision's own command.hpp gives this as the example).
+    // Replaced only when there IS a server. With none, ckVision's own handler is
+    // exactly right — the terminals really are ending, so sweeping the windows
+    // and asking about the live ones is what a reader wants.
+    if (options_.detach_from_server) {
+        registry.set_handler(registry.standard().quit,
+                             [this] { options_.detach_from_server(); });
     }
 
     declare(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
@@ -383,6 +413,33 @@ void ClientApp::open_calendar() {
     dropdown->calendar().set_selected(today);
 }
 
+void ClientApp::show_session_list(std::vector<SessionRow> rows) {
+    std::string text;
+    for (const SessionRow& row : rows) {
+        // The marker first, because a reader scanning a list is looking for
+        // where they are.
+        if (!text.empty()) text += "\n";
+        text += row.attached ? "● " : "  ";
+        text += row.name.empty() ? ("session " + std::to_string(row.id)) : row.name;
+        text += row.terminals == 1 ? " — 1 terminal"
+                                   : " — " + std::to_string(row.terminals) + " terminals";
+        if (row.attached) text += "  (attached: this client)";
+    }
+    if (text.empty()) text = "No sessions are running.";
+    // A list and a Close button. Switching between sessions is WP-9; a dialog
+    // that offered it before the server could do it would be a button that lies.
+    // Presented, not exec'd: this runs inside a command handler, which is
+    // already inside `Application::step`, and a nested loop there is exactly
+    // what ckVision's own documentation says not to do. It cost a dialog that
+    // simply never appeared — invisible to every test that only asked whether
+    // the command had a handler.
+    auto presentation = std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{w::MessageBoxKind::Info, "Sessions", std::move(text),
+                                w::MessageBoxButtons::Ok}));
+    presentation->set_completion_handler([presentation](w::MessageBoxResult) {});
+}
+
 ckv::widgets::Window* ClientApp::new_terminal() {
     // Attached to a server, this is a request rather than an act: the window is
     // opened when the server says the terminal exists (plans/03). Locally it is
@@ -391,16 +448,23 @@ ckv::widgets::Window* ClientApp::new_terminal() {
         (void)options_.request_new_terminal();
         return nullptr;
     }
-    return open_terminal("Terminal " + std::to_string(next_terminal_number_++));
+    return open_terminal({});
 }
 
 ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
+    // The numbering lives HERE, in the one place a terminal window is made.
+    // It used to live in `new_terminal()`, which an attached client never
+    // reaches — it asks the server instead — so every remote window was called
+    // "Terminal" and every one of them cascaded to the same spot, landing
+    // exactly on top of the last. Two terminals looked like one.
+    const int number = next_terminal_number_++;
+    if (title.empty()) title = "Terminal " + std::to_string(number);
     const std::string fallback_title = title;
     auto window = std::make_unique<w::Window>(std::move(title));
     // Cascade from the top-left so a second terminal never lands exactly on
     // the first. Full placement policy is a session-model concern (M2).
     const ckv::Rect area = desktop_->content_area();
-    const int offset = static_cast<int>((next_terminal_number_ - 2) % 6) * 2;
+    const int offset = static_cast<int>((number - 1) % 6) * 2;
     window->set_bounds(ckv::Rect{area.x + 2 + offset, area.y + 1 + offset,
                                  std::max(20, area.width - 8 - offset),
                                  std::max(6, area.height - 4 - offset)});
@@ -533,7 +597,11 @@ void ClientApp::refresh_terminal_titles() {
         if (entry == titles_.end()) continue;  // a dialog, not a terminal
         w::TerminalView* const view = terminal_view_of(window);
         if (view == nullptr) continue;
-        const std::string wanted = view->session().snapshot().title;
+        // `status()`, not `snapshot()`: this runs on a timer for every window,
+        // and a snapshot copies the grid and the history to hand back one
+        // string — which on a client's mirror means rebuilding its whole
+        // scrollback, several times a second, to ask what the caption is.
+        const std::string wanted = view->session().status().title;
         // While its history is being read the caption belongs to copy mode,
         // which writes the badge and the scroll position into it. The child's
         // title is still recorded, so leaving copy mode restores whatever the

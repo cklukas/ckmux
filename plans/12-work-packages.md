@@ -489,6 +489,35 @@ putting the bug back.
 The multiplexer. [03-session-model.md](03-session-model.md)'s operation table
 is the specification, and every row of it becomes at least one wire-level test.
 
+**Found by a reader running it (2026-08-17), and fixed in the same day.** None of
+these were protocol faults; every layer underneath was working, which is exactly
+why the tests underneath said so:
+
+  * **Quitting asked the wrong question.** With `htop` running, quitting ckmux
+    asked "Terminal is still running a program. Close it anyway?" — a question
+    about closing a program, when what is closing is a view of it. An attached
+    client's Quit now detaches. `^B d` does too, and both leave everything
+    running.
+  * **`Sessions…` was a greyed menu item.** The server now answers
+    `ListSessions` with what is really there, and the dialog names the session,
+    counts its terminals and marks the one this client is watching.
+  * **Every remote window was called "Terminal" and landed on the same spot.**
+    The numbering lived in `new_terminal()`, which an attached client never
+    reaches, so two terminals looked like one.
+  * **Restarting gained a terminal every time.** The client opened one at
+    startup the way a single-process application would; it now asks for one only
+    if the session it joined turns out to be empty.
+  * **A dialog presented with `exec_message_box` from a command handler never
+    appeared at all** — a nested loop inside `Application::step`, which
+    ckVision's own documentation warns against.
+
+What is NOT restored on reattach, and is honest to say so: **window geometry**.
+The terminals come back with their content, their sizes and their titles, but
+each window is placed by the client's own cascade rather than where the reader
+left it. Layout is server state in plans/03 and travels in `TerminalState.rect`;
+storing and returning it belongs with WP-8's session state, which is the next
+package.
+
 **WP-8 — Multi-session server state.** Multiple sessions; create/rename/kill;
 id, index, and name rules; `kill-empty-session`; the terminal limit.
 **WP-9 — Session picker and takeover.** Startup picker, and the

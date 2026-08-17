@@ -16,6 +16,7 @@ set(CKMUX_TEST_SOURCES
     test_diff_engine.cpp
     test_grid_delta.cpp
     test_keymap.cpp
+    test_menu_commands.cpp
     test_prefix.cpp
     test_proto.cpp
     test_remote_terminal.cpp

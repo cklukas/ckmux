@@ -45,6 +45,10 @@ public:
     // reader as-is: "taken over by another client" is the message, and any
     // paraphrase of it here would be a second place to get it wrong.
     std::function<void(proto::DetachReason, const std::string&)> on_detached;
+    // What the server said when asked what sessions exist. Asked for by
+    // `ListSessions`, which is a question with an answer rather than a value a
+    // client can hold: sessions come and go without this client's involvement.
+    std::function<void(const std::vector<proto::SessionInfo>&)> on_sessions;
 
     explicit ServerSession(Send send);
 
