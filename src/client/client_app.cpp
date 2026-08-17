@@ -190,7 +190,18 @@ void ClientApp::register_commands() {
         // A row whose key belongs to the library is the library's to declare.
         if (!binding.key.starts_with("ckmux.")) continue;
         if (binding.key == commands::kNewTerminal) {
-            declare(binding.key, binding.title, "Terminal", [this] { new_terminal(); });
+            const u::CommandId new_term =
+                declare(binding.key, binding.title, "Terminal", [this] { new_terminal(); });
+            // A terminal lives in a session. A client with none — one that
+            // started without attaching — cannot open one, and says so plainly
+            // rather than sending a request the server will refuse.
+            //
+            // A client with no server at all is a different thing: M1's local
+            // ckmux owns its terminals directly and has no sessions to be
+            // outside of, so nothing is gated there.
+            registry.set_enabled_predicate(new_term, [this] {
+                return !options_.detach_from_server || attached_session_ != 0;
+            });
         } else if (binding.key == commands::kCloseTerminal) {
             declare(binding.key, binding.title, "Terminal", [this] { close_terminal(active_terminal()); });
         } else if (binding.key == commands::kMoveResize) {
@@ -222,6 +233,19 @@ void ClientApp::register_commands() {
             });
             registry.set_enabled_predicate(
                 detach, [this] { return static_cast<bool>(options_.detach_from_server); });
+        } else if (binding.key == commands::kRenameSession) {
+            const u::CommandId rename = declare(binding.key, binding.title, "Session", [this] {
+                show_rename_session_dialog(attached_session_name_);
+            });
+            registry.set_enabled_predicate(rename, [this] {
+                return options_.rename_session && attached_session_ != 0;
+            });
+        } else if (binding.key == commands::kKillSession) {
+            const u::CommandId kill =
+                declare(binding.key, binding.title, "Session", [this] { show_kill_session_dialog(); });
+            registry.set_enabled_predicate(kill, [this] {
+                return options_.kill_session && attached_session_ != 0;
+            });
         } else if (binding.key == commands::kSessions) {
             // What is running, and which of it this client is watching. Not the
             // picker — switching between sessions is WP-9 — but a reader asking
@@ -256,6 +280,24 @@ void ClientApp::register_commands() {
         registry.set_handler(registry.standard().quit,
                              [this] { options_.detach_from_server(); });
     }
+
+    // The prefix key itself, as a command with a chord.
+    //
+    // A terminal view consumes every key except the prefix, so this binding can
+    // only ever fire when no terminal has focus — which is exactly the state a
+    // client with no session is in. Without it the footer advertised "^B m
+    // menu" to a reader who had just chosen to start without a session, and not
+    // one of those keys did anything: the prefix lived on the terminal view,
+    // and there was no terminal.
+    registry.bind_key(options_.settings.prefix,
+                      registry.declare(u::CommandDescriptor{
+                          .key = std::string(commands::kArmPrefix),
+                          .title = "Prefix",
+                          .category = "Terminal",
+                          .context = {},
+                          .chord = {},
+                          .visibility = u::CommandVisibility::Hidden,
+                          .handler = [this] { arm_prefix(); }}));
 
     declare(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
         if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
@@ -302,8 +344,9 @@ void ClientApp::build_chrome() {
 
     w::MenuBarItem session_menu{
         "&Session",
-        {item(commands::kNewTerminal), separator, item(commands::kDetach), item(commands::kSessions),
-         separator, item(u::std_command_keys::kQuit)}};
+        {item(commands::kNewTerminal), separator, item(commands::kSessions),
+         item(commands::kRenameSession), item(commands::kKillSession), separator,
+         item(commands::kDetach), item(u::std_command_keys::kQuit)}};
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal), separator,
@@ -413,31 +456,250 @@ void ClientApp::open_calendar() {
     dropdown->calendar().set_selected(today);
 }
 
-void ClientApp::show_session_list(std::vector<SessionRow> rows) {
-    std::string text;
-    for (const SessionRow& row : rows) {
-        // The marker first, because a reader scanning a list is looking for
-        // where they are.
-        if (!text.empty()) text += "\n";
-        text += row.attached ? "● " : "  ";
-        text += row.name.empty() ? ("session " + std::to_string(row.id)) : row.name;
-        text += row.terminals == 1 ? " — 1 terminal"
-                                   : " — " + std::to_string(row.terminals) + " terminals";
-        if (row.attached) text += "  (attached: this client)";
+std::string ClientApp::suggested_session_name() const {
+    // One past the largest "session-N" a reader already has, so the prompt
+    // offers a name that does not collide with one they are looking at. The
+    // server suggests the same way; this is what the FIELD starts at, and the
+    // reader is free to type over it.
+    long highest = 0;
+    for (const SessionRow& row : last_sessions_) {
+        if (row.name.rfind("session-", 0) != 0) continue;
+        const std::string tail = row.name.substr(8);
+        if (tail.empty() || tail.find_first_not_of("0123456789") != std::string::npos) continue;
+        highest = std::max(highest, std::strtol(tail.c_str(), nullptr, 10));
     }
-    if (text.empty()) text = "No sessions are running.";
-    // A list and a Close button. Switching between sessions is WP-9; a dialog
-    // that offered it before the server could do it would be a button that lies.
-    // Presented, not exec'd: this runs inside a command handler, which is
-    // already inside `Application::step`, and a nested loop there is exactly
-    // what ckVision's own documentation says not to do. It cost a dialog that
-    // simply never appeared — invisible to every test that only asked whether
-    // the command had a handler.
-    auto presentation = std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
-        app_, *desktop_, roles_,
-        w::MessageBoxDescriptor{w::MessageBoxKind::Info, "Sessions", std::move(text),
-                                w::MessageBoxButtons::Ok}));
-    presentation->set_completion_handler([presentation](w::MessageBoxResult) {});
+    return "session-" + std::to_string(highest + 1);
+}
+
+void ClientApp::show_new_session_dialog(std::string suggested_name) {
+    w::DialogDescriptor descriptor;
+    descriptor.title = "New session";
+    w::FieldDescriptor name;
+    name.label = "Name";
+    name.kind = w::FieldKind::Text;
+    name.initial_text = suggested_name.empty() ? suggested_session_name() : std::move(suggested_name);
+    descriptor.fields.push_back(std::move(name));
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Create session", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
+        if (!result.accepted || result.values.empty()) return;
+        // An empty field means "you name it": the server's own rule, rather
+        // than a dialog inventing one a second way.
+        if (options_.create_session) options_.create_session(result.values.front());
+    });
+}
+
+void ClientApp::show_rename_session_dialog(std::string current_name) {
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Rename session";
+    w::FieldDescriptor name;
+    name.label = "Name";
+    name.kind = w::FieldKind::Text;
+    name.initial_text = std::move(current_name);
+    descriptor.fields.push_back(std::move(name));
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Rename", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
+        if (!result.accepted || result.values.empty() || result.values.front().empty()) return;
+        if (options_.rename_session) options_.rename_session(result.values.front());
+    });
+}
+
+void ClientApp::show_kill_session_dialog() {
+    const std::string& name = attached_session_name_;
+    int terminals = 0;
+    for (const SessionRow& row : last_sessions_)
+        if (row.id == attached_session_) terminals = row.terminals;
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "End session";
+    w::FieldDescriptor what;
+    what.kind = w::FieldKind::Note;
+    what.label = "Every program in " + (name.empty() ? std::string("this session") : "\"" + name + "\"") +
+                 (terminals == 1 ? " (1 terminal)" : " (" + std::to_string(terminals) + " terminals)") +
+                 " will be asked to quit.";
+    descriptor.fields.push_back(std::move(what));
+
+    const std::size_t force_field = descriptor.fields.size();
+    w::FieldDescriptor force;
+    force.kind = w::FieldKind::Check;
+    force.label = "&Kill anything still running after " +
+                  std::to_string(options_.settings.kill_grace_seconds) + " seconds";
+    // Ticked by default: a reader ending a session means it to end. Unticking
+    // it is the deliberate choice, and the note says what that choice costs.
+    force.initial_checked = true;
+    descriptor.fields.push_back(std::move(force));
+    w::FieldDescriptor note;
+    note.kind = w::FieldKind::Note;
+    note.label = "  Unticked, a program that declines to quit keeps running — and so does the "
+                 "session.";
+    descriptor.fields.push_back(std::move(note));
+    w::FieldDescriptor where;
+    where.kind = w::FieldKind::Note;
+    where.label = "  The wait is Settings ▸ \"Give programs this long to quit\".";
+    descriptor.fields.push_back(std::move(where));
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&End session", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler([this, presentation, force_field](const w::DialogResult& result) {
+        if (!result.accepted || result.checked.size() <= force_field) return;
+        if (options_.kill_session)
+            options_.kill_session(result.checked[force_field], options_.settings.kill_grace_seconds);
+    });
+}
+
+void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
+    last_sessions_ = rows;
+    // The name of the session being watched can have changed under this client
+    // — another client can rename it — and every prompt that says it reads
+    // from here.
+    if (attached_session_ != 0) attached_session_name_ = session_name(attached_session_);
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Sessions";
+
+    // The sessions, as one selectable group: a reader picks the row they mean
+    // and the buttons act on it. What each row says is what they need in order
+    // to choose — how much is running in it, and whether somebody else is
+    // watching it, because attaching to that one takes it from them.
+    w::FieldDescriptor choice;
+    choice.kind = w::FieldKind::Radio;
+    // No mnemonic: a group label is not a control, and ckVision renders a '&'
+    // in one literally — its mnemonics live on the options themselves.
+    choice.label = rows.empty() ? "" : "Session";
+    for (const SessionRow& row : rows) {
+        std::string line = row.name.empty() ? "session " + std::to_string(row.id) : row.name;
+        line += row.terminals == 1 ? " — 1 terminal"
+                                   : " — " + std::to_string(row.terminals) + " terminals";
+        // Three states, and a reader picking a row needs to tell them apart:
+        // the one they are already watching, one somebody else is watching —
+        // where attaching takes it from them — and one nobody holds.
+        if (row.id == attached_session_ && attached_session_ != 0)
+            line += "  (this client)";
+        else if (row.attached)
+            line += "  (in use — attaching takes it over)";
+        choice.options.push_back(std::move(line));
+    }
+    if (!rows.empty()) {
+        // The one this client is already watching, if any; otherwise the first.
+        choice.initial_selection = 0;
+        for (std::size_t index = 0; index < rows.size(); ++index)
+            if (rows[index].id == attached_session_)
+                choice.initial_selection = static_cast<int>(index);
+        descriptor.fields.push_back(std::move(choice));
+    } else {
+        w::FieldDescriptor empty;
+        empty.kind = w::FieldKind::Note;
+        empty.label = "No sessions are running yet. ckmux keeps programs running after you "
+                      "leave — create a session to start one.";
+        descriptor.fields.push_back(std::move(empty));
+    }
+
+    // Attaching to a different session is a detach and an attach, which is what
+    // "switch" means here (plans/03): the windows this client is showing belong
+    // to the session it is leaving.
+    if (!rows.empty()) {
+        std::vector<std::uint64_t> ids;
+        ids.reserve(rows.size());
+        for (const SessionRow& row : rows) ids.push_back(row.id);
+        descriptor.buttons.push_back(w::ButtonDescriptor{"&Attach", w::ButtonRole::Accept, {}});
+        attach_choice_ = std::move(ids);
+    }
+    // Dismiss rather than Neutral: this button LEAVES the picker — the name
+    // prompt is the next question, not a second one on top of the first. As a
+    // Neutral button it opened the prompt over a picker that stayed behind it,
+    // and the picker was still there afterwards, half-covered by the terminal
+    // the reader had just made. ckVision runs a Dismiss button's own on_press
+    // and then closes the dialog, which is exactly this.
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        "&New session…", w::ButtonRole::Dismiss,
+        [this] { app_.post([this] { show_new_session_dialog(suggested_session_name()); }); }});
+    // What dismissing MEANS depends on where this client stands. Attached, it is
+    // "leave things as they are". With no session — at startup, or after one was
+    // taken away — it is a reader choosing to carry on without one, which is a
+    // real answer to the question and deserves to be named.
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        attached_session_ == 0 ? "&Without a session" : "&Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
+        if (!result.accepted || result.selected.empty()) return;
+        const int index = result.selected.front();
+        if (index < 0 || static_cast<std::size_t>(index) >= attach_choice_.size()) return;
+        if (options_.attach_to_session) options_.attach_to_session(attach_choice_[static_cast<std::size_t>(index)]);
+    });
+}
+
+void ClientApp::forget_terminals() {
+    if (desktop_ == nullptr) return;
+    // Copy mode is a surface over a window that is about to stop existing.
+    if (copy_mode_ != nullptr) leave_copy_mode();
+    forgetting_terminals_ = true;
+    std::vector<w::Window*> going;
+    going.reserve(terminal_windows_.size());
+    for (const auto& entry : terminal_windows_) going.push_back(entry.second);
+    // Removed rather than closed: a close asks the window whether it may go,
+    // and a window with a live program in it says no and puts a question in
+    // front of the reader about a program that is not being ended at all.
+    for (w::Window* window : going) (void)desktop_->remove_window(window);
+    terminal_windows_.clear();
+    titles_.clear();
+    forgetting_terminals_ = false;
+    // The numbering starts over with the session: "Terminal 1" is the first
+    // terminal of what a reader is looking at now.
+    next_terminal_number_ = 1;
+    refresh_footer();
+}
+
+void ClientApp::close_window_for_terminal(const ckv::term::TerminalSubsession& terminal) {
+    const auto found = terminal_windows_.find(&terminal);
+    if (found == terminal_windows_.end() || desktop_ == nullptr) return;
+    w::Window* const window = found->second;
+    // The terminal is already gone, so nothing is asked and nothing is sent:
+    // this window is being taken down because the server said its terminal
+    // ended, and asking the server to end it again would be an error frame.
+    forgetting_terminals_ = true;
+    terminal_windows_.erase(found);
+    titles_.erase(window);
+    (void)desktop_->remove_window(window);
+    forgetting_terminals_ = false;
+    focus_active_terminal();
+    refresh_footer();
+}
+
+void ClientApp::remember_sessions(std::vector<SessionRow> rows) {
+    last_sessions_ = std::move(rows);
+    if (attached_session_ != 0) attached_session_name_ = session_name(attached_session_);
+}
+
+std::string ClientApp::session_name(std::uint64_t id) const {
+    for (const SessionRow& row : last_sessions_)
+        if (row.id == id) return row.name;
+    return {};
+}
+
+void ClientApp::set_attached_session(std::uint64_t id, std::string name) {
+    attached_session_ = id;
+    attached_session_name_ = std::move(name);
+    // The keyboard follows the session. Posted rather than done here because
+    // this usually runs while a dialog is closing, and a dialog restores focus
+    // to whatever had it when it opened — the desktop, when a reader attached
+    // from the picker, which left every keystroke going nowhere.
+    if (id != 0) app_.post([this] {
+        focus_active_terminal();
+        refresh_footer();
+    });
+    // Nothing to notify: the registry asks each command's predicate when it
+    // needs the answer, so the menu is right the next time it is drawn.
 }
 
 ckv::widgets::Window* ClientApp::new_terminal() {
@@ -548,8 +810,13 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
         confirm_then_close(terminal_window);
         return false;  // vetoed for now; the confirmation decides
     };
+    terminal_windows_[terminal_session] = terminal_window;
     window->on_closed = [this, terminal_window, terminal_session] {
-        terminal_session->close();
+        // Ended, unless this client is merely leaving the session — in which
+        // case the terminal is somebody's to go back to and closing it here
+        // would kill the very programs the session exists to keep.
+        if (!forgetting_terminals_) terminal_session->close();
+        terminal_windows_.erase(terminal_session);
         titles_.erase(terminal_window);
         w::schedule_self_detach(*terminal_window, app_);
         // Focus and the footer both follow whatever the desktop activates
@@ -861,13 +1128,7 @@ void ClientApp::show_settings() {
                            .kind = w::FieldKind::Check,
                            .initial_checked = options_.settings.login_shell});
     descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  Runs your login startup files (~/.zprofile, ~/.profile), so a",
-                           .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  terminal here has the same PATH as one you open from the Dock.",
-                           .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  Unticked, only ~/.zshrc and its kind run. tmux ticks this.",
+        w::FieldDescriptor{.label = "  Runs ~/.zprofile and ~/.profile, so a terminal here has the Dock's PATH.",
                            .kind = w::FieldKind::Note});
 
     // The picture limit. Its unit is in the label because a bare number in a
@@ -885,17 +1146,26 @@ void ClientApp::show_settings() {
     descriptor.fields.push_back(w::FieldDescriptor{
         .label = "  Pictures larger than the window are cut off at its edge, so this only",
         .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  stops an absurd one: 64 is far more than a full screen at 4K and 2x",
-        .kind = w::FieldKind::Note});
     descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  scaling. Between " + std::to_string(ckm::kSixelMegapixelsMin) +
+        w::FieldDescriptor{.label = "  stops an absurd one. Between " + std::to_string(ckm::kSixelMegapixelsMin) +
                                     " and " + std::to_string(ckm::kSixelMegapixelsMax) +
-                                    "; a larger one is refused, with the reason.",
+                                    "; new terminals only.",
                            .kind = w::FieldKind::Note});
+
+    // How long a session's programs are given to end. The note says the thing a
+    // reader would otherwise find out the hard way: that nothing is killed at
+    // all unless they ask for it at the moment they end a session.
+    const std::size_t grace_field = descriptor.fields.size();
     descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  Both take effect for terminals opened from now on.",
-                           .kind = w::FieldKind::Note});
+        w::FieldDescriptor{.label = "&Give programs this long to quit (seconds):",
+                           .initial_text = std::to_string(options_.settings.kill_grace_seconds),
+                           .validate = [](const std::string& text) {
+                               return ckm::parse_int_in_range(text, 0, 600).has_value();
+                           },
+                           .kind = w::FieldKind::Text});
+    descriptor.fields.push_back(w::FieldDescriptor{
+        .label = "  When you end a session. Nothing is killed unless you tick that box.",
+        .kind = w::FieldKind::Note});
 
     // The clock and the theme: chrome rather than terminal behaviour, which is
     // why they are last, and why the note above says only the two settings
@@ -929,7 +1199,8 @@ void ClientApp::show_settings() {
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
         w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
-        [this, login_field, sixel_field, clock_field, theme_field](w::DialogResult result) {
+        [this, login_field, sixel_field, grace_field, clock_field, theme_field](
+            w::DialogResult result) {
             if (!result.accepted || result.checked.size() <= login_field ||
                 result.values.size() <= sixel_field || result.selected.size() <= theme_field)
                 return;
@@ -943,6 +1214,10 @@ void ClientApp::show_settings() {
             if (const std::optional<int> megapixels =
                     ckm::parse_sixel_megapixels(result.values[sixel_field]))
                 stored = apply_sixel_max_megapixels(*megapixels) && stored;
+            if (result.values.size() > grace_field)
+                if (const std::optional<int> seconds =
+                        ckm::parse_int_in_range(result.values[grace_field], 0, 600))
+                    stored = apply_kill_grace_seconds(*seconds) && stored;
             stored = apply_clock_mode(choice_value(kClockChoices, result.selected[clock_field],
                                                    options_.settings.clock)) &&
                      stored;
@@ -965,6 +1240,13 @@ bool ClientApp::apply_login_shell(bool login_shell) {
     // that two settings changed together cost one explanation.
     return ckm::save_setting(ckm::platform::config_file_path(), "general", "login-shell",
                              ckm::bool_setting(login_shell));
+}
+
+bool ClientApp::apply_kill_grace_seconds(int seconds) {
+    if (options_.settings.kill_grace_seconds == seconds) return true;
+    options_.settings.kill_grace_seconds = seconds;
+    return ckm::save_setting(ckm::platform::config_file_path(), "general", "kill-grace-seconds",
+                             std::to_string(seconds));
 }
 
 bool ClientApp::apply_sixel_max_megapixels(int megapixels) {

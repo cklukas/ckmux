@@ -49,6 +49,27 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     ServerSession session([&connection](const proto::Message& message) {
         (void)connection.stream.send(proto::encode(message));
     });
+    // Where the bytes are reassembled into frames. Declared here rather than
+    // beside the loop because a reconnection has to start it over: half a frame
+    // from a server that has gone is not the beginning of one from its
+    // successor.
+    proto::FrameReader reader;
+    // A server ends with its last session (plans/03), so losing the connection
+    // is an ordinary thing that happens to a client whose reader ended their
+    // work — not a failure. The next request that needs a server starts one,
+    // exactly as the first one did.
+    const auto ensure_connected = [&connection, &session, &reader, &options]() -> bool {
+        if (connection.stream.open()) return true;
+        ServerConnection fresh =
+            connect_to_server(options.socket, options.executable, proto::ClientKind::Ui);
+        if (!fresh.ok()) return false;
+        connection = std::move(fresh);
+        reader = proto::FrameReader{};
+        // Nothing this client held survives: the mirrors were of terminals in
+        // another process, and the attachment was to a session that server had.
+        session.connection_lost();
+        return true;
+    };
     session.set_history_limit(static_cast<std::size_t>(options.client.settings.scrollback));
 
     // Windows follow terminals, and terminals belong to the server. A window is
@@ -88,7 +109,60 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         session.request(proto::Detach{});
         app.request_quit();
     };
-    options.client.list_sessions = [&session]() { session.request(proto::ListSessions{}); };
+    // Asking is not being told: the list arrives later, and only a list this
+    // client asked for on a READER's behalf opens the picker. The others — the
+    // one after every attach, the one after a rename — keep the names current
+    // and put nothing in anybody's way.
+    bool show_picker_when_the_list_arrives = false;
+    options.client.list_sessions = [&session, &ensure_connected, &show_picker_when_the_list_arrives]() {
+        show_picker_when_the_list_arrives = true;
+        if (!ensure_connected()) return;
+        session.request(proto::ListSessions{});
+    };
+    // Switching sessions is a detach and an attach — and everything on the
+    // screen belongs to the session being left, so it goes. A client that kept
+    // its windows would be showing a reader the terminals of a session it is no
+    // longer watching, each one frozen at the last frame it saw.
+    // One way to start watching a session, wherever the asking came from.
+    //
+    // The windows go first, because they belong to the session being left. The
+    // server needs no `Detach`: an `Attach` to another session IS the switch,
+    // and it leaves the one being left with its programs running and nobody
+    // watching — which is exactly the state ckmux exists to keep (plans/03).
+    const auto switch_to = [&session, &client, &terminal, &ensure_connected](std::uint64_t id) {
+        if (session.attached() && session.session() == id) return;
+        if (!ensure_connected()) return;
+        if (client != nullptr) client->forget_terminals();
+        session.attach(id, terminal.size(), terminal.capabilities().cell_pixels);
+    };
+    options.client.attach_to_session = switch_to;
+    // Creating a session means going to it: a reader who typed a name and
+    // pressed Create was not asking for a row in a list.
+    bool waiting_for_a_new_session = false;
+    options.client.create_session = [&session, &ensure_connected,
+                                     &waiting_for_a_new_session](const std::string& name) {
+        // The one place a server is started rather than found: a reader asking
+        // for a session after the last one ended is asking for a server too,
+        // and they should not have to know that.
+        if (!ensure_connected()) return;
+        proto::NewSession ask;
+        ask.name = name;
+        waiting_for_a_new_session = true;
+        session.request(ask);
+    };
+    options.client.rename_session = [&session](const std::string& name) {
+        proto::RenameSession ask;
+        ask.id = session.session();
+        ask.name = name;
+        session.request(ask);
+    };
+    options.client.kill_session = [&session](bool force, int grace_seconds) {
+        proto::KillSession ask;
+        ask.session = session.session();
+        ask.force = force ? 1 : 0;
+        ask.grace_seconds = static_cast<std::uint16_t>(std::max(0, grace_seconds));
+        session.request(ask);
+    };
     // The session usually has terminals already — that is what attaching to one
     // MEANS. One is asked for only if it turns out to be empty, once the
     // snapshot has said so.
@@ -97,16 +171,73 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     ClientApp application(app, std::move(options.client));
     client = &application;
 
-    // The answer to `ListSessions`, shown as it arrives. Asking and being told
-    // are separate moments, because a session list is a fact about the server
-    // rather than a value this client holds.
-    session.on_sessions = [&client](const std::vector<proto::SessionInfo>& sessions) {
+    // What to do with a session list depends on when it arrives. The first one
+    // is the startup decision — attach, or ask — and every one after it is a
+    // reader having asked what is running.
+    //
+    //   * Nothing running: start a session and attach to it. A reader who ran
+    //     `ckmux` wants a terminal, not a dialog about how to get one.
+    //   * One session, nobody watching it: attach. This is the reattach that
+    //     the whole project is for, and it needs no permission.
+    //   * Anything else — a session already in use, or several to choose from —
+    //     is a genuine choice, and only a reader can make it. The picker offers
+    //     taking it over, a new one, or carrying on with no session at all.
+    bool startup_decided = false;
+    session.on_sessions = [&client, &session, &switch_to, &startup_decided, &waiting_for_a_new_session,
+                           &show_picker_when_the_list_arrives](
+                              const std::vector<proto::SessionInfo>& sessions) {
         if (client == nullptr) return;
         std::vector<SessionRow> rows;
         rows.reserve(sessions.size());
         for (const proto::SessionInfo& info : sessions)
             rows.push_back(SessionRow{info.id, info.name, info.terminals, info.attached != 0});
-        client->show_session_list(std::move(rows));
+
+        // A session this client asked for, now that it exists. The newest is
+        // the one it asked for: ids only ever go up.
+        if (waiting_for_a_new_session && !rows.empty()) {
+            waiting_for_a_new_session = false;
+            startup_decided = true;
+            std::uint64_t newest = 0;
+            for (const SessionRow& row : rows) newest = std::max(newest, row.id);
+            // The list is what names sessions, so it is remembered before the
+            // attach that will ask for the name of the one just made.
+            client->remember_sessions(rows);
+            switch_to(newest);
+            return;
+        }
+        if (!startup_decided) {
+            startup_decided = true;
+            if (rows.empty()) {
+                waiting_for_a_new_session = true;
+                startup_decided = false;
+                proto::NewSession ask;
+                session.request(ask);
+                return;
+            }
+            if (rows.size() == 1 && !rows.front().attached) {
+                client->remember_sessions(rows);
+                switch_to(rows.front().id);
+                return;
+            }
+            show_picker_when_the_list_arrives = false;
+            client->show_session_picker(std::move(rows));
+            return;
+        }
+        if (!show_picker_when_the_list_arrives) {
+            client->remember_sessions(std::move(rows));
+            return;
+        }
+        show_picker_when_the_list_arrives = false;
+        client->show_session_picker(std::move(rows));
+    };
+
+    // A terminal the server has ended takes its window with it — including
+    // every terminal of a session this client has just left, which is how a
+    // switch clears what it was showing.
+    session.on_terminal_closed = [&session, &client](std::uint64_t id) {
+        if (client == nullptr) return;
+        if (RemoteTerminalSubsession* remote = session.terminal(id))
+            client->close_window_for_terminal(*remote);
     };
 
     session.on_terminal_opened = [&pending, &client](RemoteTerminalSubsession& remote) {
@@ -133,18 +264,66 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         session.request(ask);
     };
 
-    const ckv::Size size = terminal.size();
-    session.attach(0, size, terminal.capabilities().cell_pixels);
+    // One frame before the first question. The session list can arrive in the
+    // very first poll pass — before the application has ever laid the desktop
+    // out — and a dialog presented into an unlaid desktop is sized against
+    // nothing: a zero-rect window, on screen but invisible, and modal, so it
+    // also swallows every key a reader presses at what looks like a working
+    // ckmux. One step gives the desktop its real bounds first.
+    (void)app.step(clock.now_nanos());
 
-    session.on_detached = [&app](proto::DetachReason reason, const std::string& text) {
-        // A takeover is not an error and not a crash: another client has the
-        // session now, and this one has nothing left to draw. Saying why on the
-        // way out is the whole point of carrying the reason (plans/03).
-        std::fprintf(stderr, "ckmux: detached (%d): %s\n", static_cast<int>(reason), text.c_str());
-        app.request_quit();
+    // Asked before anything is attached to: what this client does next depends
+    // on what is already running, and only the server knows that.
+    session.request(proto::ListSessions{});
+
+    session.on_attached = [&client, &session, &asked_for_the_first_terminal](std::uint64_t id) {
+        if (client == nullptr) return;
+        // The name comes from the list rather than the attach: a client that
+        // attached from a picker already has it, and one that did not will get
+        // it with the next list. Zero would be a lie either way — it is
+        // watching this session now.
+        client->set_attached_session(id, client->session_name(id));
+        // The next empty-session check belongs to THIS attachment: a session
+        // with nothing in it gets a terminal, and one with programs in it is
+        // left exactly as its reader left it.
+        asked_for_the_first_terminal = false;
+        // So the name is right in the prompts that use it, and so that a reader
+        // who takes a session over sees the list they are now part of.
+        session.request(proto::ListSessions{});
+    };
+    session.on_detached = [&app, &client, &session, &detached,
+                           &show_picker_when_the_list_arrives](proto::DetachReason reason,
+                                                              const std::string& text) {
+        // Nothing is written to stderr here, and nowhere else in this loop
+        // either: an attached client's stderr IS the reader's terminal, and
+        // ckVision is drawing on it. One line about a takeover landed in the
+        // middle of a window frame and stayed there.
+        //
+        // A detach this client asked for is a client on its way out. Any other
+        // — a takeover, a session ended under it — leaves it running with
+        // nothing to watch, which is a state it can be in perfectly well: the
+        // commands that need a session go grey and the reader can pick another.
+        (void)reason;
+        (void)text;
+        if (detached) {
+            app.request_quit();
+            return;
+        }
+        if (client != nullptr) {
+            client->forget_terminals();
+            client->set_attached_session(0, {});
+        }
+        // What now? A reader whose session was taken from them, or ended under
+        // them, is looking at an empty desktop; the list says what else is
+        // there and the picker lets them go to it.
+        show_picker_when_the_list_arrives = true;
+        session.request(proto::ListSessions{});
     };
 
-    proto::FrameReader reader;
+    // Anything worth telling the reader on the way out, printed once the
+    // application has finished with the terminal.
+    std::string farewell;
+    std::int64_t next_reconnect_nanos = 0;
     while (!app.quit_requested()) {
         const std::int64_t now = clock.now_nanos();
         // The application's next timer, or nothing at all when it has none. A
@@ -159,15 +338,19 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
 
         if (connection.stream.wants_write() && !connection.stream.flush()) break;
         std::string arrived;
-        const bool alive = connection.stream.receive(arrived);
+        const bool alive = !connection.stream.open() || connection.stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) break;
         for (;;) {
             proto::Message message;
             const proto::DecodeError error = reader.next(message);
             if (error == proto::DecodeError::Incomplete) break;
             if (error != proto::DecodeError::None) {
-                std::fprintf(stderr, "ckmux: the server sent something this build cannot read\n");
-                return 1;
+                // Said after the loop, once ckVision has given the terminal
+                // back: a line printed now would land on top of the frame it
+                // is still drawing.
+                farewell = "ckmux: the server sent something this build cannot read";
+                app.request_quit();
+                break;
             }
             (void)session.handle(message);
         }
@@ -181,12 +364,43 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
                 app.root().notify_terminal_subsession_changed(*remote);
         (void)app.step(clock.now_nanos());
         if (!alive) {
-            std::fprintf(stderr, "ckmux: the server closed the connection\n");
-            return 0;
+            // The server has gone — because a reader ended the last session, or
+            // because it failed. Either way this client keeps running with
+            // nothing attached: its windows belong to terminals that no longer
+            // exist, and the commands that need a session go grey until there
+            // is one again. Quitting on it would take a reader's whole ckmux
+            // away for something they may well have asked for.
+            connection.stream.close();
+            session.connection_lost();
+            if (client != nullptr) {
+                client->forget_terminals();
+                client->set_attached_session(0, {});
+            }
+        }
+        // A reader who was waiting for a session list still is, connection or
+        // no connection. Asking again starts a server, which is what makes
+        // "end the last session, then start another" one uninterrupted thing —
+        // and it RETRIES on later passes rather than deciding once, because
+        // the moment after a server exits is exactly when connecting to its
+        // socket can fail: the old one may not have unbound yet. Throttled, so
+        // a machine where no server can start is not asked twenty times a
+        // second.
+        if (show_picker_when_the_list_arrives && !connection.stream.open()) {
+            const std::int64_t now_nanos = clock.now_nanos();
+            if (now_nanos >= next_reconnect_nanos) {
+                next_reconnect_nanos = now_nanos + 1'000'000'000;
+                if (ensure_connected()) session.request(proto::ListSessions{});
+            }
         }
     }
-    if (!detached) (void)connection.stream.send(proto::encode(proto::Detach{}));
-    (void)connection.stream.flush();
+    if (connection.stream.open()) {
+        if (!detached) (void)connection.stream.send(proto::encode(proto::Detach{}));
+        (void)connection.stream.flush();
+    }
+    if (!farewell.empty()) {
+        std::fprintf(stderr, "%s\n", farewell.c_str());
+        return 1;
+    }
     return 0;
 }
 

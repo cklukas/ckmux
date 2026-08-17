@@ -230,8 +230,25 @@ right end of the menu bar, where the calendar can hang from it.
 
 ## The session picker
 
-Shown at startup (always, when any session exists), via `^B s`, and via
-`Session → Switch…`. A centered ckVision dialog:
+*As built (2026-08-18), which differs from the sketch below in two decided
+ways.* First, startup does not always ask: nothing running creates a session
+and attaches, and exactly one session with nobody watching it attaches
+outright — the picker appears only when there is a genuine choice (the only
+session is in use, or there are several). A reader who ran `ckmux` wants their
+terminal back, not a dialog about how to get it. Second, the picker's rows are
+a radio group and its actions are Attach / New session… / a dismiss that is
+"Cancel" when attached and "Without a session" when not — Rename and End
+Session live on the Session menu (gated on being attached) rather than in the
+picker, and the kill confirmation carries the one decision only a reader can
+make there: whether whatever ignores the asking is killed after
+`kill-grace-seconds`. A row somebody else holds says so inline: "(in use —
+attaching takes it over)"; the row this client holds says "(this client)".
+Created/last-used columns wait for the wall-clock question they raise.
+
+The original sketch, kept for the columns and CLI rows still to come:
+
+Shown at startup, via `^B s`, and via `Session → Sessions…`. A centered
+ckVision dialog:
 
 ```
 ┌ ckmux sessions ────────────────────────────────────────────┐

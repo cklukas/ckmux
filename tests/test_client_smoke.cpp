@@ -819,3 +819,39 @@ CK_TEST(turning_the_clock_off_in_the_dialog_takes_it_off_the_bar) {
     (void)::unsetenv("CKMUX_CONFIG");
     std::filesystem::remove_all(config.parent_path());
 }
+
+CK_TEST(leaving_a_session_takes_its_windows_down_and_leaves_the_programs_alone) {
+    // Switching sessions, and being detached from one, are the same act on this
+    // side: the windows belong to the session being left. What must NOT happen
+    // is the close path — that ends the terminals, and the programs in a
+    // session a reader has merely stopped watching go on running.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows().size() == 1U);
+    f.client.open_terminal({});
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows().size() == 2U);
+
+    f.client.forget_terminals();
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows().empty());
+    // And off the screen, which is the half a reader can see. Gone from
+    // `windows()` is not gone from the frame: a view that is detached but still
+    // painted leaves a terminal a reader can look at, click on, and not use.
+    {
+        std::string screen;
+        const ckv::FrameView frame = f.app.current_frame();
+        for (int y = 0; y < frame.size().height; ++y)
+            for (int x = 0; x < frame.size().width; ++x)
+                screen += frame.at(ckv::Point{x, y}).grapheme();
+        CK_CHECK(screen.find("Terminal 1") == std::string::npos);
+    }
+
+    // And the client is usable afterwards: a session attached next opens its
+    // windows into the same desktop, numbered from the start.
+    f.client.open_terminal({});
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows().size() == 1U);
+    CK_CHECK(f.client.desktop().windows().front()->title() == "Terminal 1");
+}

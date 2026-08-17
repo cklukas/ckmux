@@ -30,6 +30,17 @@ const char* value_of(const char* name) {
     return value != nullptr && *value != '\0' ? value : nullptr;
 }
 
+// A socket that will never raise SIGPIPE on this process (macOS's half of the
+// guarantee flush() states; on Linux MSG_NOSIGNAL there does it per write).
+void suppress_sigpipe(int fd) {
+#if defined(SO_NOSIGPIPE)
+    int on = 1;
+    (void)::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#else
+    (void)fd;
+#endif
+}
+
 bool set_non_blocking(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
     return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
@@ -173,6 +184,7 @@ ConnectResult connect_to_server(const std::filesystem::path& path) {
         return result;
     }
     result.status = ConnectStatus::Connected;
+    suppress_sigpipe(fd);
     result.fd = fd;
     return result;
 }
@@ -261,6 +273,7 @@ int Listener::accept_one(std::string& refusal) {
         (void)::close(client);
         return -1;
     }
+    suppress_sigpipe(client);
     if (!set_non_blocking(client)) {
         refusal = "cannot make the connection non-blocking";
         (void)::close(client);
@@ -316,7 +329,21 @@ bool Stream::send(std::string_view bytes) {
 
 bool Stream::flush() {
     while (sent_ < pending_.size()) {
+        // Never SIGPIPE. A peer that goes away must not take this process with
+        // it: `write` to a socket whose other end has closed raises SIGPIPE,
+        // whose default action is death, and a client that happened to be
+        // sending a request when its server exited died mid-frame with nothing
+        // on the screen to say why. The server ignores the signal process-wide;
+        // this is the same guarantee for everyone who holds a Stream, made at
+        // the one call that can raise it.
+#if defined(MSG_NOSIGNAL)
+        const ssize_t written =
+            ::send(fd_, pending_.data() + sent_, pending_.size() - sent_, MSG_NOSIGNAL);
+#else
+        // macOS has no MSG_NOSIGNAL; SO_NOSIGPIPE on the socket does the same
+        // thing once, and is set where the socket is made.
         const ssize_t written = ::write(fd_, pending_.data() + sent_, pending_.size() - sent_);
+#endif
         if (written > 0) {
             sent_ += static_cast<std::size_t>(written);
             continue;

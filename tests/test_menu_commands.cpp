@@ -230,12 +230,15 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     }
     reader.press("\x1b");  // Esc closes it
 
-    // ^B s — the sessions list, saying which one this client is watching. It
-    // shipped as a greyed menu item.
+    // ^B s — the sessions picker: what is running, which one this client is
+    // watching, and the three things a reader may do about it. It shipped as a
+    // greyed menu item, and then as a list that could only be read.
     reader.press("\x02" "s");
     CK_CHECK(reader.sees("Sessions"));
-    CK_CHECK(reader.screen().find("attached") != std::string::npos);
+    CK_CHECK(reader.screen().find("(this client)") != std::string::npos);
     CK_CHECK(reader.screen().find("2 terminals") != std::string::npos);
+    CK_CHECK(reader.screen().find("Attach") != std::string::npos);
+    CK_CHECK(reader.screen().find("New session") != std::string::npos);
     reader.press("\x1b");
 
     // ^B t — tiled: both windows on screen at once, side by side, so the two
@@ -268,6 +271,65 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
 
     reader.quit();
     end_process(server);
+    forget(socket);
+}
+
+CK_TEST(ending_the_last_session_stops_the_server_and_the_client_offers_a_fresh_start) {
+    // The whole lifecycle the Session menu promises, in one pass: ^B K opens
+    // the End session confirmation with its kill checkbox, Enter ends the
+    // session, the SERVER exits with its last session — a server with nothing
+    // to serve is a process holding a socket for nobody — and the client
+    // outlives it: an empty desktop, and the picker offering a new session
+    // rather than a corpse or a crash.
+    const std::filesystem::path socket = private_socket("endsession");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    reader.press("\x02" "K");
+    CK_CHECK(reader.sees("End session"));
+    CK_CHECK(reader.screen().find("asked to quit") != std::string::npos);
+    CK_CHECK(reader.screen().find("Kill anything still running") != std::string::npos);
+    reader.press("\r");
+
+    // The session is gone, the server goes with it, and the client is still a
+    // running ckmux: no session, so the picker offers what a reader can do.
+    CK_CHECK(reader.sees("No sessions are running yet"));
+    CK_CHECK(reader.screen().find("New session") != std::string::npos);
+
+    const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(4000);
+    bool server_gone = false;
+    while (!server_gone && clock_type::now() < deadline) {
+        int status = 0;
+        server_gone = ::waitpid(server, &status, WNOHANG) == server;
+        if (!server_gone) ::usleep(20000);
+    }
+    CK_CHECK(server_gone);
+
+    // Creating a session from that picker starts a fresh server: "end the last
+    // session, then start another" is one uninterrupted thing.
+    reader.press("\x1b" "n");
+    CK_CHECK(reader.sees("New session"));
+    reader.press("\r");
+    CK_CHECK(reader.sees("Terminal 1"));
+    reader.press("echo FRESH-SERVER\n");
+    CK_CHECK(reader.sees("FRESH-SERVER"));
+
+    reader.quit();
+    // The respawned server holds the new session; end it so nothing leaks.
+    Reader closer;
+    CK_CHECK(closer.start(socket));
+    CK_CHECK(closer.sees("Terminal 1"));
+    closer.press("\x02" "K");
+    CK_CHECK(closer.sees("End session"));
+    closer.press("\r");
+    closer.settle(800);
+    closer.quit();
     forget(socket);
 }
 

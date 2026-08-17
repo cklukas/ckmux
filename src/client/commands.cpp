@@ -31,8 +31,8 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 19>& default_bindings() {
-    static const std::array<KeyBinding, 19> kBindings{{
+const std::array<KeyBinding, 21>& default_bindings() {
+    static const std::array<KeyBinding, 21> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {"n", kNextWindow, "&Next Terminal", "next", 70, Action::NextTerminal},
@@ -48,6 +48,8 @@ const std::array<KeyBinding, 19>& default_bindings() {
         {"]", commands::kPaste, "&Paste", "paste", 25, Action::Paste},
         {"d", commands::kDetach, "&Detach", "detach", 80, Action::Detach},
         {"s", commands::kSessions, "&Sessions…", "sessions", 0, Action::Sessions},
+        {"R", commands::kRenameSession, "&Rename Session…", "rename", 0, Action::RenameSession},
+        {"K", commands::kKillSession, "&End Session…", "end session", 0, Action::KillSession},
         {"?", commands::kKeyReference, "&Keys…", "keys", 50, Action::KeyReference},
         {"q", kQuit, "&Quit ckmux", "quit", 10, Action::Quit},
         {"", commands::kSettings, "&Settings…", "settings", 0, Action::Settings},
@@ -74,6 +76,8 @@ std::string_view command_for_action(Action action) {
         case Action::Paste: return commands::kPaste;
         case Action::Detach: return commands::kDetach;
         case Action::Sessions: return commands::kSessions;
+        case Action::RenameSession: return commands::kRenameSession;
+        case Action::KillSession: return commands::kKillSession;
         case Action::KeyReference: return commands::kKeyReference;
         case Action::Settings: return commands::kSettings;
         case Action::About: return commands::kAbout;

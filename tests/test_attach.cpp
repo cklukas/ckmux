@@ -144,8 +144,8 @@ CK_TEST(attaching_hands_over_every_terminal_whole) {
 
     // Two terminals with something on their screens before anybody attaches —
     // which is the ordinary case, because the server was running first.
-    ckm::server::Terminal& first = server.terminals().open(spec_running("sleep 30"));
-    ckm::server::Terminal& second = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 30"));
     first.session().feed_output("the first terminal\r\n");
     second.session().feed_output("the second terminal\r\n");
 
@@ -180,7 +180,7 @@ CK_TEST(a_second_client_takes_the_session_and_the_first_is_told_why) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     terminal.session().feed_output("a program that outlives its clients\r\n");
 
     Client early;
@@ -231,7 +231,7 @@ CK_TEST(a_client_that_dies_is_a_detach_and_its_terminals_do_not_notice) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     const ckm::server::TerminalId id = terminal.id();
 
     {
@@ -267,7 +267,7 @@ CK_TEST(a_client_that_falls_behind_is_healed_by_a_snapshot_when_it_drains) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
 
     Client client;
     CK_CHECK(client.connect(socket));
@@ -352,7 +352,7 @@ CK_TEST(a_mirror_that_lost_track_asks_for_the_terminal_whole) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
 
     Client client;
     CK_CHECK(client.connect(socket));

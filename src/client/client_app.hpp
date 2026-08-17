@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -145,6 +146,17 @@ struct ClientOptions {
     // client's involvement, so "what is running?" is a question with an answer
     // rather than a value a client can hold.
     std::function<void()> list_sessions;
+    // Attaches to one — taking it over if somebody else has it, which is
+    // granted immediately and never negotiated (plans/03).
+    std::function<void(std::uint64_t session)> attach_to_session;
+    // Creates one under a name the reader chose, and attaches to it.
+    std::function<void(const std::string& name)> create_session;
+    // Renames the session this client is attached to.
+    std::function<void(const std::string& name)> rename_session;
+    // Ends the session this client is watching: every program in it is asked to
+    // quit, and — only if the reader says so — anything still running when the
+    // grace period runs out is killed.
+    std::function<void(bool force, int grace_seconds)> kill_session;
     // Whether to open a terminal at startup.
     //
     // True is M1: a client with no server has nothing to attach to, so an empty
@@ -185,7 +197,39 @@ public:
     ckv::widgets::Window* open_terminal(std::string title);
     // Shows what the server answered. Called by the host when the list arrives;
     // `rows` is in the server's order, and the attached one is marked.
-    void show_session_list(std::vector<SessionRow> rows);
+    // Which session this client is watching, as the server last said it. Zero
+    // is a client with none — one started without a session, or one whose
+    // session was ended under it — and every command that needs a session is
+    // disabled for exactly as long as it stays zero.
+    void set_attached_session(std::uint64_t id, std::string name);
+    std::uint64_t attached_session() const noexcept { return attached_session_; }
+    // Takes down every terminal window and leaves what is behind them running.
+    // This is what LEAVING a session means: the programs in it carry on, and
+    // this client simply stops showing them. Not `close_terminal`, which ends
+    // them — a reader switching sessions asked for nothing of the kind.
+    void forget_terminals();
+    // The window showing this terminal is gone because the terminal is: the
+    // server has said so, so nothing is asked of it on the way out.
+    void close_window_for_terminal(const ckv::term::TerminalSubsession& terminal);
+    // The sessions the server last named, kept without showing anything. What
+    // the prompts read for names, and what the New Session suggestion counts.
+    void remember_sessions(std::vector<SessionRow> rows);
+    // The name this client last heard for a session, or empty. From the last
+    // list rather than held per session: names change, and the list is the
+    // only thing that says so.
+    std::string session_name(std::uint64_t id) const;
+
+    // The picker: what is running, and what a reader may do about it. Shown at
+    // startup when the choice is not obvious — when the only session is already
+    // being watched somewhere else, or when there is more than one — and by
+    // `Session ▸ Sessions…` at any time.
+    void show_session_picker(std::vector<SessionRow> rows);
+    // The name prompt, pre-filled with the server's suggestion.
+    void show_new_session_dialog(std::string suggested_name);
+    void show_rename_session_dialog(std::string current_name);
+    // Ending a session, with the one decision only a reader can make in front
+    // of them: whether a program that ignores the asking is killed.
+    void show_kill_session_dialog();
 
     // --- State the UI derives from, exposed so tests can assert on the
     // same values the rendering does rather than scraping cells ----------
@@ -238,6 +282,20 @@ private:
     // a caption can visibly change.
     void refresh_terminal_titles();
     void show_key_reference();
+    // The name the New Session prompt offers, from the sessions last seen.
+    std::string suggested_session_name() const;
+    std::vector<SessionRow> last_sessions_;
+    // Which window is showing which terminal, so that a terminal the server
+    // has ended takes its window with it.
+    std::map<const ckv::term::TerminalSubsession*, ckv::widgets::Window*> terminal_windows_;
+    // Set while windows are being taken down for a session this client is
+    // leaving, so the close path knows not to ask the server to end anything.
+    bool forgetting_terminals_ = false;
+    std::uint64_t attached_session_ = 0;
+    std::string attached_session_name_;
+    // The ids behind the picker's rows, in the order it lists them, so a
+    // selection index means a session.
+    std::vector<std::uint64_t> attach_choice_;
     void show_about();
     // Drops a calendar out of the menu-bar clock, the way a menu title drops
     // its menu.
@@ -261,6 +319,7 @@ private:
     // once rather than once per setting.
     bool apply_login_shell(bool login_shell);
     bool apply_sixel_max_megapixels(int megapixels);
+    bool apply_kill_grace_seconds(int seconds);
     // These two also change what is on screen at once — the clock and the
     // colours are what the reader is looking at while they choose.
     bool apply_clock_mode(ClockMode mode);

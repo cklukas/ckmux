@@ -41,6 +41,15 @@ RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     return reference;
 }
 
+void ServerSession::connection_lost() {
+    attached_ = false;
+    session_ = 0;
+    // No `on_terminal_closed`: the client takes its own windows down when it is
+    // told the connection went, and calling back from here would have it doing
+    // it twice for terminals nobody can close anyway.
+    terminals_.clear();
+}
+
 bool ServerSession::handle(const proto::Message& message) {
     if (const auto* attached = std::get_if<proto::Attached>(&message)) {
         attached_ = true;
@@ -69,6 +78,7 @@ bool ServerSession::handle(const proto::Message& message) {
             if (on_terminal_closed) on_terminal_closed(id);
             terminals_.erase(id);
         }
+        if (on_attached) on_attached(session_);
         return true;
     }
     if (const auto* detached = std::get_if<proto::Detached>(&message)) {

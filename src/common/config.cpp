@@ -249,6 +249,14 @@ std::optional<std::string> apply_assignment(std::string_view section, std::strin
             settings.term = written.empty() ? std::string("auto") : written;
             return std::nullopt;
         }
+        if (key == "kill-grace-seconds") {
+            if (const std::optional<int> seconds = parse_int_in_range(value, 0, 600)) {
+                settings.kill_grace_seconds = *seconds;
+                return std::nullopt;
+            }
+            return rejected(key, "a whole number of seconds between 0 and 600", written,
+                            std::to_string(settings.kill_grace_seconds));
+        }
         if (key == "mouse") return boolean(settings.mouse);
         if (key == "alternate-scroll") return boolean(settings.alternate_scroll);
         if (key == "sixel") return enumerated(settings.sixel, kSixelModes);
@@ -413,7 +421,7 @@ std::vector<std::string> keys_not_honoured_yet() {
     // a reader having to find the roadmap.
     return {
         "[general] on-exit (WP-13)",
-        "[general] kill-empty-session (WP-8)",
+        "[general] kill-empty-session (WP-13)",
         "[printer] mode (U1-c, PRINT-1…6)",
         "[printer] ask-cache (U1-c, PRINT-1…6)",
         "[printer] spool-limit (U1-c, PRINT-1…6)",

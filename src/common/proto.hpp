@@ -481,6 +481,16 @@ struct RenameTerminal {
 struct KillSession {
     static constexpr MessageType kType = MessageType::KillSession;
     std::uint64_t session = 0;
+    // Every program in it is asked to end — SIGHUP then SIGTERM, by the library
+    // that owns the child, so nothing above it ever handles a pid. What these
+    // two carry is the part only a reader can decide: how long to wait, and
+    // whether anything that ignores the asking is killed outright.
+    //
+    // `force = 0` means exactly what it says: a program that declines to quit
+    // keeps running, and the session with it. A reader who unticks the box is
+    // choosing that.
+    std::uint8_t force = 1;
+    std::uint16_t grace_seconds = 5;
     friend bool operator==(const KillSession&, const KillSession&) = default;
 };
 

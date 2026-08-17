@@ -459,8 +459,16 @@ void read(Reader& r, RenameTerminal& m) {
     m.name = r.str();
 }
 
-void write(Writer& w, const KillSession& m) { w.u64(m.session); }
-void read(Reader& r, KillSession& m) { m.session = r.u64(); }
+void write(Writer& w, const KillSession& m) {
+    w.u64(m.session);
+    w.u8(m.force);
+    w.u16(m.grace_seconds);
+}
+void read(Reader& r, KillSession& m) {
+    m.session = r.u64();
+    m.force = r.u8();
+    m.grace_seconds = r.u16();
+}
 
 void write(Writer& w, const Input& m) {
     w.u64(m.term);

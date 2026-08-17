@@ -45,6 +45,11 @@ public:
     // reader as-is: "taken over by another client" is the message, and any
     // paraphrase of it here would be a second place to get it wrong.
     std::function<void(proto::DetachReason, const std::string&)> on_detached;
+    // The attachment was granted, and to which session. Separate from the
+    // snapshot that comes with it because a client shows the session's NAME in
+    // places a snapshot knows nothing about — the title, the prompts that end
+    // or rename it — and needs to be told the moment it is watching one.
+    std::function<void(std::uint64_t session)> on_attached;
     // What the server said when asked what sessions exist. Asked for by
     // `ListSessions`, which is a question with an answer rather than a value a
     // client can hold: sessions come and go without this client's involvement.
@@ -73,6 +78,12 @@ public:
     // have discovered they need. Separate from `handle` so that a burst of
     // deltas costs at most one request, rather than one per delta.
     void heal_if_needed();
+
+    // The connection this session was carried on has gone. Everything held
+    // here described a server's terminals, and that server no longer exists, so
+    // none of it is true any more — a mirror kept across a reconnection would
+    // be showing a reader a screen from a process that has exited.
+    void connection_lost();
 
     RemoteTerminalSubsession* terminal(std::uint64_t id);
     std::vector<std::uint64_t> terminal_ids() const;

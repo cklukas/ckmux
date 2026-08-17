@@ -49,8 +49,8 @@ message will be seen, so it is designed, not an afterthought.
 |---|---|---|
 | `Hello` | above | first message, mandatory |
 | `ListSessions` | — | picker + `ckmux ls` |
-| `NewSession` | `name str?, spawn_first u8, cmd str?` | |
-| `Attach` | `session u64, cols u16, rows u16, pixel_w u16, pixel_h u16` | **always granted — latest client wins**: any prior client is detached first (`Detached{takeover}`, best-effort bounded flush; an unresponsive old client never delays the new attach). Pixel size feeds `TIOCSWINSZ` pixel fields & XTWINOPS 14/16 replies |
+| `NewSession` | `name str?` | empty name means the server names it (`session-N`); answered with `SessionList` to every greeted client — creating a session stales every picker |
+| `Attach` | `session u64, cols u16, rows u16, pixel_w u16, pixel_h u16` | session 0 = "the default one": the session already there, or a new one on a server that has none — a cold `ckmux` start is one round trip. **Always granted — latest client wins**: any prior client is detached first (`Detached{takeover}`, best-effort bounded flush; an unresponsive old client never delays the new attach). Pixel size feeds `TIOCSWINSZ` pixel fields & XTWINOPS 14/16 replies |
 | `Detach` | — | also implicit on socket close |
 | `ClientResize` | `cols, rows, pixel_w, pixel_h` | host terminal resized |
 | `NewTerminal` | `session u64?, cmd str?, geom rect?` | |
@@ -61,7 +61,7 @@ message will be seen, so it is designed, not an afterthought.
 | `Raise` / `FocusTerm` | `term u64` | z-order / focus |
 | `ZoomTerm` | `term u64, on u8` | maximize/restore |
 | `RenameSession` / `RenameTerminal` | `id u64, name str` | |
-| `KillSession` | `session u64` | |
+| `KillSession` | `session u64, force u8, grace_seconds u16` | ask every child first (`request_termination()`); kill the survivors at the deadline only if `force` |
 | `KillServer` | — | |
 | `Input` | `term u64, blob` | already-encoded child bytes — keys/mouse/focus are encoded **client-side** by ckVision's `TerminalView` against mirrored mode state ([04](04-terminal-emulation.md)); the server just writes to the PTY (queued) |
 | `PasteChunk` | `term u64, seq u32, final u8, blob` | ≤ 64 KiB chunks, credit-paced |

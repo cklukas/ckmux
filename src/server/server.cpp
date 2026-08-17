@@ -317,23 +317,55 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
     if (std::holds_alternative<proto::ListSessions>(message)) {
-        // One session, and it is real: it exists from the moment the server
-        // does, it holds whatever terminals have been opened, and it says
-        // whether somebody is watching it. WP-8 makes them plural and named;
-        // until then a reader asking "what is running?" gets a true answer
-        // rather than a disabled menu item.
-        proto::SessionList list;
-        proto::SessionInfo info;
-        info.id = session_;
-        info.name = "default";
-        info.terminals = static_cast<std::uint16_t>(terminals_.size());
-        info.attached = attached_client() != nullptr ? 1 : 0;
+        // Asked before attaching, which is the whole point: a client decides
+        // what to do — attach, take over, or start a new one — from what is
+        // actually running (plans/06's picker).
+        //
         // Timestamps stay zero: a server's clock is monotonic by design
         // (ckVision's determinism rule), so "created at" needs a wall-clock
-        // reading nothing here is entitled to take. WP-8 gives sessions their
-        // own creation time along with their names.
-        list.sessions.push_back(info);
-        send(client, list);
+        // reading nothing here is entitled to take.
+        send_session_list(client);
+        return;
+    }
+    if (const auto* request = std::get_if<proto::NewSession>(&message)) {
+        Session& session = create_session(request->name);
+        std::fprintf(stderr, "ckmux server: session %llu \"%s\" created\n",
+                     static_cast<unsigned long long>(session.id), session.name.c_str());
+        // The list, not just an id: the client that asked wants to show the
+        // result, and every other client's picker is now out of date.
+        for (const std::unique_ptr<Client>& watcher : clients_)
+            if (watcher->greeted) send_session_list(*watcher);
+        return;
+    }
+    if (const auto* request = std::get_if<proto::KillSession>(&message)) {
+        Session* const session = session_for(request->session != 0 ? request->session : client.session);
+        if (session == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+            error.context = "KillSession";
+            error.human = "no such session";
+            send(client, error);
+            return;
+        }
+        begin_kill(*session, request->force != 0, static_cast<int>(request->grace_seconds));
+        return;
+    }
+    if (const auto* request = std::get_if<proto::RenameSession>(&message)) {
+        Session* const session =
+            session_for(request->id != 0 ? request->id : client.session);
+        if (session == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+            error.context = "RenameSession";
+            error.human = "no such session";
+            send(client, error);
+            return;
+        }
+        // A name is a reader's label, not an identifier: the id is what
+        // everything else refers to, so a duplicate name is their business.
+        session->name = request->name.empty() ? session->name : request->name;
+        for (const std::unique_ptr<Client>& watcher : clients_)
+            if (watcher->greeted) send_session_list(*watcher);
         return;
     }
     if (const auto* request = std::get_if<proto::Attach>(&message)) {
@@ -373,6 +405,18 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
     if (const auto* request = std::get_if<proto::NewTerminal>(&message)) {
+        // Into the session this client is attached to. A client that is not
+        // attached has no session for a terminal to live in, and saying so is
+        // better than inventing one behind its back.
+        Session* const session = session_of(client);
+        if (session == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+            error.context = "NewTerminal";
+            error.human = "attach to a session before opening a terminal in it";
+            send(client, error);
+            return;
+        }
         TerminalSpec spec;
         spec.command = request->command;
         // Where a shell opens, and what it is told about its machine. The
@@ -390,15 +434,15 @@ void Server::handle(Client& client, const proto::Message& message) {
         spec.rows = request->rect.height > 0 ? static_cast<int>(request->rect.height) : 24;
         spec.pixel_width = spec.columns * std::max(0, client.cell_pixels.width);
         spec.pixel_height = spec.rows * std::max(0, client.cell_pixels.height);
-        Terminal& terminal = terminals_.open(spec);
-        focused_terminal_ = terminal.id();
+        Terminal& terminal = open_terminal(session->id, spec);
         proto::TermOpened opened;
         opened.term = terminal.id();
-        opened.session = session_;
+        opened.session = session->id;
         opened.columns = static_cast<std::uint16_t>(spec.columns);
         opened.rows = static_cast<std::uint16_t>(spec.rows);
-        for (const std::unique_ptr<Client>& watcher : clients_)
-            if (watcher->attached) send(*watcher, opened);
+        // Only to the client watching THAT session: a terminal in somebody
+        // else's session is none of this one's business.
+        if (Client* const watcher = client_attached_to(session->id)) send(*watcher, opened);
         return;
     }
     if (const auto* input = std::get_if<proto::Input>(&message)) {
@@ -413,11 +457,14 @@ void Server::handle(Client& client, const proto::Message& message) {
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
         (void)terminals_.close(close_it->term);
         diffs_.forget(close_it->term);
+        for (Session& session : sessions_)
+            session.terminals.erase(
+                std::remove(session.terminals.begin(), session.terminals.end(), close_it->term),
+                session.terminals.end());
         proto::TermClosed closed;
         closed.term = close_it->term;
         closed.exited = 1;
-        for (const std::unique_ptr<Client>& watcher : clients_)
-            if (watcher->attached) send(*watcher, closed);
+        if (Client* const watcher = client_attached_to(client.session)) send(*watcher, closed);
         return;
     }
     if (std::holds_alternative<proto::KillServer>(message)) {
@@ -438,23 +485,200 @@ void Server::handle(Client& client, const proto::Message& message) {
     send(client, error);
 }
 
-Server::Client* Server::attached_client() {
-    for (const std::unique_ptr<Client>& client : clients_)
-        if (client->attached && !client->closing) return client.get();
+Session* Server::session_for(SessionId id) {
+    for (Session& session : sessions_)
+        if (session.id == id) return &session;
     return nullptr;
 }
 
+Session* Server::session_of(const Client& client) {
+    return client.attached ? session_for(client.session) : nullptr;
+}
+
+Server::Client* Server::client_attached_to(SessionId id) {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->attached && !client->closing && client->session == id) return client.get();
+    return nullptr;
+}
+
+std::string Server::next_session_name() const {
+    // One past the largest number already taken, so a reader who renames
+    // "session-2" to "build" does not get a second "session-2" tomorrow.
+    long highest = 0;
+    for (const Session& session : sessions_) {
+        if (session.name.rfind("session-", 0) != 0) continue;
+        const std::string tail = session.name.substr(8);
+        if (tail.empty() || tail.find_first_not_of("0123456789") != std::string::npos) continue;
+        highest = std::max(highest, std::strtol(tail.c_str(), nullptr, 10));
+    }
+    return "session-" + std::to_string(highest + 1);
+}
+
+Terminal& Server::open_terminal(SessionId session_id, const TerminalSpec& spec) {
+    Terminal& terminal = terminals_.open(spec);
+    // Zero means "the default one", the same as it does in an `Attach`: the
+    // session already there, or a new one when this is the first terminal on a
+    // server nobody has asked anything of yet. A terminal with no session to go
+    // in would be a program nobody can ever see — not in a snapshot, not in a
+    // delta, not closable — so one is made rather than the terminal orphaned.
+    Session* session = session_for(session_id);
+    if (session == nullptr && session_id == 0 && !sessions_.empty()) session = &sessions_.front();
+    Session& home = session != nullptr ? *session : create_session({});
+    home.terminals.push_back(terminal.id());
+    home.focused = terminal.id();
+    return terminal;
+}
+
+Session& Server::create_session(std::string name) {
+    Session session;
+    a_session_has_existed_ = true;
+    session.id = next_session_++;
+    session.name = name.empty() ? next_session_name() : std::move(name);
+    sessions_.push_back(std::move(session));
+    return sessions_.back();
+}
+
+void Server::begin_kill(Session& session, bool force, int grace_seconds) {
+    // Asked, not killed: a program that is given a chance to save its work
+    // usually takes it, and the ones that ignore SIGTERM are exactly the ones a
+    // reader wants to decide about rather than have decided for them.
+    for (const TerminalId id : session.terminals)
+        if (Terminal* const terminal = terminals_.find(id)) terminal->request_termination();
+    PendingKill pending;
+    pending.session = session.id;
+    pending.force = force;
+    pending.deadline_nanos =
+        clock_.now_nanos() + static_cast<std::int64_t>(std::max(0, grace_seconds)) * 1'000'000'000;
+    kills_.push_back(pending);
+    std::fprintf(stderr, "ckmux server: ending session %llu \"%s\" (%d s grace, %s)\n",
+                 static_cast<unsigned long long>(session.id), session.name.c_str(), grace_seconds,
+                 force ? "then kill" : "no kill");
+}
+
+void Server::advance_kills() {
+    const std::int64_t now = clock_.now_nanos();
+    for (std::size_t index = 0; index < kills_.size();) {
+        PendingKill& pending = kills_[index];
+        Session* const session = session_for(pending.session);
+        if (session == nullptr) {
+            kills_.erase(kills_.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+        // Whatever has already gone is gone: a terminal whose child exited on
+        // the asking needs no further attention.
+        std::vector<TerminalId> still_running;
+        for (const TerminalId id : session->terminals) {
+            Terminal* const terminal = terminals_.find(id);
+            if (terminal != nullptr && terminal->live()) still_running.push_back(id);
+        }
+        const bool out_of_time = now >= pending.deadline_nanos;
+        if (!still_running.empty() && !out_of_time) {
+            ++index;
+            continue;
+        }
+        if (!still_running.empty() && !pending.force) {
+            // The reader said not to kill. What is left keeps running, and so
+            // does the session holding it — saying so is better than pretending
+            // the session ended.
+            std::fprintf(stderr,
+                         "ckmux server: session %llu kept: %zu program(s) declined to quit and "
+                         "kill was not enabled\n",
+                         static_cast<unsigned long long>(session->id), still_running.size());
+            kills_.erase(kills_.begin() + static_cast<std::ptrdiff_t>(index));
+            for (const std::unique_ptr<Client>& watcher : clients_)
+                if (watcher->greeted) send_session_list(*watcher);
+            continue;
+        }
+        // Out of time with the escalation enabled, or everything is already
+        // gone: closing is what actually removes a terminal either way, and
+        // ckVision's close escalates to SIGKILL for whatever is left.
+        for (const TerminalId id : session->terminals) {
+            (void)terminals_.close(id);
+            diffs_.forget(id);
+        }
+        const SessionId ended = session->id;
+        kills_.erase(kills_.begin() + static_cast<std::ptrdiff_t>(index));
+        forget_session(ended, proto::DetachReason::SessionKilled, "the session was ended");
+    }
+}
+
+void Server::forget_session(SessionId id, proto::DetachReason reason, std::string text) {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->attached && client->session == id) detach(*client, reason, text);
+    sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
+                                   [id](const Session& session) { return session.id == id; }),
+                    sessions_.end());
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->greeted) send_session_list(*client);
+    // The last session was the reason this process existed. A server with none
+    // left is holding a socket, a lock and a process table entry on behalf of
+    // nothing — so it goes, and the next reader who wants a session gets a
+    // fresh one started for them (plans/03: the server is started on demand).
+    //
+    // Only once a session HAS existed: a server that has just been started has
+    // no sessions yet, and exiting there would race the client that started it.
+    if (sessions_.empty() && a_session_has_existed_) {
+        std::fprintf(stderr, "ckmux server: the last session ended; stopping\n");
+        stop();
+    }
+}
+
+void Server::send_session_list(Client& client) {
+    proto::SessionList list;
+    list.sessions.reserve(sessions_.size());
+    for (const Session& session : sessions_) {
+        proto::SessionInfo info;
+        info.id = session.id;
+        info.name = session.name;
+        info.terminals = static_cast<std::uint16_t>(session.terminals.size());
+        // Attached means somebody ELSE is watching it, from this client's point
+        // of view — but the flag is about the session, so it says whether any
+        // client holds it. The client that holds it knows which one it is.
+        info.attached = client_attached_to(session.id) != nullptr ? 1 : 0;
+        list.sessions.push_back(std::move(info));
+    }
+    send(client, list);
+}
+
 void Server::attach(Client& client, const proto::Attach& request) {
-    // Granted immediately, and taken from whoever held it (plans/03). A reader
-    // whose laptop slept cannot be kept out by the client that is nominally
-    // still holding their session — which is why the previous holder is told
-    // rather than asked.
-    if (Client* previous = attached_client(); previous != nullptr && previous != &client) {
+    // Which session, and it must exist: a client attaches to something it has
+    // seen in a list, and inventing one here would hide a client that asked for
+    // a session somebody killed a moment ago.
+    Session* session = session_for(request.session);
+    if (session == nullptr && request.session == 0) {
+        // Zero is "the default session": the one already there, or a new one on
+        // a server that has none. A client that asks for a session BY id and
+        // does not get it is told so — that one may have been killed a moment
+        // ago, and inventing a replacement would hide it — but a client that
+        // asked for whatever is there is asking to work, and a server with
+        // nothing to attach to yet is exactly the server that should make one.
+        session = sessions_.empty() ? &create_session({}) : &sessions_.front();
+    }
+    if (session == nullptr) {
+        proto::Error error;
+        error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+        error.context = "Attach";
+        error.human = "no such session";
+        send(client, error);
+        return;
+    }
+    // Granted immediately, and taken from whoever held THAT session (plans/03).
+    // A reader whose laptop slept cannot be kept out by the client that is
+    // nominally still holding their session — which is why the previous holder
+    // is told rather than asked.
+    if (Client* previous = client_attached_to(session->id);
+        previous != nullptr && previous != &client) {
         detach(*previous, proto::DetachReason::Takeover,
                "taken over by another client on this machine");
     }
+    // Said out loud, because "which client is watching which session" is the
+    // first question anybody debugging a multiplexer asks, and a server log
+    // that answers it costs one line.
+    std::fprintf(stderr, "ckmux server: client %llu attached to session %llu \"%s\"\n",
+                 static_cast<unsigned long long>(client.id),
+                 static_cast<unsigned long long>(session->id), session->name.c_str());
     client.attached = true;
-    client.session = session_ != 0 ? session_ : request.session;
+    client.session = session->id;
     client.dirty_snapshot = false;
     if (request.columns > 0 && request.rows > 0) {
         client.desktop = ckv::Size{request.columns, request.rows};
@@ -479,9 +703,10 @@ void Server::send_snapshot(Client& client) {
     proto::Snapshot snapshot;
     snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, client.desktop.width));
     snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, client.desktop.height));
-    snapshot.focused_term = focused_terminal_;
+    const Session* const session = session_for(client.session);
+    snapshot.focused_term = session != nullptr ? session->focused : 0;
     std::uint16_t index = 0;
-    for (const TerminalId id : terminals_.ids()) {
+    for (const TerminalId id : session != nullptr ? session->terminals : std::vector<TerminalId>{}) {
         Terminal* terminal = terminals_.find(id);
         if (terminal == nullptr) continue;
         // Taking a snapshot restarts that terminal's sequence, so the first
@@ -492,7 +717,7 @@ void Server::send_snapshot(Client& client) {
         snapshot.terminals.push_back(std::move(state));
     }
     proto::Attached attached;
-    attached.session = client.session != 0 ? client.session : session_;
+    attached.session = client.session;
     attached.snapshot = std::move(snapshot);
     send(client, attached);
     client.dirty_snapshot = false;
@@ -537,6 +762,10 @@ void Server::flush_tick() {
     for (const TerminalId id : terminals_.ids())
         if (Terminal* terminal = terminals_.find(id)) terminal->observe_exit();
 
+    // A session being ended is watched here rather than waited for: the loop
+    // keeps serving every other terminal while its programs take their time.
+    if (!kills_.empty()) advance_kills();
+
     // A client that fell behind is healed before anything else is sent to it: a
     // fresh snapshot, once its queue has drained. The deltas it missed are gone
     // and cannot be reconstructed — the diff engine's belief moved on without
@@ -566,6 +795,8 @@ void Server::flush_tick() {
         // Only the attached client, and only a UI: a CLI utility has no screen,
         // and a connection that has not attached has not asked for one.
         if (!client->attached || client->kind != proto::ClientKind::Ui) continue;
+        const Session* const watched = session_for(client->session);
+        if (watched == nullptr) continue;
         if (client->dirty_snapshot) continue;  // waiting to be healed
         // Past the backlog mark a client stops being sent deltas at all.
         // Sending anyway would grow a queue that is already too big — and every
@@ -578,20 +809,38 @@ void Server::flush_tick() {
             client->dirty_snapshot = true;
             continue;
         }
-        for (const proto::GridDelta& delta : deltas) send(*client, delta);
+        for (const proto::GridDelta& delta : deltas) {
+            // A delta for a terminal in another session is not this client's to
+            // see: sessions are what a reader has instead of one big desktop.
+            if (std::find(watched->terminals.begin(), watched->terminals.end(), delta.term) ==
+                watched->terminals.end())
+                continue;
+            send(*client, delta);
+        }
     }
 }
 
 void Server::run() {
     while (step()) {
     }
-    // Children first: a server that unlinked its socket and then took time
-    // killing terminals would leave a window in which a new server can start
-    // while the old one still owns running programs.
+    // The listener first: a stopping server must stop LOOKING like a server
+    // before it does anything slow. Killing terminals below can take a grace
+    // period, and a client that connected to the still-bound socket in that
+    // window would sit in a backlog nobody will ever accept — which is exactly
+    // what a client that just ended the last session does next: reconnect, to
+    // start a fresh server for a fresh session. The socket is gone before the
+    // children are, and the children are gone before this returns, so at no
+    // moment can a NEW server start while this one still owns running
+    // programs.
+    listener_.close();
     terminals_.close_all();
+    // What was already queued goes out before the sockets do. A client that is
+    // told "the session ended" and then reads EOF knows what happened; one that
+    // only reads EOF has to guess, and would guess "the server crashed".
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->stream.wants_write()) (void)client->stream.flush();
     for (const std::unique_ptr<Client>& client : clients_) client->stream.close();
     clients_.clear();
-    listener_.close();
 }
 
 int run_server_process(const std::filesystem::path& socket, bool foreground) {

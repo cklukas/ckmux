@@ -48,9 +48,16 @@ inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";
+inline constexpr std::string_view kRenameSession = "ckmux.session.rename";
+inline constexpr std::string_view kKillSession = "ckmux.session.kill";
 inline constexpr std::string_view kKeyReference = "ckmux.help.keys";
 inline constexpr std::string_view kAbout = "ckmux.help.about";
 inline constexpr std::string_view kSendPrefix = "ckmux.terminal.send-prefix";
+// Arming the prefix from OUTSIDE a terminal. A terminal view hands the prefix
+// key to the client and everything else to its child, so this exists for the
+// moments when there is no terminal to press it in — a client with no session,
+// or one whose windows are all closed.
+inline constexpr std::string_view kArmPrefix = "ckmux.prefix";
 // There is no theme command. The colour theme is a stored setting, chosen and
 // kept in Settings ▸ General… — three commands that changed it for one session
 // and left the file saying otherwise were a menu that could not be trusted.

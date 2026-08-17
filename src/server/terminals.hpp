@@ -135,6 +135,12 @@ public:
     }
     int file_descriptor() const noexcept { return session_->file_descriptor(); }
 
+    // Asks the child to end and returns at once — SIGHUP then SIGTERM, sent by
+    // ckVision, which is the only thing here that knows the process group. A
+    // server killing a session asks every terminal, keeps serving, and decides
+    // for itself how long to wait; the waiting is a reader's setting, not a
+    // library's constant.
+    void request_termination() noexcept { session_->request_termination(); }
     // SIGHUP → SIGTERM → grace → SIGKILL, on the process group, in ckVision.
     // Idempotent: a client that asks twice is not an error.
     void close() noexcept;

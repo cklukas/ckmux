@@ -35,6 +35,11 @@ theme           = dark         # dark | light | mono (Settings ▸ General…)
 on-exit         = hold-on-error# close | hold | hold-on-error
 confirm-kill    = true         # confirm dialogs for kill/close of live apps
 kill-empty-session = true      # session dies when its last terminal closes
+kill-grace-seconds = 5         # how long End Session gives programs to quit
+                               # before the kill — IF the reader ticked "kill
+                               # anything still running" in that dialog; the
+                               # asking (SIGHUP+SIGTERM) happens regardless
+                               # (Settings ▸ Settings…, 0–600)
 clock           = seconds      # seconds | minutes | off — the clock at the
                                # right end of the menu bar, with a calendar
                                # that drops out of it when clicked
@@ -128,11 +133,12 @@ Three states, and the difference between them is the point:
 | **Unknown** | No such key. Warns with its line, and the rest of the file is still read. |
 
 Honoured today: `prefix`, `shell`, `login-shell`, `scrollback` (including
-`0`), `theme`, `clock`, `confirm-kill`, `term`, `mouse`, `alternate-scroll`,
-`sixel`, `sixel-max-megapixels`, `osc52`, `clipboard`, and the whole of
-`[keys]`.
+`0`), `theme`, `clock`, `confirm-kill`, `kill-grace-seconds`, `term`, `mouse`,
+`alternate-scroll`, `sixel`, `sixel-max-megapixels`, `osc52`, `clipboard`, and
+the whole of `[keys]`.
 
-Read but not yet honoured: `on-exit` (WP-13), `kill-empty-session` (WP-8),
+Read but not yet honoured: `on-exit` (WP-13), `kill-empty-session` (WP-13,
+with the exit policy that decides when a terminal leaves its session),
 all of `[printer]` (U1-c and PRINT-1…6), and `[render] max-fps` (WP-2). A key
 leaves that list in the commit that wires it up — `[terminal] clipboard` left
 it with WP-17, which is where copying began, and `clock` left it with the

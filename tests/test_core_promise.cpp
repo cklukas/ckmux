@@ -402,8 +402,13 @@ CK_TEST(a_reader_sees_their_shells_prompt_in_the_window_ckmux_drew) {
     while (!seen && clock_type::now() < deadline) {
         (void)client->drain(64 * 1024);
         const std::string screen = screen_of_client();
-        // Once the window is on screen, type into it exactly as a reader would.
-        if (!typed && screen.find("Terminal") != std::string::npos) {
+        // Once the WINDOW is on screen, type into it exactly as a reader would.
+        // "Terminal 1" is the window's caption; a bare "Terminal" is also the
+        // menu bar's third title, which is drawn in the first frame — long
+        // before the client has a session, let alone a terminal in it. Typing
+        // then goes nowhere and is never typed again, which is a test that
+        // fails for a reason that has nothing to do with what it is checking.
+        if (!typed && screen.find("Terminal 1") != std::string::npos) {
             client->send_input("echo ckmux-is-working\n");
             typed = true;
         }

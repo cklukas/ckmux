@@ -43,6 +43,8 @@ enum class Action : unsigned char {
     Paste,
     Detach,
     Sessions,
+    RenameSession,
+    KillSession,
     KeyReference,
     Settings,
     About,

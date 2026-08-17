@@ -80,8 +80,8 @@ take first.
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Done** (2026-08-17) | WP-5 ✓ |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-17) | WP-6 ✓, U0-c ✓, U0-d ✓ |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
-| 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
-| 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
+| 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | **Done** (2026-08-18) | WP-7 ✓ |
+| 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |
 | 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | Blocked | WP-8 |
 | 17 | **WP-11** — CLI subcommands | ckmux | 3–4 d | Blocked | WP-2, WP-8 |
 | 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | Blocked | WP-8 |
@@ -518,11 +518,41 @@ left it. Layout is server state in plans/03 and travels in `TerminalState.rect`;
 storing and returning it belongs with WP-8's session state, which is the next
 package.
 
-**WP-8 — Multi-session server state.** Multiple sessions; create/rename/kill;
-id, index, and name rules; `kill-empty-session`; the terminal limit.
-**WP-9 — Session picker and takeover.** Startup picker, and the
-latest-client-wins transfer: the old client informed best-effort, dropped to
-its picker, never able to delay or veto.
+**WP-8 — Multi-session server state.** *Done, 2026-08-18.* Sessions are plural,
+named and listable: `NewSession` (answered with the new `SessionList`, since
+every other client's picker is now stale), `RenameSession`, and `KillSession
+{force, grace_seconds}` — the kill asks first through ckVision's
+`request_termination()` (SIGHUP+SIGTERM to each child's process group, PTY
+still draining) and closes the survivors only when the grace expires and the
+reader ticked "kill anything still running". Attach with session 0 means "the
+default one" and CREATES a session on a server that has none, which is what
+lets `ckmux` at a cold start be one round trip. Two lifecycle rules landed with
+it: **the server exits when its last session ends** (a server with nothing to
+serve is a process holding a socket for nobody), and the client **outlives the
+server** — a lost connection empties its desktop, greys every session-needing
+command, and the next request that needs a server starts one. That required
+suppressing SIGPIPE at the one `Stream::flush` that can raise it: a client
+writing to a server that just exited died mid-frame with nothing on screen to
+say why. Still open here: `kill-empty-session` and the terminal limit, which
+wait on WP-13's exit policy.
+**WP-9 — Session picker and takeover.** *Done, 2026-08-18.* The startup rule:
+nothing running → create and attach; exactly one session and nobody watching →
+attach, no questions; anything else — the only session in use, or several to
+choose from — is a reader's choice, and the picker offers Attach (labelled
+"(in use — attaching takes it over)" where that is what it means), New
+session… (name pre-filled `session-N`, one past the largest occupied number),
+and Without a session. Switching IS `Attach`: the windows of the session being
+left are removed — removed, never closed, because closing ends programs the
+reader merely stopped watching — and the takeover transfer is
+latest-client-wins, the old client dropped to an empty desktop with the picker
+offered, never able to delay or veto. Driving this from a PTY found three
+library defects, fixed upstream: a dialog presented before the desktop's first
+layout was a zero-rect invisible modal that ate the keyboard; a radio group's
+keyboard cursor did not follow its programmatic selection, so Up from "row N
+selected" wrapped from row 0 and re-selected the row being left; and an
+Accept-role button ignored the mouse entirely — the accept path lived only on
+Enter's `accept_request` — which shipped as "clicking Create session does
+nothing".
 **WP-10 — Move-terminal between sessions.** The pointer move D-02 exists for:
 PTY, emulator, scrollback, and id all unchanged; both sessions' clients see the
 layout update; the child never notices.

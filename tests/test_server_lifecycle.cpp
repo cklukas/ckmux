@@ -392,10 +392,11 @@ CK_TEST(kill_server_stops_it_and_leaves_no_socket_behind) {
     forget(socket);
 }
 
-CK_TEST(a_message_the_server_does_not_implement_yet_is_answered_rather_than_ignored) {
+CK_TEST(asking_for_a_session_is_answered_with_the_sessions_there_now) {
     // A client waiting for a reply that never comes looks exactly like a server
-    // that has hung, and a reader cannot tell those apart. Sessions arrive with
-    // WP-8; until they do, asking for one gets an answer that says so.
+    // that has hung, and a reader cannot tell those apart. Every request the
+    // catalogue carries is answered; this one used to be answered with "not
+    // implemented" and is now answered with the thing it asked for.
     const std::filesystem::path socket = private_socket("notyet");
     forget(socket);
     if (binary_path().empty()) return;
@@ -412,15 +413,16 @@ CK_TEST(a_message_the_server_does_not_implement_yet_is_answered_rather_than_igno
     client.say(request);
     ckm::proto::Message reply;
     CK_CHECK(client.hear(reply));
-    const auto* error = std::get_if<ckm::proto::Error>(&reply);
-    CK_CHECK(error != nullptr);
-    if (error != nullptr) {
-        CK_CHECK(error->code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NotImplemented));
-        CK_CHECK(error->context == "NewSession");
-        CK_CHECK(!error->human.empty());
+    // The whole list, not just an id: making a session changes what every
+    // client's picker should be showing, and the answer says what is there now.
+    const auto* list = std::get_if<ckm::proto::SessionList>(&reply);
+    CK_CHECK(list != nullptr);
+    if (list != nullptr) {
+        CK_CHECK(list->sessions.size() == 1U);
+        CK_CHECK(list->sessions.front().name == "work");
+        CK_CHECK(list->sessions.front().terminals == 0);
     }
-    // And the connection survives it: an unimplemented request is not a
-    // protocol error.
+    // And the connection carries on afterwards.
     client.say(ckm::proto::Ping{1});
     ckm::proto::Message pong;
     CK_CHECK(client.hear(pong));

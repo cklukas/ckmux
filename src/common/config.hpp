@@ -120,6 +120,11 @@ struct Settings {
     // first. A terminal holding an editor with unsaved work looks exactly
     // like one holding an idle shell.
     bool confirm_kill = true;
+    // [general] kill-grace-seconds. How long every program in a session is
+    // given to end on its own when a reader kills it, before the escalation
+    // they ticked (or did not) applies. Seconds, because that is the unit a
+    // reader thinks in for "wait a moment"; zero means do not wait at all.
+    int kill_grace_seconds = 5;
     bool kill_empty_session = true;
     // The clock at the right end of the menu bar, and the calendar that drops
     // out of it when clicked. Seconds by default: the bar's right end is

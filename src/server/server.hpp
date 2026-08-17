@@ -34,6 +34,20 @@ namespace ckm::server {
 // A connected client, never recycled within a server's lifetime for the same
 // reason a terminal id is not.
 using ClientId = std::uint64_t;
+using SessionId = std::uint64_t;
+
+// A session: a name, and the terminals that belong to it (plans/03).
+//
+// The terminals themselves stay in one collection — they are the server's, not
+// a session's, and moving one between sessions is meant to be a pointer move
+// (plans/12 WP-10) rather than a transplant. What a session holds is which ones
+// are its own, in the order they were opened.
+struct Session {
+    SessionId id = 0;
+    std::string name;
+    std::vector<TerminalId> terminals;
+    std::uint64_t focused = 0;
+};
 
 class Server {
 public:
@@ -79,6 +93,13 @@ public:
     void stop() noexcept { running_ = false; }
 
     Terminals& terminals() noexcept { return terminals_; }
+    // A session, and a terminal inside one. Public because a session is what a
+    // terminal LIVES in — `terminals()` alone opens one that belongs to nobody,
+    // which no client can attach to and no snapshot will ever carry — and
+    // because a host that starts a server needs to be able to set up the state
+    // ckmux exists for: programs already running before anyone attached.
+    Session& create_session(std::string name = {});
+    Terminal& open_terminal(SessionId session, const TerminalSpec& spec);
     DiffEngine& diffs() noexcept { return diffs_; }
     std::size_t client_count() const noexcept { return clients_.size(); }
     // How many clients have completed the handshake. Distinct from the count
@@ -105,7 +126,7 @@ private:
         // always wins), which is also why one belief per terminal is the whole
         // truth in the diff engine.
         bool attached = false;
-        std::uint64_t session = 0;
+        SessionId session = 0;
         // The desktop this client declared, on attach and on every host resize,
         // and what one cell of it measures. The metric is what turns a
         // terminal's grid into the pixel fields its child asks about
@@ -140,12 +161,38 @@ private:
     // kept out by the client that is still nominally holding their session.
     void attach(Client& client, const proto::Attach& request);
     void detach(Client& client, proto::DetachReason reason, std::string text);
+    // Sessions, and who is watching them.
+    Session* session_for(SessionId id);
+    Session* session_of(const Client& client);
+    // The name a session gets when nobody chose one: "session-N", where N is
+    // one past the largest number already taken. A reader who names nothing
+    // still gets names that sort and do not collide.
+    std::string next_session_name() const;
+    void send_session_list(Client& client);
+    // Whoever is attached to this session, or nullptr. At most one (plans/03:
+    // the latest client wins), which is why this can answer with one pointer.
+    Client* client_attached_to(SessionId id);
+    // Ending a session, without blocking the loop.
+    //
+    // Every terminal is ASKED to end — ckVision signals the process group,
+    // because it is the only thing that knows one — and the server keeps
+    // serving while they do. When the grace runs out, whatever is still alive
+    // is either killed or left, which is the reader's choice and not this
+    // code's. Checked on the tick, which is what makes it non-blocking.
+    struct PendingKill {
+        SessionId session = 0;
+        std::int64_t deadline_nanos = 0;
+        bool force = true;
+    };
+    void begin_kill(Session& session, bool force, int grace_seconds);
+    void advance_kills();
+    void forget_session(SessionId id, proto::DetachReason reason, std::string text);
     // Everything a client needs to hold every terminal: the full grid, the
     // history, the cursor and the modes, per terminal. Also what heals a client
     // that fell too far behind, which is why it is not only the attach path.
     void send_snapshot(Client& client);
 
-    Client* attached_client();
+
 
     Options options_;
     ckv::Clock& clock_;
@@ -159,8 +206,13 @@ private:
     // The one session this build has. WP-8 makes them plural, named, and
     // listable; until then every terminal belongs to this one, so that attach,
     // detach and takeover can be real before the thing they attach TO is.
-    std::uint64_t session_ = 1;
-    std::uint64_t focused_terminal_ = 0;
+    std::vector<Session> sessions_;
+    std::vector<PendingKill> kills_;
+    SessionId next_session_ = 1;
+    // Whether this server has ever had a session. A server that has just
+    // started has none and must not read that as "the work is done" — it is
+    // waiting for the client that started it to say what it wants.
+    bool a_session_has_existed_ = false;
     bool running_ = true;
 };
 

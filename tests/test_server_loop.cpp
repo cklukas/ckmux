@@ -170,7 +170,7 @@ CK_TEST(a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before)
 
     // A terminal with something to say. Fed through the seam rather than run as
     // a child, so this test is about the loop's timing and not a shell's.
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     terminal.session().feed_output("what the child printed\r\n");
 
     // The tick is not due: the clock has not moved since the pass that consumed
@@ -232,7 +232,7 @@ CK_TEST(a_cli_client_is_not_sent_a_screenful_of_deltas) {
     CK_CHECK(pump(server, utility, attached));
     CK_CHECK(std::holds_alternative<ckm::proto::Attached>(attached));
 
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     terminal.session().feed_output("output no CLI asked for\r\n");
     clock.advance(34'000'000);
     CK_CHECK(pump_expecting_silence(server, utility));
@@ -251,7 +251,7 @@ CK_TEST(a_client_that_goes_away_is_a_detach_and_the_terminals_stay) {
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
 
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     const ckm::server::TerminalId id = terminal.id();
 
     {
@@ -295,7 +295,7 @@ CK_TEST(the_loop_survives_a_client_that_never_reads_what_it_asked_for) {
 
     // A terminal producing a great deal, and a client that never reads a byte of
     // it. Enough ticks that the socket's own buffers are long past full.
-    ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
     const auto started = std::chrono::steady_clock::now();
     for (int tick = 0; tick < 400; ++tick) {
         std::string burst;
