@@ -38,8 +38,12 @@ and is scheduled inside the ckmux milestones in [10-roadmap.md](10-roadmap.md).
 | 09 | [Testing & Verification](09-testing.md) | Test pyramid on ckVision's harnesses, conformance pins, e2e core-promise test, fuzzing, budget gates |
 | 10 | [Roadmap, Risks & Open Questions](10-roadmap.md) | Milestones M0–M5 with acceptance criteria, parking lot, risk table, questions to answer at M0 |
 | 11 | [Engineering Conventions](11-conventions.md) | Inherited ckVision discipline: style, determinism, provenance rule, workflow, definition of done |
+| 12 | [Work Packages](12-work-packages.md) | **The queue.** Numbered packages, one state each, and the rule for picking the next one |
 
 Suggested reading order: 01 → 02 → 03 → 07 → 04 → 05 → 06 → 08 → 09 → 10 → 11.
+
+**To start work**, go to [12-work-packages.md](12-work-packages.md) and take
+the first `Ready` row. 10 says what a milestone means; 12 says what is open.
 
 ## Key decisions (summary — details and rationale live in the named docs)
 
@@ -74,5 +78,12 @@ confirmed, and menu-visible.
 
 ## Next step
 
-Answer the open questions in [10-roadmap.md](10-roadmap.md) (all have
-recommendations), then start **M0 — Scaffolding**.
+M0 and M1 are done. The next package is the first `Ready` row in
+[12-work-packages.md](12-work-packages.md) — today **U0-a**, the
+attach-an-existing-subsession entry point in ckVision, which is what lets a
+ckmux mirror reach the loop that M2's client is built on.
+
+The open questions in [10-roadmap.md](10-roadmap.md) are still open. All have
+recommendations, all are answer-and-edit, and none of them blocks a row above;
+#1, #3 and #5 will be decided by M2/M3 code whether or not they are written
+down first, so they are worth settling before that code exists.

@@ -12,9 +12,16 @@ tree under its gates, and a ckmux milestone is not done while its U-items
 are open. Expect the U-list to grow as ckmux exercises the library — that
 is the point of being its proving ground.
 
-**Status: M0 and M1 are implemented** (2026-08-16). What that means in
-practice, and what it deliberately does not yet mean, is recorded at the end
-of each section below.
+**Status: M0 and M1 are implemented** (2026-08-16; M1's record corrected
+2026-08-17, below). What that means in practice, and what it deliberately does
+not yet mean, is recorded at the end of each section below.
+
+**This file is not the queue.** A milestone here is a paragraph of intent and a
+set of acceptance criteria — it cannot be selected from, and reading M2–M5 as
+"what is open" is what let the entire multiplexer look like one line of prose.
+The selectable list of packages, each with a state and a prerequisite, is
+[12-work-packages.md](12-work-packages.md). Start there; come here to find out
+what a milestone must satisfy before it may be called done.
 
 ## M0 — Scaffolding ✅
 

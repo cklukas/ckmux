@@ -7,6 +7,12 @@ context-sensitive hotkey footer, terminals in movable windows.
 **Read [plans/README.md](plans/README.md) first.** The plans are the
 specification; this file is only the working agreement.
 
+**"Work on the next open package" means:** open
+[plans/12-work-packages.md](plans/12-work-packages.md), continue the row marked
+`In progress` if there is one, otherwise take the first row marked `Ready`.
+Never pick work out of milestone prose — [plans/10-roadmap.md](plans/10-roadmap.md)
+says what a milestone must satisfy, not what is open.
+
 ## The rule that matters most
 
 **Fix ckVision, never work around it.** ckmux is one of the first real
