@@ -115,6 +115,18 @@ through a `VirtualDisplay` rather than grepping the byte stream — the presente
 writes runs with cursor moves between them, so "is the text in the bytes" is the
 wrong question and passed for the wrong reasons until it was asked properly.
 
+WP-6 landed the attach half as `tests/test_attach.cpp`: a real `Server` over a
+real Unix socket with the loop stepped on a `ManualClock`, and the real
+`ServerSession` on the other end. Attaching hands over every terminal whole; a
+second client takes the session and the first is told why; a client that dies
+without saying anything is a detach and its terminals do not notice; a mirror
+that lost track asks for the terminal whole; and the acceptance case — a client
+that stops reading crosses the 4 MiB mark after 258 ticks of full-screen output,
+stops being queued for, and is healed by a snapshot when it drains. Three
+mutations were checked to fail it (no healing, no takeover, no high-water rule at
+all) — and one of those first appeared to pass because the flag it removed is set
+in two places, which is worth knowing about the code rather than about the test.
+
 ### 4. Client UI (labels `script`, `golden`)
 
 `HeadlessTerminal` hosts the real client against a scripted fake server

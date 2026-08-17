@@ -134,6 +134,12 @@ Deltas are emitted at the flush tick (`max-fps`), coalesced per terminal;
 per-terminal and monotonic — a gap observed by the client (should not
 happen) triggers reconnect-and-resnapshot.
 
+**A resnapshot is an `Attach`, answered with `Attached`.** There is no separate
+"send it again" message: a client that observes a gap, or that a server told it
+had fallen behind, re-sends `Attach` and is given every terminal whole. One
+message, one code path, and nothing that can be implemented on one side only
+(WP-6).
+
 **A snapshot restarts the count**, so the first delta after an attach or a
 resnapshot is always `seq = 1`. The snapshot carries no sequence of its own,
 because that would have to be the number of a delta nobody sent; restarting is

@@ -156,6 +156,17 @@ CK_TEST(a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before)
     client.say(hello);
     ckm::proto::Message greeting;
     CK_CHECK(pump(server, client, greeting));
+    // And attached: deltas go to the client that holds the session, not to
+    // everyone who has said hello. WP-2 sent them to any greeted UI client
+    // because there was nothing to attach to yet; WP-6 narrowed it, as it said
+    // it would.
+    ckm::proto::Attach attach;
+    attach.columns = 40;
+    attach.rows = 8;
+    client.say(attach);
+    ckm::proto::Message attached;
+    CK_CHECK(pump(server, client, attached));
+    CK_CHECK(std::holds_alternative<ckm::proto::Attached>(attached));
 
     // A terminal with something to say. Fed through the seam rather than run as
     // a child, so this test is about the loop's timing and not a shell's.
@@ -211,6 +222,15 @@ CK_TEST(a_cli_client_is_not_sent_a_screenful_of_deltas) {
     ckm::proto::Message greeting;
     CK_CHECK(pump(server, utility, greeting));
     CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+    // Attached, so that what this pins is "a CLI client is sent no deltas" and
+    // not merely "a client that never attached is sent no deltas".
+    ckm::proto::Attach attach;
+    attach.columns = 40;
+    attach.rows = 8;
+    utility.say(attach);
+    ckm::proto::Message attached;
+    CK_CHECK(pump(server, utility, attached));
+    CK_CHECK(std::holds_alternative<ckm::proto::Attached>(attached));
 
     ckm::server::Terminal& terminal = server.terminals().open(spec_running("sleep 30"));
     terminal.session().feed_output("output no CLI asked for\r\n");

@@ -77,8 +77,8 @@ take first.
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Done** (2026-08-17) | WP-2 ✓, WP-4b ✓, U0-a ✓ |
-| 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Ready** | WP-5 ✓ |
-| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
+| 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Done** (2026-08-17) | WP-5 ✓ |
+| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Ready** | WP-6 ✓, U0-c ✓, U0-d ✓ |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
@@ -392,6 +392,38 @@ backpressure rule: on high-water or any observed desync, resnapshot rather
 than repair.
 *Done when*: an artificially slow client hits high-water and is healed by
 snapshot-on-drain, asserted at the wire.
+**Done** (2026-08-17). Server: `Attach` (granted immediately, taking the session
+from whoever held it), `Detached` with the reason in words, detach as a closed
+socket, `ClientResize`, `NewTerminal`, `Input`, `CloseTerminal`, and the healing
+rule. Client: `src/client/server_session.{hpp,cpp}` — the mirrors, the routing,
+and the one thing a client must know about losing track, which is to ask for the
+terminal whole rather than to repair it.
+
+Measured at the wire: **258 ticks** of full-screen output (about nine seconds at
+30 fps) fill a stopped client's queue to the 4 MiB mark, the queue then stops
+growing however much the child says, and the client is healed with exactly **two**
+attachments in total — the one it asked for and the one it was given.
+
+Three decisions:
+
+  * **Healing is a resnapshot, never a repair.** The deltas a client missed are
+    gone: the diff engine's belief moved on without it, and there is nothing to
+    replay. So past the high-water mark deltas stop being queued, and when the
+    queue drains the client is sent every terminal whole. A snapshot restarts
+    that terminal's sequence, so the client's own continuity check works from its
+    first delta afterwards (WP-4b).
+  * **A resnapshot has no message of its own.** A client that has lost track
+    sends `Attach` again and the server answers with the terminals whole — which
+    is the same code path, the same message, and one less thing that can be
+    implemented on one side only.
+  * **One session, for now.** Attach, detach and takeover are real; what they
+    attach TO is a single implicit session until WP-8 makes them plural, named
+    and listable. `NewTerminal` is answered here rather than in WP-8, because an
+    attach with no way to get a terminal cannot be tested end to end.
+
+WP-2's interim rule — deltas to any greeted UI client — is narrowed here to the
+attached client, as it said it would be, and the loop test that pinned it now
+attaches first.
 
 **WP-7 — M2 acceptance.** The core-promise test — spawn a counter, attach,
 `kill -9` the client, wait, reattach, golden-compare the rehydrated frame and

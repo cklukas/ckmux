@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 #include <variant>
@@ -123,6 +124,18 @@ std::size_t Server::greeted_count() const noexcept {
     for (const std::unique_ptr<Client>& client : clients_)
         if (client->greeted) ++count;
     return count;
+}
+
+std::size_t Server::queued_bytes() const noexcept {
+    std::size_t queued = 0;
+    for (const std::unique_ptr<Client>& client : clients_) queued += client->stream.queued();
+    return queued;
+}
+
+bool Server::waiting_to_heal() const noexcept {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->dirty_snapshot) return true;
+    return false;
 }
 
 std::int64_t Server::nanos_until_tick() const {
@@ -294,6 +307,70 @@ void Server::handle(Client& client, const proto::Message& message) {
         drop(client, "said Hello twice");
         return;
     }
+    if (const auto* request = std::get_if<proto::Attach>(&message)) {
+        attach(client, *request);
+        return;
+    }
+    if (std::holds_alternative<proto::Detach>(message)) {
+        // Asked for rather than suffered. Answered, so a client that is about to
+        // exit knows the server heard it and its terminals are safe.
+        detach(client, proto::DetachReason::User, "detached");
+        return;
+    }
+    if (const auto* resize = std::get_if<proto::ClientResize>(&message)) {
+        client.desktop = ckv::Size{resize->columns, resize->rows};
+        // Every terminal follows the client's window, because in this build the
+        // session has one desktop and the terminals fill it. WP-8's layout makes
+        // this a per-window question; the pixel fields carry the whole text area
+        // and the terminal divides them down to one cell (WP-3).
+        for (const TerminalId id : terminals_.ids())
+            if (Terminal* terminal = terminals_.find(id))
+                terminal->resize(resize->columns, resize->rows, resize->pixel_width,
+                                 resize->pixel_height);
+        return;
+    }
+    if (const auto* request = std::get_if<proto::NewTerminal>(&message)) {
+        TerminalSpec spec;
+        spec.command = request->command;
+        // Where a shell opens, and what it is told about its machine. The
+        // server is the one that knows both, because it is the process that will
+        // hold the child (plans/02) — a client's own environment is its own.
+        if (const char* const home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            spec.working_directory = home;
+        else
+            spec.working_directory = "/";
+        spec.columns = client.desktop.width > 0 ? client.desktop.width : 80;
+        spec.rows = client.desktop.height > 0 ? client.desktop.height : 24;
+        Terminal& terminal = terminals_.open(spec);
+        focused_terminal_ = terminal.id();
+        proto::TermOpened opened;
+        opened.term = terminal.id();
+        opened.session = session_;
+        opened.columns = static_cast<std::uint16_t>(spec.columns);
+        opened.rows = static_cast<std::uint16_t>(spec.rows);
+        for (const std::unique_ptr<Client>& watcher : clients_)
+            if (watcher->attached) send(*watcher, opened);
+        return;
+    }
+    if (const auto* input = std::get_if<proto::Input>(&message)) {
+        // Opaque on purpose: the bytes were encoded by the client against
+        // mirrored mode state (plans/04), so the server writes them to the PTY
+        // without understanding them. A server that re-encoded would be a third
+        // opinion about the child's dialect.
+        if (Terminal* terminal = terminals_.find(input->term))
+            terminal->send_input(input->bytes);
+        return;
+    }
+    if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
+        (void)terminals_.close(close_it->term);
+        diffs_.forget(close_it->term);
+        proto::TermClosed closed;
+        closed.term = close_it->term;
+        closed.exited = 1;
+        for (const std::unique_ptr<Client>& watcher : clients_)
+            if (watcher->attached) send(*watcher, closed);
+        return;
+    }
     if (std::holds_alternative<proto::KillServer>(message)) {
         std::fprintf(stderr, "ckmux server: stopping at a client's request\n");
         running_ = false;
@@ -312,6 +389,69 @@ void Server::handle(Client& client, const proto::Message& message) {
     send(client, error);
 }
 
+Server::Client* Server::attached_client() {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->attached && !client->closing) return client.get();
+    return nullptr;
+}
+
+void Server::attach(Client& client, const proto::Attach& request) {
+    // Granted immediately, and taken from whoever held it (plans/03). A reader
+    // whose laptop slept cannot be kept out by the client that is nominally
+    // still holding their session — which is why the previous holder is told
+    // rather than asked.
+    if (Client* previous = attached_client(); previous != nullptr && previous != &client) {
+        detach(*previous, proto::DetachReason::Takeover,
+               "taken over by another client on this machine");
+    }
+    client.attached = true;
+    client.session = session_ != 0 ? session_ : request.session;
+    client.dirty_snapshot = false;
+    if (request.columns > 0 && request.rows > 0) {
+        client.desktop = ckv::Size{request.columns, request.rows};
+        for (const TerminalId id : terminals_.ids())
+            if (Terminal* terminal = terminals_.find(id))
+                terminal->resize(request.columns, request.rows, request.pixel_width,
+                                 request.pixel_height);
+    }
+    send_snapshot(client);
+}
+
+void Server::detach(Client& client, proto::DetachReason reason, std::string text) {
+    if (!client.attached) return;
+    client.attached = false;
+    client.dirty_snapshot = false;
+    proto::Detached detached;
+    detached.reason = reason;
+    detached.text = std::move(text);
+    send(client, detached);
+    // The terminals are untouched, which is the whole promise: a detach is a
+    // client going away, and the programs it was watching do not care.
+}
+
+void Server::send_snapshot(Client& client) {
+    proto::Snapshot snapshot;
+    snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, client.desktop.width));
+    snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, client.desktop.height));
+    snapshot.focused_term = focused_terminal_;
+    std::uint16_t index = 0;
+    for (const TerminalId id : terminals_.ids()) {
+        Terminal* terminal = terminals_.find(id);
+        if (terminal == nullptr) continue;
+        // Taking a snapshot restarts that terminal's sequence, so the first
+        // delta a client sees afterwards is 1 — which is what lets it check
+        // continuity from its first delta rather than take it on trust (WP-4b).
+        proto::TerminalState state = diffs_.snapshot(id, terminal->session());
+        state.index = index++;
+        snapshot.terminals.push_back(std::move(state));
+    }
+    proto::Attached attached;
+    attached.session = client.session != 0 ? client.session : session_;
+    attached.snapshot = std::move(snapshot);
+    send(client, attached);
+    client.dirty_snapshot = false;
+}
+
 void Server::send(Client& client, const proto::Message& message) {
     if (!client.stream.open()) return;
     if (!client.stream.send(proto::encode(message))) {
@@ -324,6 +464,10 @@ void Server::send(Client& client, const proto::Message& message) {
 }
 
 void Server::drop(Client& client, std::string_view why) {
+    // A socket that closed IS a detach (plans/03): no message arrives, nothing
+    // is asked, and the terminals carry on. Marked before the stream goes so
+    // that whatever the loop does next does not treat this client as attached.
+    client.attached = false;
     if (!why.empty())
         std::fprintf(stderr, "ckmux server: dropping client %llu: %.*s\n",
                      static_cast<unsigned long long>(client.id), static_cast<int>(why.size()),
@@ -347,13 +491,29 @@ void Server::flush_tick() {
     for (const TerminalId id : terminals_.ids())
         if (Terminal* terminal = terminals_.find(id)) terminal->observe_exit();
 
+    // A client that fell behind is healed before anything else is sent to it: a
+    // fresh snapshot, once its queue has drained. The deltas it missed are gone
+    // and cannot be reconstructed — the diff engine's belief moved on without
+    // it — so repairing is not an option and pretending otherwise would put a
+    // screen in front of a reader that no program ever drew (plans/05).
+    for (const std::unique_ptr<Client>& client : clients_) {
+        if (!client->attached || !client->dirty_snapshot) continue;
+        (void)client->stream.flush();
+        if (client->stream.queued() > 0) continue;  // still draining
+        send_snapshot(*client);
+    }
+
     const std::vector<proto::GridDelta> deltas = diffs_.flush(terminals_);
     if (deltas.empty()) return;
     for (const std::unique_ptr<Client>& client : clients_) {
-        if (!client->greeted || client->kind != proto::ClientKind::Ui) continue;
-        // Above the high-water mark a client stops being sent deltas at all; it
-        // gets a snapshot when its queue drains (WP-6). Sending anyway would
-        // grow a queue that is already too big.
+        // Only the attached client, and only a UI: a CLI utility has no screen,
+        // and a connection that has not attached has not asked for one.
+        if (!client->attached || client->kind != proto::ClientKind::Ui) continue;
+        if (client->dirty_snapshot) continue;  // waiting to be healed
+        // Above the high-water mark a client stops being sent deltas at all.
+        // Sending anyway would grow a queue that is already too big — and every
+        // byte queued behind the mark is a byte the reader will never see,
+        // because what finally arrives is a snapshot that supersedes it.
         if (client->stream.over_high_water()) {
             client->dirty_snapshot = true;
             continue;

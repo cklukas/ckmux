@@ -85,6 +85,13 @@ public:
     // above, because a connection that has said nothing yet is a connection
     // that may still be refused.
     std::size_t greeted_count() const noexcept;
+    // How much is queued for the attached client, and whether it has fallen far
+    // enough behind to be waiting for a snapshot. The backpressure gauge: a
+    // server can log it, WP-20's budget gates will assert on it, and a test can
+    // watch a client cross the high-water mark for real rather than by
+    // arithmetic.
+    std::size_t queued_bytes() const noexcept;
+    bool waiting_to_heal() const noexcept;
 
 private:
     struct Client {
@@ -93,10 +100,20 @@ private:
         proto::FrameReader reader;
         bool greeted = false;
         proto::ClientKind kind = proto::ClientKind::Ui;
+        // Attached to the session, and therefore the one client being sent
+        // deltas. At most one at a time (plans/03: takeover — the latest client
+        // always wins), which is also why one belief per terminal is the whole
+        // truth in the diff engine.
+        bool attached = false;
+        std::uint64_t session = 0;
+        // The desktop this client declared, on attach and on every host resize.
+        ckv::Size desktop{0, 0};
         // The client's queue went over its high-water mark, so deltas stopped
-        // being queued for it. WP-6 turns this into "send a fresh snapshot when
-        // the queue drains"; for now it is recorded, because a flag nobody sets
-        // is a flag nobody can act on later.
+        // being queued for it. What clears it is not the missing deltas — those
+        // are gone — but a fresh snapshot once the queue has drained: repairing
+        // a mirror from deltas it never saw is not possible, and pretending
+        // otherwise is how a screen ends up showing something no program drew
+        // (plans/05, and WP-5's gap rule on the other end of the same idea).
         bool dirty_snapshot = false;
         bool closing = false;
     };
@@ -113,6 +130,18 @@ private:
     void flush_tick();
     std::int64_t nanos_until_tick() const;
 
+    // The attach path. `attach` grants immediately and takes the session from
+    // whoever held it (plans/03), because a reader whose laptop slept cannot be
+    // kept out by the client that is still nominally holding their session.
+    void attach(Client& client, const proto::Attach& request);
+    void detach(Client& client, proto::DetachReason reason, std::string text);
+    // Everything a client needs to hold every terminal: the full grid, the
+    // history, the cursor and the modes, per terminal. Also what heals a client
+    // that fell too far behind, which is why it is not only the attach path.
+    void send_snapshot(Client& client);
+
+    Client* attached_client();
+
     Options options_;
     ckv::Clock& clock_;
     platform::Listener listener_;
@@ -122,6 +151,11 @@ private:
     Terminals terminals_;
     DiffEngine diffs_;
     std::int64_t next_tick_nanos_ = 0;
+    // The one session this build has. WP-8 makes them plural, named, and
+    // listable; until then every terminal belongs to this one, so that attach,
+    // detach and takeover can be real before the thing they attach TO is.
+    std::uint64_t session_ = 1;
+    std::uint64_t focused_terminal_ = 0;
     bool running_ = true;
 };
 

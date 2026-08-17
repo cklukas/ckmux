@@ -58,7 +58,8 @@ add_library(ckmux_client STATIC
     src/client/mirror.cpp
     src/client/remote_terminal.cpp
     src/client/prefix_overlay.cpp
-    src/client/server_connection.cpp)
+    src/client/server_connection.cpp
+    src/client/server_session.cpp)
 target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_client PUBLIC ckmux_common ckvision::cvision)
 ckmux_strict(ckmux_client)
