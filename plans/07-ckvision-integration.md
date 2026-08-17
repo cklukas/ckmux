@@ -156,6 +156,12 @@ U1-d is not closed: `Radio`, `Combo` and `Number` remain, and Printer
 Settings ([06](06-ui-design.md)) still wants them at M4. What landed is the
 part `Settings ▸ General…` needed, built so the rest slots in beside it.
 
+### Landed (a command nothing was listening to)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-32 | **`Desktop` installs the default handler for `kWindowList`**, joining the seven window commands it already covered. The dialog had existed since M6 (`make_window_list_dialog`, over `Desktop::windows()` in the same cycling order `select_by_number` walks); only the wiring was missing, so every application referencing the command got a dead menu item. Presenting is a no-op while a list is open, and the open flag is shared state rather than a member read through `this`, because destroying a Desktop detaches its dialog and completes the presentation. The header where the standard ids live now also says outright that an unhandled command is still *available* — `is_available()` asks the enablement predicate and the focus context, and neither can know whether anyone is listening. | `Terminal ▸ Window List…` drew live, took its click, and did nothing, for all of M1, while [10-roadmap.md](10-roadmap.md) recorded "window list" as landed. Reported from the running client. ckmux now pins the class of defect with `tests/test_command_reachability.cpp`. |
+
 ### Open
 
 | # | Item | For |

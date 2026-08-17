@@ -59,10 +59,26 @@ previous/`^B 1-9`/zoom/tile/cascade/move-resize/window list); close
 confirmation through the vetoable close protocol; Dark/Light/Mono themes;
 context help generated from the same table that dispatches the keys; window
 captions that follow the running program's own title (OSC 0/2) and fall back
-to the terminal's ckmux name when it stops claiming one. Tests across five
+to the terminal's ckmux name when it stops claiming one. Tests across six
 suites, green under ASan/UBSan, plus PTY runs of the real binary. ckVision
 gaps found and fixed upstream
 ([07-ckvision-integration.md](07-ckvision-integration.md) "Landed").
+
+**Corrected 2026-08-17.** "Window list" stood in that sentence for a whole
+milestone without working. The menu item referenced ckVision's `kWindowList` —
+the one window command whose default handler `Desktop` did not install — and an
+unhandled ckVision command still reports itself *available*, so the item drew
+live, accepted its click, and did nothing. It was reported from the running
+client rather than caught by a test, which is the part that mattered: nothing
+in either suite asked whether a key a surface advertises reaches anything at
+all. Fixed in ckVision (L-32 in
+[07-ckvision-integration.md](07-ckvision-integration.md)) and pinned here by
+`tests/test_command_reachability.cpp`, which walks the whole keymap table and
+fails on any binding that is neither handled nor deliberately disabled. The
+rest of that sentence was then audited the same way and holds: Window List was
+the only dead entry, and `Detach`/`Sessions…`/`^B 1-9` are dark on purpose, by
+predicate, as recorded below. Read under D-034's status model, M1's acceptance
+did not hold when it was claimed. It holds now, with the gate that proves it.
 
 **Pulled forward into M1** (R5 says an addition needs a plan edit first —
 this is that edit): terminals start as **login shells**, resolved the way

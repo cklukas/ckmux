@@ -107,6 +107,13 @@ void ClientApp::register_commands() {
     // commands already carry fixed titles and default chords, and its Desktop
     // installs the window-management handlers. Referencing them is the
     // sanctioned path; re-registering them is rejected by design.
+    //
+    // "Installs the handlers" is worth checking rather than assuming, which is
+    // what test_command_reachability.cpp does: an unhandled command still
+    // reports itself available, so a menu item bound to one looks live and
+    // does nothing. Window List shipped that way through M1, because Desktop
+    // covered every window command except that one (fixed upstream — 07's
+    // L-32).
     const auto register_own = [&](u::CommandId id, std::string_view title, std::string category,
                                   std::function<void()> handler) {
         registry.add(u::CommandDescriptor{.id = id,

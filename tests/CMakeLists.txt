@@ -7,6 +7,7 @@
 
 set(CKMUX_TEST_SOURCES
     test_commands.cpp
+    test_command_reachability.cpp
     test_client_smoke.cpp
     test_config.cpp
     test_prefix.cpp
