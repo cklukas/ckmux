@@ -111,7 +111,10 @@ are M3/M4 and are absent, not stubbed.
 ## M2 — The split (the promise)
 
 Server process + protocol v1 (`Hello`/`Attach`/`Input`/`GridDelta`/
-snapshot/self-healing backpressure), one auto-created session,
+snapshot/self-healing backpressure) — **the codec and framing of it are done**
+(WP-1, 2026-08-17: every message encodes and decodes, fuzzed and
+stream-reassembled, with no socket anywhere near it) — one auto-created
+session,
 `RemoteTerminalSubsession` mirror wired into the M1 UI, lazy server start,
 detach/quit/reattach, stale-socket + version-mismatch handling.
 Needs **U0-b** (damage/no-copy snapshots). **U0-a** — hosting a subsession

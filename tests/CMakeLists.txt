@@ -13,6 +13,7 @@ set(CKMUX_TEST_SOURCES
     test_copy_mode.cpp
     test_keymap.cpp
     test_prefix.cpp
+    test_proto.cpp
     test_shell.cpp)
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)

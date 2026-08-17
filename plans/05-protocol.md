@@ -90,6 +90,7 @@ message will be seen, so it is designed, not an afterthought.
 | `PrintJobAdded` | `term u64, job u64, kind u8 (screen\|line\|controller\|autoprint), bytes u32, lines u32, at i64` | **metadata only** — a 1 MB job never rides the hot path or the attach snapshot |
 | `PrintJobData` | `term u64, job u64, seq u32, final u8, blob` | answer to `PrintJobFetch`, chunked ≤ 256 KiB |
 | `SessionsChanged` | — | picker refresh hint |
+| `PasteAck` | `seq u32` | the credit half of `PasteChunk` (below); it was described under flow control and missing from this table |
 | `Pong` | `nonce u64` | |
 | `Error` | `code u16, context str, human str` | non-fatal errors (e.g. name collision) |
 
@@ -99,7 +100,7 @@ message will be seen, so it is designed, not an afterthought.
 term u64, seq u32, ops[]:
   op Scroll   { top u16, bottom u16, n i16 }          # region shift, client memmoves
   op Cells    { row u16, col u16, cells[] }           # RLE runs
-  op Cursor   { col u16, row u16, style u8, visible u8 }
+  op Cursor   { col u16, row u16, style u8, visible u8, blink u8 }
   op Modes    { changed_mask u32, values u32 }        # mouse/paste/alt-screen/… bits
   op Title    { title str }
   op SbPush   { n × line (RLE cells) }                # lines entering scrollback —
@@ -108,10 +109,25 @@ term u64, seq u32, ops[]:
                                                       # paging/copy-mode is local
 cells[] entry: run_len u16, cell:
   { text str≤15 (grapheme cluster, UTF-8), width u8,
-    fg u32, bg u32,          # tagged: default | rgb  (matches ckv::Color)
+    fg u32, bg u32,          # tagged: default | indexed | rgb  (matches ckv::Color)
     attrs u8,                # Bold|Dim|Italic|Underline|Reverse|Strike (ckv::Attr)
     reserved u16 }           # future: underline styles/color, hyperlink id (plan 04 U1/U2)
 ```
+
+**Three kinds of colour, not two.** This table said `default | rgb` when it
+was written, before indexed colour survived end to end upstream (L-22 in
+[07-ckvision-integration.md](07-ckvision-integration.md)). Flattening a
+palette index to RGB on the wire would make ckmux the thing that decides what
+a reader's palette means: their own terminal theme would stop applying to a
+child's `SGR 31` the moment ckmux was in the way, and per-terminal re-theming
+would be impossible for good. The tag is one byte of the u32 and carries all
+three.
+
+**`width` and `text` have to agree.** Width 0 with no text is the far half of
+a wide character and must survive as such — rebuilt as a space it turns every
+wide character on the screen into two, which is the classic multiplexer bug
+the shared width authority exists to prevent ([04](04-terminal-emulation.md)).
+Any other combination of the two is refused rather than drawn.
 
 Deltas are emitted at the flush tick (`max-fps`), coalesced per terminal;
 `Scroll` ops make full-screen scrolling cheap (no cell resend). `seq` is
@@ -167,5 +183,34 @@ messages. CLI never receives sync messages (server sends none to
 3. All ids are u64 and never recycled within a server lifetime.
 4. Unknown message types: connection error pre-1.0 (single version number
    means they cannot legitimately occur); reserved-flags must be zero.
-5. Wire structs live in `src/common/proto.{h,cc}` with encode/decode pairs
+5. Wire structs live in `src/common/proto.{hpp,cpp}` with encode/decode pairs
    and round-trip property tests — one definition, used by both sides.
+6. **A payload with bytes left over is a protocol error.** Every message has a
+   fixed shape, so a remainder means the sender and the decoder disagree about
+   what the type means — exactly the desync that must not be papered over. It
+   is cheaper to drop the connection and re-snapshot than to carry a mirror
+   that is subtly wrong.
+7. **A length is checked against its cap before it is waited for.** A peer
+   claiming a gigabyte is refused on the strength of the claim; refusing it
+   after buffering a gigabyte is the difference between a bounded error and a
+   denial of service. The same bound applies to the stream reassembler, so a
+   peer that declares a frame and then dribbles cannot grow it either.
+
+## What exists today (WP-1, 2026-08-17)
+
+The whole catalogue above encodes and decodes, in `src/common/proto.{hpp,cpp}`
+— framing, the handshake, every message, `GridDelta`'s six ops and the attach
+snapshot. Nothing in it knows about a socket, which is why all of it is tested
+without one ([09-testing.md](09-testing.md)'s unit layer).
+
+Two shapes are worth knowing before writing against it. `Message` is a
+`std::variant` of every message struct, and a decoder finds the alternative
+whose `kType` matches the frame — so adding a message to the variant is the
+whole of adding it, and one that is not in the variant cannot be named on the
+wire at all. And `FrameReader` owns stream reassembly: a socket read gives
+half a frame, three frames, or a frame and a half, and that problem is solved
+once here rather than in the server and the client separately.
+
+Still open: nothing in WP-1 itself. The transport that carries these bytes is
+WP-2, and the first real senders are WP-3 (server terminals) and WP-4a/4b (the
+diff engine that fills `GridDelta`).

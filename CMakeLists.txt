@@ -36,6 +36,7 @@ add_library(ckmux_client STATIC
     src/client/prefix_overlay.cpp
     src/common/config.cpp
     src/common/keymap.cpp
+    src/common/proto.cpp
     src/common/shell.cpp
     src/platform/clipboard.cpp
     src/platform/paths.cpp)

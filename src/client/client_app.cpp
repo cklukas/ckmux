@@ -230,11 +230,11 @@ void ClientApp::build_chrome() {
     // makes a menu item; it simply carries no chord hint of ckmux's own.
     const auto item = [&](std::string_view key) {
         for (const KeyBinding& binding : keymap_.bindings())
-            if (binding.key == key) return w::MenuItem{presentation(binding)};
+            if (binding.key == key) return w::MenuItem::command(presentation(binding));
         const std::optional<u::CommandId> id = app_.commands().id_for(key);
-        return w::MenuItem{w::CommandPresentation{id.value_or(u::kInvalidCommand)}};
+        return w::MenuItem::command(w::CommandPresentation{id.value_or(u::kInvalidCommand)});
     };
-    const w::MenuItem separator{"", u::kInvalidCommand, {}, true};
+    const w::MenuItem separator = w::MenuItem::separator();
 
     w::MenuBarItem session_menu{
         "&Session",

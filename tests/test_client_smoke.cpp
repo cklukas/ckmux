@@ -57,7 +57,7 @@ ckv::ui::CommandId id_of(Application& app, std::string_view key) {
 
 bool menu_has_command(const ckv::widgets::MenuBarItem& menu, ckv::ui::CommandId command) {
     for (const ckv::widgets::MenuItem& item : menu.items)
-        if (item.command == command || item.presentation.command == command) return true;
+        if (item.command() == command) return true;
     return false;
 }
 

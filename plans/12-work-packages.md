@@ -68,7 +68,7 @@ take first.
 | — | M0 — Scaffolding | ckmux | — | **Done** | — |
 | — | M1 — Single-process shell | ckmux | — | **Done** (corrected 2026-08-17) | — |
 | 1 | **U0-a** — attach-an-existing-subsession on `Application` | ckVision | 0.5 d | **Done** (2026-08-17) | — |
-| 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Ready** | — |
+| 2 | **WP-1** — Protocol codec and framing | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Ready** | — |
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Ready** | — |
 | 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Ready** | — |
@@ -169,12 +169,23 @@ callers are unchanged or updated in the same commit.
 *Sequencing*: land this **before** WP-4 hardens the hot path — R1's mitigation
 is that the fix goes in the library first, never a ckmux workaround.
 
-**WP-1 — Protocol codec and framing.** Framing, handshake, version integer,
-and every message in [05-protocol.md](05-protocol.md)'s catalog, encode and
-decode.
-*Done when*: round-trip for every message type; property tests (random valid
-messages survive; random bytes error and never crash); split reads, coalesced
-frames, and cap violations each have a named test.
+**WP-1 — Protocol codec and framing.** *Done, 2026-08-17.* Framing, the
+handshake, the version integer, and every message in
+[05-protocol.md](05-protocol.md)'s catalogue in `src/common/proto.{hpp,cpp}`,
+with `FrameReader` owning stream reassembly so the server and the client do not
+each solve it. Every criterion has its case: a round trip per message type
+(with a count pinned to the variant's own size, so a message added and
+forgotten fails rather than drifts), random valid messages, random bytes,
+one-byte-at-a-time reads, coalesced frames, a frame and a half, and each cap.
+
+**Added while implementing it**, all recorded in plan 05: `PasteAck` was
+described under flow control and missing from the catalogue; the cell's colour
+is three-kinded rather than two, because indexed colour survives end to end
+upstream now and flattening it here would make ckmux decide what a reader's
+palette means; a payload with bytes left over is an error rather than a
+remainder to ignore; and a length is checked against its cap *before* its bytes
+are waited for, since refusing a claimed gigabyte after buffering one is not
+refusing it.
 
 **WP-2 — Server process, socket, and lifecycle.** The detached server: Unix
 socket, single-threaded `poll()`, lazy start, the bind race between two
