@@ -73,7 +73,7 @@ per ckVision's own verification rules; ckmux tracks them in
 | ~~U0~~ | ~~RIS (`ESC c`) not implemented~~ — **done**, with DECALN (`ESC # 8`); the caption and the child's own fate survive a reset, everything a child can reach does not. | `reset`(1) inside a terminal now actually resets it; vttest chapters open with DECALN. |
 | U1 | **OSC 4/10/11 palette/fg/bg queries dropped** | vim/nvim probe OSC 11 to pick light/dark defaults. Needs reply plumbing (emulator can already queue replies via `take_pending_input`). |
 | U1 | **Child OSC 52 denied by policy, no allow path** | tmux-style `set-clipboard` ([08](08-configuration.md) `osc52`): needs an opt-in policy + snapshot/event surface, capped. |
-| U1 | **Tab stops fixed at 8 (HTS/TBC ignored); REP ignored** | Correctness for the long tail (and vttest). |
+| ~~U1~~ | ~~Tab stops fixed at 8 (HTS/TBC ignored); REP ignored~~ — **done**: a stop table with HTS, TBC, CHT/CBT, CTC and DECST8C, kept across a resize; REP landed earlier. | Correctness for the long tail (and vttest). |
 | U1 | **Underline styles (SGR 4:x), SGR 21/53/58, colored underline** | nvim undercurl; degrades gracefully meanwhile. |
 | U1 | **Mode 1007 alternateScroll untracked** | Wheel→arrow-keys on alternate screen (less/vim wheel scrolling) — needs mode state so the client can translate. |
 | U1 | **Media Copy (MC) dropped with a diagnostic** — `CSI Ps i`, `CSI ? Ps i`, DECPFF/DECPEX, printer DSR | **WP-PRINT** (below). `xterm-256color` advertises `mc0`/`mc4`/`mc5`, so a program that prints today gets silence and the user gets no clue why. Needs a printer policy on the profile, a printer-controller parse state, autoprint, honest `CSI ? 15 n` replies, a bounded spool and an out-of-band drain. |

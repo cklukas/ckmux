@@ -87,7 +87,7 @@ take first.
 | 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | Blocked | WP-8 |
 | 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | Blocked | WP-12 |
 | 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
-| 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Ready** | — |
+| 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
 | 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Ready** | — |
 | 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Ready** | — |
 | 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |

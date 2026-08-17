@@ -181,6 +181,12 @@ The rest of the item — the policy flag itself, and OSC 2 alongside OSC 0 —
 was already in place (L-10); ckmux's client sets `StoreMetadata` on every
 terminal it opens.
 
+### Landed (U1-a — the columns a program laid out)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-39 | **Tab stops, as a table rather than a division.** `\t` went to the next multiple of eight and nothing could change that: HTS set no stop, TBC cleared none, CHT and CBT were unhandled sequences. Now there is a stop table per screen, with HTS (`ESC H`), TBC (`CSI g`), CHT/CBT (`CSI I` / `CSI Z`), CTC (`CSI W`) and DECST8C (`CSI ? 5 W`), reset by RIS and preserved across a resize for the columns that still exist. A tab past the last stop lands on the last column and stays there rather than one past it — a tab does not wrap a line by itself. | [04-terminal-emulation.md](04-terminal-emulation.md)'s long tail and the vttest chapters WP-21 grades. A program that lays out a table sets its stops once and moves between them; without this every field after the first lands in the wrong column, which reads as scrambled output rather than as a missing feature. |
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -193,7 +199,6 @@ terminal it opens.
 |---|---|---|
 | U0-a | **Attach-an-existing-subsession** entry point on `Application` (today only `launch_terminal_subsession(spec)` exists — no way to hand it a custom/remote subsession). Without it, `TerminalView` change-notification (`notify_terminal_subsession_changed`) and `wait_handles()` aggregation don't reach mirror subsessions. The report calls this "a ~5-line addition"; it is the single cleanest enabler for ckmux. | M2 |
 | U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
-| U1-a | Tab stops (HTS/TBC). *(The rest of this item — OSC 4/10/11 query replies, child OSC 52 opt-in policy with cap and snapshot surface, REP, mode 1007, underline styles SGR 4:x — has landed; see below.)* | M4 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
 | U1-c | **Emulator: Media Copy capture** (WP-PRINT, [04](04-terminal-emulation.md)). `TerminalPrinterPolicy{Deny, Capture}` on the capability profile, **defaulting to `Deny`** so no existing ckVision application changes behavior; printer-controller parse state with a terminator match that survives `feed_output()` chunk boundaries; print-screen / print-line / autoprint; DECPFF + DECPEX; honest `CSI ? 15 n` replies (ready / not-ready / no-printer); `max_printer_spool_bytes`; overflow → free the buffer and **sink** (never resume the screen mid-stream); `take_printer_jobs()` drain with only three scalars added to `TerminalSnapshot`. | M4 |
 | U1-d | **Typed dialog fields.** `FieldDescriptor` materializes text inputs only, so no descriptor dialog can express a radio group, a checkbox, a combo or a number field — every settings form in every ckVision application has to be hand-built today. Extend the descriptor to a field-kind variant (Text, Check, Radio, Combo, Number) with typed `DialogResult` values. Needed by Printer Settings ([06](06-ui-design.md)); the largest single piece of WP-PRINT, and squarely library-level. | M4 |
