@@ -30,6 +30,8 @@
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 
+#include "cvision/term/posix_terminal_subsession.hpp"
+
 #include "cvision/core/golden.hpp"
 #include "cvision/testing/cktest.hpp"
 
@@ -343,6 +345,81 @@ CK_TEST(a_rehydrated_frame_is_the_frame_the_server_holds) {
     ckm::proto::KillServer kill;
     client.session.request(kill);
     (void)client.stream.flush();
+    end_process(server, SIGTERM);
+    forget(socket);
+}
+
+CK_TEST(a_reader_sees_their_shells_prompt_in_the_window_ckmux_drew) {
+    // The whole thing, as a reader meets it: the real `ckmux` client, in a real
+    // terminal, against a real server, with a real shell in the window — and the
+    // question is the only one that matters, which is whether they can SEE it.
+    //
+    // Reported from a running ckmux: "no output is visible in the terminal".
+    // Everything underneath was working — the mirror held the prompt, the
+    // sequence was unbroken, the window was drawn — and the reason nothing
+    // showed is that the terminal had been created at the size of the client's
+    // whole DESKTOP while the window that displays it is smaller by its frame.
+    // A terminal view shows the bottom of its grid, as a terminal should, so a
+    // prompt printed at the top sat above the view. Nothing in the protocol was
+    // wrong; the geometry was, and only running it could show that.
+    const std::filesystem::path socket = private_socket("prompt");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    // The client hosted in a PTY, its screen decoded from what it drew — the
+    // end-to-end pattern of plans/09.
+    ckv::term::TerminalLaunchSpec spec = ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
+    spec.working_directory = "/tmp";
+    spec.environment = {{"TERM", "xterm-256color"},
+                        {"PATH", "/usr/bin:/bin"},
+                        {"SHELL", "/bin/sh"},
+                        {"HOME", "/tmp"},
+                        {"LC_ALL", "C"},
+                        {"CKMUX_SOCKET", socket.string()}};
+    spec.profile = ckv::term::embedded_xterm_sixel_profile();
+    spec.profile.cells = ckv::Size{100, 30};
+    spec.profile.cell_pixels = ckv::Size{9, 18};
+    spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
+    ckv::term::TerminalSubsessionOptions options;
+    options.max_output_bytes = 1u << 20u;
+    options.max_parser_work_per_step = 256u << 10u;
+    auto client = ckv::term::PosixTerminalSubsession::launch(spec, options);
+
+    // `sh` prints no prompt of its own when it is not interactive, so the shell
+    // is asked to say something a reader would recognise.
+    const auto screen_of_client = [&client] {
+        std::string text;
+        const ckv::core::TerminalSnapshot snapshot = client->snapshot();
+        for (const ckv::Cell& cell : snapshot.cell_buffer)
+            if (!cell.is_continuation()) text += cell.grapheme();
+        return text;
+    };
+    const clock_type::time_point deadline = clock_type::now() + std::chrono::seconds(8);
+    bool typed = false;
+    bool seen = false;
+    while (!seen && clock_type::now() < deadline) {
+        (void)client->drain(64 * 1024);
+        const std::string screen = screen_of_client();
+        // Once the window is on screen, type into it exactly as a reader would.
+        if (!typed && screen.find("Terminal") != std::string::npos) {
+            client->send_input("echo ckmux-is-working\n");
+            typed = true;
+        }
+        seen = screen.find("ckmux-is-working") != std::string::npos;
+        ::usleep(20000);
+    }
+    CK_CHECK(typed);
+    CK_CHECK(seen);
+    client->close();
+
+    ckm::proto::KillServer kill;
+    WireClient closer;
+    if (closer.connect_and_attach(socket, ckv::Size{80, 24})) {
+        closer.session.request(kill);
+        (void)closer.stream.flush();
+    }
     end_process(server, SIGTERM);
     forget(socket);
 }

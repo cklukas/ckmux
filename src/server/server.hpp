@@ -106,8 +106,13 @@ private:
         // truth in the diff engine.
         bool attached = false;
         std::uint64_t session = 0;
-        // The desktop this client declared, on attach and on every host resize.
+        // The desktop this client declared, on attach and on every host resize,
+        // and what one cell of it measures. The metric is what turns a
+        // terminal's grid into the pixel fields its child asks about
+        // (XTWINOPS 14/16), and it belongs to the client's display rather than
+        // to any one terminal.
         ckv::Size desktop{0, 0};
+        ckv::Size cell_pixels{0, 0};
         // The client's queue went over its high-water mark, so deltas stopped
         // being queued for it. What clears it is not the missing deltas — those
         // are gone — but a fresh snapshot once the queue has drained: repairing

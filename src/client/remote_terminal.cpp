@@ -98,15 +98,18 @@ void RemoteTerminalSubsession::resize(ckv::Size cells, ckv::Size cell_pixels) {
     // grid size is the server's to confirm.
     if (cell_pixels.width > 0 && cell_pixels.height > 0) profile_.cell_pixels = cell_pixels;
     if (!send_) return;
-    proto::ClientResize resize;
-    resize.columns = static_cast<std::uint16_t>(std::max(0, cells.width));
-    resize.rows = static_cast<std::uint16_t>(std::max(0, cells.height));
-    // The protocol carries the whole text area in pixels, because that is what a
-    // client can measure; the server divides it back down to a cell (WP-3).
-    resize.pixel_width =
-        static_cast<std::uint16_t>(std::max(0, cells.width) * std::max(0, cell_pixels.width));
-    resize.pixel_height =
-        static_cast<std::uint16_t>(std::max(0, cells.height) * std::max(0, cell_pixels.height));
+    // THIS terminal's size, not the client's desktop.
+    //
+    // They are different numbers, and confusing them is invisible until somebody
+    // looks at the screen: a terminal sized to the whole desktop, shown in a
+    // window that is smaller by its frame, has only its bottom rows on view — so
+    // a shell's prompt, printed at the top, sits above the window and the
+    // terminal looks empty. That is precisely what it did, and every layer
+    // underneath was working perfectly while it happened.
+    proto::MoveResize resize;
+    resize.term = terminal_;
+    resize.rect.width = static_cast<std::uint16_t>(std::max(0, cells.width));
+    resize.rect.height = static_cast<std::uint16_t>(std::max(0, cells.height));
     send_(resize);
 }
 

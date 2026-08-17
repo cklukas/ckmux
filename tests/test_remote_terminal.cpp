@@ -358,7 +358,16 @@ CK_TEST(a_reader_keeps_only_as_much_history_as_they_asked_for) {
     CK_CHECK(history_text.find("line-4") != std::string::npos);
 }
 
-CK_TEST(a_resize_asks_the_server_and_carries_the_text_area_in_pixels) {
+CK_TEST(a_resize_tells_the_server_the_size_of_this_terminals_view) {
+    // THIS terminal's grid, not the client's desktop — and the distinction is
+    // not pedantic. A terminal sized to the whole desktop, shown in a window
+    // that is smaller by its frame, has only its bottom rows on view: a shell's
+    // prompt is printed at the top, so the window looks empty while every layer
+    // underneath works perfectly. That is what shipped, and what a reader
+    // reported as "no output is visible in the terminal".
+    //
+    // The desktop and its pixel metric travel with `Attach` and `ClientResize`,
+    // once per client; a terminal's own size travels per terminal.
     FakeServer server;
     std::vector<ckm::proto::Message> sent;
     RemoteTerminalSubsession remote(server.id, server.profile,
@@ -370,21 +379,18 @@ CK_TEST(a_resize_asks_the_server_and_carries_the_text_area_in_pixels) {
     remote.resize(ckv::Size{100, 30}, ckv::Size{9, 18});
     CK_CHECK(sent.size() == 1U);
     if (!sent.empty()) {
-        const auto* resize = std::get_if<ckm::proto::ClientResize>(&sent.front());
+        const auto* resize = std::get_if<ckm::proto::MoveResize>(&sent.front());
         CK_CHECK(resize != nullptr);
         if (resize != nullptr) {
-            CK_CHECK(resize->columns == 100U);
-            CK_CHECK(resize->rows == 30U);
-            // The whole text area, because that is what a client can measure and
-            // what the protocol carries; the server divides it back down to one
-            // cell (WP-3, where getting this backwards was silent).
-            CK_CHECK(resize->pixel_width == 900U);
-            CK_CHECK(resize->pixel_height == 540U);
+            CK_CHECK(resize->term == server.id);
+            CK_CHECK(resize->rect.width == 100U);
+            CK_CHECK(resize->rect.height == 30U);
         }
     }
-    // And the client's own cell metric is kept, because that is what a picture is
-    // drawn at.
+    // And the client's own cell metric is kept, because that is what a picture
+    // is drawn at.
     CK_CHECK(remote.profile().cell_pixels.width == 9);
+    CK_CHECK(remote.profile().cell_pixels.height == 18);
 }
 
 CK_TEST(an_exited_child_is_an_exited_terminal_to_the_view) {

@@ -82,6 +82,15 @@ void install_signal_handlers() {
     (void)std::signal(SIGHUP, ckmux_signal_handler);
 }
 
+// One cell, from the text area a client measured and the grid it measured over.
+// The protocol carries the area because that is what a client can measure;
+// everything downstream wants the cell (WP-3).
+template <typename WithGeometry>
+ckv::Size cell_metric_of(const WithGeometry& message) {
+    if (message.columns == 0 || message.rows == 0) return ckv::Size{0, 0};
+    return ckv::Size{message.pixel_width / message.columns, message.pixel_height / message.rows};
+}
+
 const char* name_of(proto::MessageType type) {
     switch (type) {
         case proto::MessageType::Hello: return "Hello";
@@ -318,15 +327,29 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
     if (const auto* resize = std::get_if<proto::ClientResize>(&message)) {
+        // The DESKTOP, and the cell metric that comes with it. Not the
+        // terminals: each of those lives in a window with a frame around it, and
+        // is sized by the client that draws it (`MoveResize`, below). Resizing
+        // every terminal to the desktop is what put a shell's prompt above the
+        // top of its own window.
         client.desktop = ckv::Size{resize->columns, resize->rows};
-        // Every terminal follows the client's window, because in this build the
-        // session has one desktop and the terminals fill it. WP-8's layout makes
-        // this a per-window question; the pixel fields carry the whole text area
-        // and the terminal divides them down to one cell (WP-3).
-        for (const TerminalId id : terminals_.ids())
-            if (Terminal* terminal = terminals_.find(id))
-                terminal->resize(resize->columns, resize->rows, resize->pixel_width,
-                                 resize->pixel_height);
+        client.cell_pixels = cell_metric_of(*resize);
+        return;
+    }
+    if (const auto* resize = std::get_if<proto::MoveResize>(&message)) {
+        Terminal* terminal = terminals_.find(resize->term);
+        if (terminal == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "MoveResize";
+            error.human = "no such terminal";
+            send(client, error);
+            return;
+        }
+        const int columns = std::max(1, static_cast<int>(resize->rect.width));
+        const int rows = std::max(1, static_cast<int>(resize->rect.height));
+        terminal->resize(columns, rows, columns * std::max(0, client.cell_pixels.width),
+                         rows * std::max(0, client.cell_pixels.height));
         return;
     }
     if (const auto* request = std::get_if<proto::NewTerminal>(&message)) {
@@ -339,8 +362,14 @@ void Server::handle(Client& client, const proto::Message& message) {
             spec.working_directory = home;
         else
             spec.working_directory = "/";
-        spec.columns = client.desktop.width > 0 ? client.desktop.width : 80;
-        spec.rows = client.desktop.height > 0 ? client.desktop.height : 24;
+        // The size the client asked for, if it said — a `NewTerminal` carries a
+        // rect for exactly this. A client with no opinion yet gets a
+        // conventional screen and corrects it the moment its view is laid out,
+        // which is one frame away.
+        spec.columns = request->rect.width > 0 ? static_cast<int>(request->rect.width) : 80;
+        spec.rows = request->rect.height > 0 ? static_cast<int>(request->rect.height) : 24;
+        spec.pixel_width = spec.columns * std::max(0, client.cell_pixels.width);
+        spec.pixel_height = spec.rows * std::max(0, client.cell_pixels.height);
         Terminal& terminal = terminals_.open(spec);
         focused_terminal_ = terminal.id();
         proto::TermOpened opened;
@@ -409,10 +438,7 @@ void Server::attach(Client& client, const proto::Attach& request) {
     client.dirty_snapshot = false;
     if (request.columns > 0 && request.rows > 0) {
         client.desktop = ckv::Size{request.columns, request.rows};
-        for (const TerminalId id : terminals_.ids())
-            if (Terminal* terminal = terminals_.find(id))
-                terminal->resize(request.columns, request.rows, request.pixel_width,
-                                 request.pixel_height);
+        client.cell_pixels = cell_metric_of(request);
     }
     send_snapshot(client);
 }

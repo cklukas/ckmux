@@ -134,6 +134,14 @@ Deltas are emitted at the flush tick (`max-fps`), coalesced per terminal;
 per-terminal and monotonic — a gap observed by the client (should not
 happen) triggers reconnect-and-resnapshot.
 
+**Two geometries, and they are not the same number.** `Attach` and
+`ClientResize` carry the CLIENT's desktop and, through their pixel fields, the
+size of one cell of it. `MoveResize` carries one TERMINAL's own size — the grid
+its view has, which is smaller than the desktop by whatever frame the client
+draws around it. Sizing a terminal to the desktop puts a shell's prompt above
+the top of its own window, where a reader cannot see it, while every layer
+underneath works perfectly (WP-7, reported from a running ckmux).
+
 **A resnapshot is an `Attach`, answered with `Attached`.** There is no separate
 "send it again" message: a client that observes a gap, or that a server told it
 had fallen behind, re-sends `Attach` and is given every terminal whole. One

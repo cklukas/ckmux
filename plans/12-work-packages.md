@@ -473,6 +473,17 @@ And one in ckmux's own socket layer: `Stream::receive` read until the socket ran
 dry, which under a flood is never — the client hung. Bounded now, the same rule
 the server applies to a PTY.
 
+A fifth arrived from a reader running it: **the terminal was empty**. Everything
+underneath was right — the mirror held the prompt, the sequence was unbroken,
+the window was drawn — and the terminal had been created at the size of the
+client's whole DESKTOP while the window showing it is smaller by its frame. A
+terminal view shows the bottom of its grid, as a terminal should, so a prompt
+printed at the top sat above the view. The desktop and the cell metric now travel
+with `Attach`/`ClientResize`; a terminal's own size travels per terminal with
+`MoveResize`. `tests/test_core_promise.cpp` pins it end to end: the real client
+in a PTY, a reader's keystrokes, and their output on the screen — checked by
+putting the bug back.
+
 ### M3 — sessions & management
 
 The multiplexer. [03-session-model.md](03-session-model.md)'s operation table
