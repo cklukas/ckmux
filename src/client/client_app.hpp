@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "client/commands.hpp"
+#include "client/copy_mode.hpp"
 #include "client/prefix_overlay.hpp"
 #include "common/config.hpp"
 #include "cvision/term/terminal_subsession.hpp"
@@ -53,6 +54,12 @@ struct ClientOptions {
     // default; the client fills it with the reader's home directory, since
     // that is where a shell opens.
     std::string working_directory;
+    // How a copy reaches a helper program — `pbcopy`, `xclip`, whatever
+    // `[terminal] clipboard` named. Injected because the real one forks, and
+    // a client that forks is a client a test cannot drive: the host passes
+    // platform::write_to_command, a test passes a recorder. Empty means no
+    // helper target is attempted at all.
+    std::function<bool(const std::string& command, std::string_view text)> clipboard_writer;
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator
@@ -86,6 +93,13 @@ public:
     Context context() const;
     bool prefix_pending() const noexcept { return overlay_ != nullptr; }
     PrefixOverlay* prefix_overlay() noexcept { return overlay_; }
+    // The copy-mode surface over the focused terminal, or nullptr. Copy mode
+    // is client-local by design (plans/03: dialogs, the picker and copy mode
+    // are never synced), which is also why it needs nothing from the server.
+    CopyModeView* copy_mode() noexcept { return copy_mode_; }
+    // What `^B ]` would paste: text yanked in copy mode, held here so it
+    // survives a copy that no system clipboard accepted.
+    const std::string& internal_clipboard() const noexcept { return internal_clipboard_; }
     const ckv::KeyChord& prefix() const noexcept { return options_.settings.prefix; }
     // The bindings in force, a reader's `bind` lines applied. Every surface
     // that mentions a key reads this one table.
@@ -117,6 +131,18 @@ private:
     void show_key_reference();
     void show_about();
     void show_settings();
+    // Freezes the focused terminal's history into a copy-mode surface over
+    // its window, and takes it away again.
+    void enter_copy_mode();
+    void leave_copy_mode();
+    // Sends the internal clipboard to the focused terminal, bracketed if the
+    // program in it asked for bracketed paste.
+    void paste_into_terminal();
+    // Yanked text to every target `[terminal] clipboard` names, in order.
+    void copy_to_targets(std::string text);
+    // The caption a terminal window carries while its history is being read:
+    // its own title plus the COPY badge and the position (plans/06).
+    void refresh_copy_mode_caption();
     // Adopt a new value and store it. Terminals already open keep what they
     // started with; both return whether the store succeeded, so a dialog
     // changing two settings at once explains a read-only configuration file
@@ -150,6 +176,14 @@ private:
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
     ckv::widgets::MemoryHelpProvider help_;
     PrefixOverlay* overlay_ = nullptr;
+    CopyModeView* copy_mode_ = nullptr;
+    // The window whose history copy mode is showing, so its caption can be
+    // put back and the surface can follow it if it moves.
+    ckv::widgets::Window* copy_mode_window_ = nullptr;
+    // ckmux's own clipboard: what `^B ]` pastes. Separate from the system
+    // clipboard because a reader copying inside ckmux over SSH may have no
+    // system clipboard that ckmux can reach at all.
+    std::string internal_clipboard_;
     ckv::ui::Application::TimerId which_key_timer_ = 0;
     ckv::ui::Application::TimerId title_timer_ = 0;
     // The window whose confirmation the reader has already answered, so the

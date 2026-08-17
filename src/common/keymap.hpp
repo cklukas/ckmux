@@ -39,6 +39,8 @@ enum class Action : unsigned char {
     Tile,
     Cascade,
     MenuBar,
+    CopyMode,
+    Paste,
     Detach,
     Sessions,
     KeyReference,

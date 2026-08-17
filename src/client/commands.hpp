@@ -48,6 +48,8 @@ inline constexpr ckv::ui::CommandId kThemeMono = kBase + 10;
 // single handler, but the reader still has to be told they exist.
 inline constexpr ckv::ui::CommandId kFocusByNumber = kBase + 11;
 inline constexpr ckv::ui::CommandId kSettings = kBase + 12;
+inline constexpr ckv::ui::CommandId kCopyMode = kBase + 13;
+inline constexpr ckv::ui::CommandId kPaste = kBase + 14;
 
 }  // namespace commands
 

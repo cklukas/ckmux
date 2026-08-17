@@ -7,6 +7,7 @@
 
 #include "client/client_app.hpp"
 #include "common/config.hpp"
+#include "platform/clipboard.hpp"
 #include "platform/paths.hpp"
 #include "cvision/term/posix_clock.hpp"
 #include "cvision/term/posix_terminal.hpp"
@@ -35,6 +36,12 @@ int main() {
     ckm::LoadedSettings stored = ckm::load_settings(ckm::platform::config_file_path());
     options.settings = std::move(stored.settings);
     options.config_warnings = std::move(stored.warnings);
+
+    // Copying to a helper program forks, which the client deliberately does
+    // not do itself — the host supplies the one function that does.
+    options.clipboard_writer = [](const std::string& command, std::string_view text) {
+        return ckm::platform::write_to_command(command, text);
+    };
 
     ckm::client::ClientApp client(app, std::move(options));
     app.run();

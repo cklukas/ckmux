@@ -246,13 +246,28 @@ otherwise.
 
 ## Copy mode & clipboard
 
-- Enter via `^B [`, `Shift`+drag (implicit), or wheel-up on primary screen.
+Implemented, WP-17 (`src/client/copy_mode.*`).
+
+- Enter via `^B [`. `Shift`+drag stays the implicit path through
+  `TerminalView`'s own selection; wheel-up entry is not wired yet.
 - Footer switches to copy-mode hints; the window title bar shows a `COPY`
   badge and the scroll position (`-1024/10000`).
-- Keys: arrows/`PgUp`/`PgDn`/`Home`/`End` scroll; `v` begin selection
-  (`V` line-wise, `Ctrl+v` rectangular); `y` / `Enter` copy & exit; `/` and
+- Keys: arrows/`PgUp`/`PgDn`/`Home`/`End` and `h`/`j`/`k`/`l`, `0`/`$`,
+  `g`/`G`, `Ctrl+b`/`Ctrl+f` move; `v` begin selection (`V` line-wise,
+  `Ctrl+v` rectangular, the same key again to take it back); `y` / `Enter`
+  copy & exit — with nothing marked, `y` takes the cursor's line; `/` and
   `?` search with `n`/`N`; `q`/`Esc` exit. (vi-flavored; a config flag can
   add emacs-style aliases later.)
+- **The history is frozen on entry.** A program that keeps printing does not
+  move the line a reader is about to select out from under them, and a
+  selection made at line 4 000 is still that line when it is yanked.
+- Search is **smartcase** — an all-lower-case query matches either case, a
+  capital in it means the reader typed one on purpose — and **wraps**, since
+  a history is a loop to somebody searching it.
+- These keys are **not rebindable in v1**: they are modal motions, not
+  commands, so a config binding would need an action name per motion. The
+  `copy-mode` context in `[keys]` refuses bindings out loud until that
+  changes ([08-configuration.md](08-configuration.md)).
 - Copy targets: internal clipboard (for `^B ]` paste into any terminal) and
   the host clipboard via OSC 52 (works over SSH) and/or `pbcopy`-style
   helper — see [08-configuration.md](08-configuration.md).

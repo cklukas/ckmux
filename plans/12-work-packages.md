@@ -90,7 +90,7 @@ take first.
 | 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Ready** | — |
 | 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Ready** | — |
 | 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Ready** | — |
-| 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Ready** | — |
+| 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-6 |
 | 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
 | 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
@@ -270,12 +270,22 @@ deny, and **U1-d** the rest of the typed dialog fields — `Radio`, `Combo`,
 are emulator and widget work in files nothing in M2 touches; they sit late in
 the order because M2 is the promise, not because anything stops them.
 
-**WP-17 copy mode** — search, vi keys, rectangular selection, clipboard targets
-— is likewise startable now. It lives above the `TerminalSubsession` seam, over
-a `TerminalView`'s scrollback, so it is written the same way against M1's
-in-process terminals as against M2's mirrors; nothing about it changes when the
-terminal moves behind the socket. That is worth knowing on a day when the
-server is not the thing to work on.
+**WP-17 copy mode** — *done, 2026-08-17.* Search (with smartcase and
+wrapping), vi keys beside the arrow keys, character, line and rectangular
+selection, the clipboard targets of [08](08-configuration.md) in the order
+that file lists them, and `^B ]` paste bracketed only for a program that
+asked for it. It reads a snapshot and nothing else, which is what "above the
+`TerminalSubsession` seam" buys: the same code serves M1's in-process
+terminals and M2's mirrors, and nothing in it changes when the terminal moves
+behind the socket.
+
+Two decisions in it are worth stating. The history is **frozen on entry** — a
+program that keeps printing must not move the line a reader is about to
+select out from under them. And copy mode's own keys are **not rebindable in
+v1**: they are modal motions rather than commands, so making them
+configurable would mean an action name per motion. `[keys]`'s `copy-mode`
+context therefore still refuses bindings out loud, which is the honest state
+rather than a silent one.
 
 The rest of M4 does wait on the wire: **WP-16** Sixel over it (chunked image
 add, place, remove, and the DA1 advertisement end to end), **WP-18** the paste

@@ -28,8 +28,8 @@ using ckv::ui::std_commands::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 17>& default_bindings() {
-    static const std::array<KeyBinding, 17> kBindings{{
+const std::array<KeyBinding, 19>& default_bindings() {
+    static const std::array<KeyBinding, 19> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {"n", kNextWindow, "&Next Terminal", "next", 70, Action::NextTerminal},
@@ -41,6 +41,8 @@ const std::array<KeyBinding, 17>& default_bindings() {
         {"t", kTile, "&Tile", "tile", 0, Action::Tile},
         {"T", kCascade, "C&ascade", "cascade", 0, Action::Cascade},
         {"m", kMenu, "&Menu Bar", "menu", 95, Action::MenuBar},
+        {"[", commands::kCopyMode, "Cop&y Mode", "copy", 45, Action::CopyMode},
+        {"]", commands::kPaste, "&Paste", "paste", 25, Action::Paste},
         {"d", commands::kDetach, "&Detach", "detach", 80, Action::Detach},
         {"s", commands::kSessions, "&Sessions…", "sessions", 0, Action::Sessions},
         {"?", commands::kKeyReference, "&Keys…", "keys", 50, Action::KeyReference},
@@ -65,6 +67,8 @@ ckv::ui::CommandId command_for_action(Action action) {
         case Action::Tile: return kTile;
         case Action::Cascade: return kCascade;
         case Action::MenuBar: return kMenu;
+        case Action::CopyMode: return commands::kCopyMode;
+        case Action::Paste: return commands::kPaste;
         case Action::Detach: return commands::kDetach;
         case Action::Sessions: return commands::kSessions;
         case Action::KeyReference: return commands::kKeyReference;

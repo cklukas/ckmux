@@ -126,12 +126,12 @@ Three states, and the difference between them is the point:
 
 Honoured today: `prefix`, `shell`, `login-shell`, `scrollback` (including
 `0`), `theme`, `confirm-kill`, `term`, `mouse`, `alternate-scroll`, `sixel`,
-`sixel-max-megapixels`, `osc52`, and the whole of `[keys]`.
+`sixel-max-megapixels`, `osc52`, `clipboard`, and the whole of `[keys]`.
 
 Read but not yet honoured: `on-exit` (WP-13), `kill-empty-session` (WP-8),
-`clock` (WP-14), `[terminal] clipboard` (WP-17), all of `[printer]` (U1-c and
-PRINT-1…6), and `[render] max-fps` (WP-2). A key leaves that list in the
-commit that wires it up.
+`clock` (WP-14), all of `[printer]` (U1-c and PRINT-1…6), and
+`[render] max-fps` (WP-2). A key leaves that list in the commit that wires it
+up — `[terminal] clipboard` left it with WP-17, which is where copying began.
 
 Notes on the parts that are easy to get wrong:
 
@@ -150,8 +150,10 @@ Notes on the parts that are easy to get wrong:
   n-th terminal) rather than selecting a handler, so there is nothing for a
   binding to point at. Asking is refused with that reason.
 - **Action names are exactly the actions that exist.** The list grows with
-  the packages that add them — copy mode's actions arrive with WP-17 — so
-  every name a file can contain is a name that does something.
+  the packages that add them — `copy-mode` and `paste` arrived with WP-17 —
+  so every name a file can contain is a name that does something. Copy mode's
+  own keys are not among them: they are modal motions rather than commands,
+  and are fixed in v1 ([06-ui-design.md](06-ui-design.md)).
 - **The View menu's theme choice is for this session only.** The file is the
   reader's; a passing look at Monochrome should not rewrite it.
 

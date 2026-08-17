@@ -163,6 +163,18 @@ void ClientApp::register_commands() {
             case commands::kSettings:
                 register_own(binding.command, binding.title, "Settings", [this] { show_settings(); });
                 break;
+            case commands::kCopyMode:
+                register_own(binding.command, binding.title, "Terminal", [this] { enter_copy_mode(); });
+                break;
+            case commands::kPaste:
+                register_own(binding.command, binding.title, "Terminal",
+                             [this] { paste_into_terminal(); });
+                // Nothing to paste is not a failure to explain in a dialog; it
+                // is a menu item that is plainly not available yet, which is
+                // what an empty clipboard looks like everywhere else.
+                registry.set_enabled_predicate(binding.command,
+                                               [this] { return !internal_clipboard_.empty(); });
+                break;
             case commands::kDetach:
             case commands::kSessions:
                 // Registered so the menu, the footer, and the key reference
@@ -395,6 +407,15 @@ void ClientApp::refresh_terminal_titles() {
         w::TerminalView* const view = terminal_view_of(window);
         if (view == nullptr) continue;
         const std::string wanted = view->session().snapshot().title;
+        // While its history is being read the caption belongs to copy mode,
+        // which writes the badge and the scroll position into it. The child's
+        // title is still recorded, so leaving copy mode restores whatever the
+        // program asked for in the meantime rather than a stale name.
+        if (window == copy_mode_window_) {
+            entry->second.child = wanted;
+            refresh_copy_mode_caption();
+            continue;
+        }
         if (wanted == entry->second.child) continue;  // nothing changed
         entry->second.child = wanted;
         // An empty title is how a program hands the caption back — on exit,
@@ -416,6 +437,20 @@ Context ClientApp::context() const {
 
 void ClientApp::refresh_footer() {
     if (footer_ == nullptr) return;
+    // Copy mode owns the keyboard and its keys are its own — modal motions and
+    // a selection, not commands anything else can execute — so the footer says
+    // what they are rather than advertising prefix keys that are not reachable
+    // from here (plans/06's context table).
+    if (copy_mode_ != nullptr) {
+        std::vector<w::StatusLineItem> keys;
+        keys.emplace_back("↑↓ scroll", ckv::ui::kInvalidCommand, 90);
+        keys.emplace_back("v select", ckv::ui::kInvalidCommand, 80);
+        keys.emplace_back("y copy", ckv::ui::kInvalidCommand, 70);
+        keys.emplace_back("/ search", ckv::ui::kInvalidCommand, 60);
+        keys.emplace_back("q exit", ckv::ui::kInvalidCommand, 50);
+        footer_->set_items(std::move(keys));
+        return;
+    }
     const Context current = context();
     std::vector<w::StatusLineItem> items;
     for (const KeyBinding* binding : keymap_.footer(current)) {
@@ -521,6 +556,98 @@ void ClientApp::show_about() {
                                     "\nA terminal multiplexer with a visible interface.\n\n"
                                     "Built on ckVision.",
                                 w::MessageBoxButtons::Ok})));
+}
+
+void ClientApp::enter_copy_mode() {
+    if (copy_mode_ != nullptr || desktop_ == nullptr) return;
+    w::Window* const window = active_terminal();
+    w::TerminalView* const view = terminal_view_of(window);
+    if (view == nullptr) return;
+
+    // The history is read once, here, and does not move again: a program that
+    // keeps printing while its reader is reading must not shift the line they
+    // are about to select out from under them (client/copy_mode.hpp).
+    const ckv::core::TerminalSnapshot snapshot = view->session().snapshot();
+    std::vector<CopyLine> lines = compose_history(snapshot);
+    // Opening at the bottom, where the reader was looking, rather than at the
+    // top of a history that may be ten thousand lines old.
+    const int start = std::max(0, static_cast<int>(lines.size()) - 1);
+
+    auto surface = std::make_unique<CopyModeView>(std::move(lines), start, roles_);
+    surface->on_copy = [this](std::string text) { copy_to_targets(std::move(text)); };
+    surface->on_exit = [this] {
+        // Posted, because this runs inside the surface's own key handler and
+        // leaving destroys it.
+        app_.post([this] { leave_copy_mode(); });
+    };
+    copy_mode_ = desktop_->add_popup(std::move(surface));
+    copy_mode_window_ = window;
+    copy_mode_->set_bounds(window->content_rect());
+    app_.set_focus(copy_mode_);
+    refresh_copy_mode_caption();
+    refresh_footer();
+}
+
+void ClientApp::leave_copy_mode() {
+    if (copy_mode_ == nullptr || desktop_ == nullptr) return;
+    CopyModeView* const surface = copy_mode_;
+    copy_mode_ = nullptr;
+    desktop_->remove_popup(surface);
+    if (copy_mode_window_ != nullptr) {
+        const auto title = titles_.find(copy_mode_window_);
+        if (title != titles_.end())
+            copy_mode_window_->set_title(title->second.child.empty() ? title->second.fallback
+                                                                     : title->second.child);
+    }
+    copy_mode_window_ = nullptr;
+    focus_active_terminal();
+    refresh_footer();
+}
+
+void ClientApp::refresh_copy_mode_caption() {
+    // The badge and the position, on the window's own caption, because that is
+    // where a reader looks to find out which window they are in and how far
+    // back (plans/06). Restored on exit from the same store the title poll
+    // reads, so a caption cannot be left saying COPY.
+    if (copy_mode_ == nullptr || copy_mode_window_ == nullptr) return;
+    const auto title = titles_.find(copy_mode_window_);
+    const std::string base = title == titles_.end() ? copy_mode_window_->title()
+                             : title->second.child.empty() ? title->second.fallback
+                                                            : title->second.child;
+    const int from_bottom = copy_mode_->cursor().y - (copy_mode_->history_size() - 1);
+    copy_mode_window_->set_title(base + " — COPY " + std::to_string(from_bottom) + "/" +
+                                 std::to_string(copy_mode_->history_size()));
+}
+
+void ClientApp::copy_to_targets(std::string text) {
+    if (text.empty()) return;
+    // ckmux's own clipboard always gets it: `^B ]` has to work whether or not
+    // anything outside this process would accept the text, which over SSH is
+    // the ordinary case.
+    internal_clipboard_ = text;
+    for (const ClipboardTarget& target : options_.settings.clipboard) {
+        switch (target.kind) {
+            case ClipboardTarget::Kind::Osc52:
+                // The outer terminal, through ckVision's clipboard writer —
+                // which emits OSC 52 and therefore works over a connection.
+                app_.set_clipboard_text(text);
+                break;
+            case ClipboardTarget::Kind::Pbcopy:
+                if (options_.clipboard_writer) options_.clipboard_writer("pbcopy", text);
+                break;
+            case ClipboardTarget::Kind::Exec:
+                if (options_.clipboard_writer) options_.clipboard_writer(target.command, text);
+                break;
+        }
+    }
+}
+
+void ClientApp::paste_into_terminal() {
+    if (internal_clipboard_.empty()) return;
+    w::TerminalView* const view = terminal_view_of(active_terminal());
+    if (view == nullptr) return;
+    view->session().send_input(
+        paste_bytes(internal_clipboard_, view->session().snapshot().bracketed_paste_enabled));
 }
 
 void ClientApp::show_settings() {

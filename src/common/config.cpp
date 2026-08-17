@@ -406,7 +406,6 @@ std::vector<std::string> keys_not_honoured_yet() {
         "[general] on-exit (WP-13)",
         "[general] kill-empty-session (WP-8)",
         "[general] clock (WP-14)",
-        "[terminal] clipboard (WP-17)",
         "[printer] mode (U1-c, PRINT-1…6)",
         "[printer] ask-cache (U1-c, PRINT-1…6)",
         "[printer] spool-limit (U1-c, PRINT-1…6)",
