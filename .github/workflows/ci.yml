@@ -1,0 +1,57 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+#
+# ckmux builds against a ckVision checkout, so every lane clones it beside
+# this one. macOS is the daily gate; the Linux lane is advisory until the M5
+# port lands and then becomes blocking (plans/09-testing.md).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            sanitize: ""
+            name: macos
+          - os: macos-latest
+            sanitize: "address,undefined"
+            name: macos-asan-ubsan
+          - os: ubuntu-latest
+            sanitize: ""
+            name: linux
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # The Linux port is M5 work; report it without blocking until then.
+    continue-on-error: ${{ matrix.name == 'linux' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ckmux
+
+      - name: Check out ckVision
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/ckvision
+          path: ckvision
+
+      - name: Configure
+        run: >
+          cmake -S ckmux -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCKMUX_CKVISION_SOURCE_DIR=$GITHUB_WORKSPACE/ckvision
+          -DCKMUX_SANITIZE=${{ matrix.sanitize }}
+          -DCKVISION_SANITIZE=${{ matrix.sanitize }}
+
+      # Warnings are errors in both projects, so a clean build is part of the
+      # gate rather than something to read the log for.
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
