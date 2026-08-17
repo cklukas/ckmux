@@ -37,6 +37,17 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
   repaint pass that stops at the first changed row, an `apply` that skips its
   fit check), because a property test nobody has seen fail is a claim about
   itself.
+- **Diff engine on live terminals** (WP-4b, `tests/test_diff_engine.cpp`): real
+  PTYs with real children, and a mirror built out of nothing but the deltas the
+  server produced — the claim being checked is not "the server thinks it sent
+  the right thing" but "a client that saw only these bytes holds what the
+  terminal holds", cell for cell. Plus the adversarial sequence test (a silent
+  terminal, a chatty one, a flood, one resized under load, one closed mid-run,
+  and ticks where nothing happened: per terminal the numbers must still be 1, 2,
+  3 with nothing missing and nothing repeated, because a false gap is a reattach
+  storm and a missed gap is a screen that quietly stops matching), and the two
+  measurements the package is accepted on — printed, not asserted, with only
+  their shape checked so the numbers stay meaningful on a busier machine.
 
 ### 2. Emulator conformance pins (label `golden`)
 

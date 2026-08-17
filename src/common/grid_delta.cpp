@@ -69,9 +69,9 @@ std::uint64_t row_hash(std::span<const ckv::Cell> row) {
     return hash;
 }
 
-std::span<const ckv::Cell> row_of(const std::vector<ckv::Cell>& grid, int width, int row) {
+std::span<const ckv::Cell> row_of(std::span<const ckv::Cell> grid, int width, int row) {
     const std::size_t offset = static_cast<std::size_t>(row) * static_cast<std::size_t>(width);
-    return std::span<const ckv::Cell>(grid.data() + offset, static_cast<std::size_t>(width));
+    return grid.subspan(offset, static_cast<std::size_t>(width));
 }
 
 // A region shift, performed the way the mirror will perform it — this is the
@@ -110,10 +110,10 @@ std::size_t total_length(const std::vector<CellRun>& runs) {
 
 // Every row of `current`, as its own op. What a resize, an attach-and-diff or
 // a mirror of the wrong size comes down to.
-void emit_every_row(const GridState& current, std::vector<GridOp>& ops) {
+void emit_every_row(const GridView& current, std::vector<GridOp>& ops) {
     const std::size_t expected = static_cast<std::size_t>(std::max(0, current.cells.width)) *
                                  static_cast<std::size_t>(std::max(0, current.cells.height));
-    if (current.grid.size() != expected) return;  // a state that disagrees with itself
+    if (current.grid.size() != expected) return;  // a view that disagrees with itself
     for (int row = 0; row < current.cells.height; ++row)
         ops.push_back(CellsOp{static_cast<std::uint16_t>(row), 0,
                               runs_of(row_of(current.grid, current.cells.width, row))});
@@ -133,8 +133,9 @@ GridState blank_state(ckv::Size cells, std::size_t max_scrollback_lines) {
     return state;
 }
 
-std::vector<proto::GridOp> diff(const GridState& previous, const GridState& current,
-                                std::span<const std::vector<ckv::Cell>> pushed) {
+std::vector<proto::GridOp> diff(const GridState& previous, const GridView& current,
+                                std::span<const std::vector<ckv::Cell>> pushed,
+                                std::span<const RowDamage> damaged) {
     std::vector<GridOp> ops;
 
     if (!pushed.empty()) {
@@ -146,33 +147,60 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridState& curr
 
     const int width = current.cells.width;
     const int height = current.cells.height;
+    const std::size_t expected = static_cast<std::size_t>(std::max(0, width)) *
+                                 static_cast<std::size_t>(std::max(0, height));
     const bool same_geometry = previous.cells == current.cells &&
-                               previous.grid.size() == current.grid.size() &&
-                               current.grid.size() == static_cast<std::size_t>(std::max(0, width)) *
-                                                          static_cast<std::size_t>(std::max(0, height));
+                               previous.grid.size() == expected && current.grid.size() == expected;
 
     if (!same_geometry) {
         emit_every_row(current, ops);
     } else if (width > 0 && height > 0) {
-        std::vector<std::uint64_t> before(static_cast<std::size_t>(height));
-        std::vector<std::uint64_t> after(static_cast<std::size_t>(height));
-        for (int row = 0; row < height; ++row) {
-            before[static_cast<std::size_t>(row)] = row_hash(row_of(previous.grid, width, row));
+        const std::span<const ckv::Cell> held(previous.grid);
+        // Which rows are looked at. A damage report names them, and rows it does
+        // not name are not read at all — that is the whole difference between a
+        // tick that costs what the child touched and one that costs the screen.
+        // With no report, everything is looked at, which is what a caller
+        // holding two plain values has to mean.
+        std::vector<char> examined(static_cast<std::size_t>(height), damaged.empty() ? 1 : 0);
+        for (std::size_t row = 0; row < damaged.size() && row < examined.size(); ++row)
+            if (!damaged[row].empty()) examined[row] = 1;
+
+        // Hashes are used for two things only: finding the band a shift might
+        // explain, and scoring candidate shifts. Neither is load-bearing — the
+        // repaint pass below compares real cells over every row it was told to
+        // look at, so a collision costs bytes and never a missed update.
+        std::vector<std::uint64_t> before(static_cast<std::size_t>(height), 0);
+        std::vector<std::uint64_t> after(static_cast<std::size_t>(height), 0);
+        std::vector<char> hashed(static_cast<std::size_t>(height), 0);
+        const auto hash_row = [&](int row) {
+            if (hashed[static_cast<std::size_t>(row)]) return;
+            before[static_cast<std::size_t>(row)] = row_hash(row_of(held, width, row));
             after[static_cast<std::size_t>(row)] = row_hash(row_of(current.grid, width, row));
-        }
+            hashed[static_cast<std::size_t>(row)] = 1;
+        };
+        const auto row_differs = [&](int row) {
+            hash_row(row);
+            return before[static_cast<std::size_t>(row)] != after[static_cast<std::size_t>(row)];
+        };
+
         int top = 0;
-        while (top < height && before[static_cast<std::size_t>(top)] == after[static_cast<std::size_t>(top)])
-            ++top;
+        while (top < height && (!examined[static_cast<std::size_t>(top)] || !row_differs(top))) ++top;
         int bottom = height;
         while (bottom > top &&
-               before[static_cast<std::size_t>(bottom - 1)] == after[static_cast<std::size_t>(bottom - 1)])
+               (!examined[static_cast<std::size_t>(bottom - 1)] || !row_differs(bottom - 1)))
             --bottom;
 
-        std::vector<ckv::Cell> working = previous.grid;
+        // Borrowed until a shift is chosen. Copying the previous grid on every
+        // tick would be a full grid copy on the one path whose whole point is
+        // not to have one — and the copy is only needed to predict what a
+        // shift leaves behind.
+        std::vector<ckv::Cell> shifted;
+        std::span<const ckv::Cell> mirror_grid = held;
         if (bottom - top >= 2) {
+            for (int row = top; row < bottom; ++row) hash_row(row);
             // The blank row a shift leaves behind, so a vacated row that the
             // child really did blank counts as moved rather than as a repaint.
-            std::vector<ckv::Cell> blank_row(static_cast<std::size_t>(width), blank_cell());
+            const std::vector<ckv::Cell> blank_row(static_cast<std::size_t>(width), blank_cell());
             const std::uint64_t blank = row_hash(blank_row);
             const auto score_for = [&](int lines) {
                 int matches = 0;
@@ -186,8 +214,9 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridState& curr
                 return matches;
             };
             const int band = bottom - top;
+            const int standing = score_for(0);
             int best_lines = 0;
-            int best_score = score_for(0);
+            int best_score = standing;
             for (int lines = -(band - 1); lines <= band - 1; ++lines) {
                 if (lines == 0) continue;
                 const int score = score_for(lines);
@@ -197,30 +226,36 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridState& curr
                 }
             }
             // Two rows is the threshold, not one: a `Scroll` op costs bytes of
-            // its own, and a shift that saves a single row has only moved
-            // which row gets re-sent.
-            if (best_lines != 0 && best_score - score_for(0) >= 2) {
+            // its own, and a shift that saves a single row has only moved which
+            // row gets re-sent.
+            if (best_lines != 0 && best_score - standing >= 2) {
                 ops.push_back(ScrollOp{static_cast<std::uint16_t>(top),
                                        static_cast<std::uint16_t>(bottom),
                                        static_cast<std::int16_t>(best_lines)});
-                shift_rows(working, width, top, bottom, best_lines);
+                shifted.assign(held.begin(), held.end());
+                shift_rows(shifted, width, top, bottom, best_lines);
+                mirror_grid = shifted;
+                // Every row the shift touched now has to be checked against
+                // what is really there, whether or not damage named it.
+                for (int row = top; row < bottom; ++row) examined[static_cast<std::size_t>(row)] = 1;
             }
         }
 
-        // Whatever the shift did not actually move is sent as cells. This pass
-        // compares real cells rather than hashes, which is what makes the
-        // choice above a question of bytes and never of correctness: a wrong
-        // guess costs a repaint the mirror was going to get anyway.
+        // Whatever is not already right is sent as cells. Real cells, not
+        // hashes: this pass is what makes the shift above a question of bytes
+        // rather than of correctness, and it is where a damage hint stops the
+        // tick from touching rows nothing happened to.
         for (int row = 0; row < height; ++row) {
-            const std::span<const ckv::Cell> held = row_of(working, width, row);
+            if (!examined[static_cast<std::size_t>(row)]) continue;
+            const std::span<const ckv::Cell> mirror_row = row_of(mirror_grid, width, row);
             const std::span<const ckv::Cell> wanted = row_of(current.grid, width, row);
             int first = 0;
-            while (first < width && same_cell(held[static_cast<std::size_t>(first)],
-                                             wanted[static_cast<std::size_t>(first)]))
+            while (first < width && same_cell(mirror_row[static_cast<std::size_t>(first)],
+                                              wanted[static_cast<std::size_t>(first)]))
                 ++first;
             if (first == width) continue;
             int last = width;
-            while (last > first && same_cell(held[static_cast<std::size_t>(last - 1)],
+            while (last > first && same_cell(mirror_row[static_cast<std::size_t>(last - 1)],
                                              wanted[static_cast<std::size_t>(last - 1)]))
                 --last;
             ops.push_back(CellsOp{static_cast<std::uint16_t>(row), static_cast<std::uint16_t>(first),
@@ -234,11 +269,40 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridState& curr
                                current.cursor.visible, current.cursor.blink});
     if (previous.modes != current.modes)
         ops.push_back(ModesOp{previous.modes ^ current.modes, current.modes});
-    if (previous.title != current.title) ops.push_back(TitleOp{current.title});
+    if (previous.title != current.title) ops.push_back(TitleOp{std::string(current.title)});
     return ops;
 }
 
-bool apply(std::span<const proto::GridOp> ops, GridState& mirror) {
+std::vector<proto::GridOp> full_repaint(const GridView& current,
+                                        std::span<const std::vector<ckv::Cell>> pushed) {
+    std::vector<GridOp> ops;
+    if (!pushed.empty()) {
+        ScrollbackPushOp push;
+        push.lines.reserve(pushed.size());
+        for (const std::vector<ckv::Cell>& line : pushed) push.lines.push_back(runs_of(line));
+        ops.push_back(std::move(push));
+    }
+    emit_every_row(current, ops);
+    // Stated rather than compared: a repaint that assumes nothing cannot assume
+    // the cursor either.
+    ops.push_back(CursorOp{current.cursor.column, current.cursor.row, current.cursor.style,
+                           current.cursor.visible, current.cursor.blink});
+    ops.push_back(ModesOp{0xFFFFFFFFu, current.modes});
+    ops.push_back(TitleOp{std::string(current.title)});
+    return ops;
+}
+
+std::vector<proto::GridOp> diff(const GridState& previous, const GridState& current,
+                                std::span<const std::vector<ckv::Cell>> pushed) {
+    // No damage report, so every row is examined: two values cannot say what
+    // moved between them, only what differs.
+    return diff(previous,
+                GridView{current.cells, std::span<const ckv::Cell>(current.grid), current.cursor,
+                         current.modes, current.title},
+                pushed, {});
+}
+
+bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror) {
     const int width = mirror.cells.width;
     const int height = mirror.cells.height;
     if (mirror.grid.size() != static_cast<std::size_t>(std::max(0, width)) *
@@ -279,6 +343,11 @@ bool apply(std::span<const proto::GridOp> ops, GridState& mirror) {
 
     for (const GridOp& op : ops) {
         if (const auto* push = std::get_if<ScrollbackPushOp>(&op)) {
+            // A holder that keeps no history does not decode the lines at all.
+            // That is the server's own belief about a client: it never diffs
+            // against a history, so paying to rebuild one per terminal per tick
+            // would be the copy U0-b removed, arriving from the other side.
+            if (mirror.max_scrollback_lines == 0) continue;
             for (const std::vector<CellRun>& line : push->lines)
                 mirror.scrollback.push_back(proto::from_runs(line));
             // Capacity is the reader's, and it is counted in lines because a

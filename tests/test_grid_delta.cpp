@@ -131,7 +131,7 @@ CK_TEST(a_full_screen_scroll_costs_one_scroll_op_and_the_row_that_is_new) {
         }
 
     GridState mirror = before;
-    CK_CHECK(ckm::apply(ops, mirror));
+    CK_CHECK(ckm::apply_delta(ops, mirror));
     CK_CHECK(same_state(mirror, after));
 
     // And what the op is actually for, in bytes on the wire against the same
@@ -168,7 +168,7 @@ CK_TEST(a_scroll_with_a_status_line_under_it_is_still_a_scroll) {
     CK_CHECK(count_ops_of(ops, 0) == 1);  // one ScrollOp
     CK_CHECK(count_ops_of(ops, 1) <= 3);  // the new text row, the status line
     GridState mirror = before;
-    CK_CHECK(ckm::apply(ops, mirror));
+    CK_CHECK(ckm::apply_delta(ops, mirror));
     CK_CHECK(same_state(mirror, after));
 }
 
@@ -232,7 +232,7 @@ CK_TEST(random_edit_scripts_leave_the_mirror_byte_identical) {
         }
 
         const std::vector<GridOp> ops = ckm::diff(previous, server, pushed);
-        CK_CHECK(ckm::apply(ops, mirror));
+        CK_CHECK(ckm::apply_delta(ops, mirror));
         if (!same_state(mirror, server)) {
             // Named so a failure says which round to replay rather than only
             // that one of six hundred went wrong.
@@ -261,7 +261,7 @@ CK_TEST(a_delta_that_does_not_fit_the_mirror_is_refused_rather_than_half_applied
                                    5, ckv::Cell::from_grapheme("X", ckv::Style{})))});
     ops.push_back(CellsOp{9, 0, ckm::proto::to_runs(std::vector<ckv::Cell>(
                                    5, ckv::Cell::from_grapheme("Y", ckv::Style{})))});
-    CK_CHECK(!ckm::apply(ops, mirror));
+    CK_CHECK(!ckm::apply_delta(ops, mirror));
     CK_CHECK(same_state(mirror, before));
 
     // Same for a run that would write past the end of its row, and for a scroll
@@ -269,12 +269,12 @@ CK_TEST(a_delta_that_does_not_fit_the_mirror_is_refused_rather_than_half_applied
     std::vector<GridOp> overrun;
     overrun.push_back(CellsOp{1, 18, ckm::proto::to_runs(std::vector<ckv::Cell>(
                                          5, ckv::Cell::from_grapheme("Z", ckv::Style{})))});
-    CK_CHECK(!ckm::apply(overrun, mirror));
+    CK_CHECK(!ckm::apply_delta(overrun, mirror));
     CK_CHECK(same_state(mirror, before));
 
     std::vector<GridOp> impossible_scroll;
     impossible_scroll.push_back(ScrollOp{0, 9, 1});
-    CK_CHECK(!ckm::apply(impossible_scroll, mirror));
+    CK_CHECK(!ckm::apply_delta(impossible_scroll, mirror));
     CK_CHECK(same_state(mirror, before));
 }
 
@@ -292,11 +292,11 @@ CK_TEST(a_size_change_is_not_a_delta_and_the_mirror_says_so) {
     CK_CHECK(count_ops_of(ops, 1) == 4);  // every row of the new size
 
     GridState stale = small;
-    CK_CHECK(!ckm::apply(ops, stale));
+    CK_CHECK(!ckm::apply_delta(ops, stale));
     CK_CHECK(same_state(stale, small));
 
     GridState resized = blank_state(large.cells, 5);
-    CK_CHECK(ckm::apply(ops, resized));
+    CK_CHECK(ckm::apply_delta(ops, resized));
     CK_CHECK(same_state(resized, large));
 }
 
@@ -307,7 +307,7 @@ CK_TEST(a_mode_op_speaks_only_for_the_bits_it_names) {
     std::vector<GridOp> ops;
     ops.push_back(ModesOp{static_cast<std::uint32_t>(ModeBit::MouseReporting),
                           static_cast<std::uint32_t>(ModeBit::MouseReporting)});
-    CK_CHECK(ckm::apply(ops, mirror));
+    CK_CHECK(ckm::apply_delta(ops, mirror));
     // The two it did not mention are still on. A delta that assigned the whole
     // word would have turned them off while saying nothing about them.
     CK_CHECK((mirror.modes & static_cast<std::uint32_t>(ModeBit::BracketedPaste)) != 0);
@@ -365,7 +365,7 @@ CK_TEST(the_ops_a_diff_produces_survive_the_wire) {
 
     // And the ops that came off the wire rebuild the same terminal.
     GridState mirror = before;
-    CK_CHECK(ckm::apply(delta->ops, mirror));
+    CK_CHECK(ckm::apply_delta(delta->ops, mirror));
     CK_CHECK(same_state(mirror, after));
 }
 
@@ -397,7 +397,7 @@ CK_TEST(a_corrupted_delta_is_refused_rather_than_turned_into_a_different_screen)
             ++decoded_count;
             if (const auto* delta = std::get_if<ckm::proto::GridDelta>(&decoded)) {
                 GridState mirror = before;
-                (void)ckm::apply(delta->ops, mirror);  // must refuse or fit; never crash
+                (void)ckm::apply_delta(delta->ops, mirror);  // must refuse or fit; never crash
                 CK_CHECK(mirror.grid.size() == static_cast<std::size_t>(16 * 4));
                 CK_CHECK(mirror.scrollback.size() <= mirror.max_scrollback_lines);
             }

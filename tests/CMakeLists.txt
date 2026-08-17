@@ -11,6 +11,7 @@ set(CKMUX_TEST_SOURCES
     test_client_smoke.cpp
     test_config.cpp
     test_copy_mode.cpp
+    test_diff_engine.cpp
     test_grid_delta.cpp
     test_keymap.cpp
     test_prefix.cpp

@@ -134,6 +134,13 @@ Deltas are emitted at the flush tick (`max-fps`), coalesced per terminal;
 per-terminal and monotonic — a gap observed by the client (should not
 happen) triggers reconnect-and-resnapshot.
 
+**A snapshot restarts the count**, so the first delta after an attach or a
+resnapshot is always `seq = 1`. The snapshot carries no sequence of its own,
+because that would have to be the number of a delta nobody sent; restarting is
+what lets a client check continuity from its *first* delta instead of having to
+take that one on trust. Numbering therefore means "monotonic between
+snapshots", and a client that resnapshots resets what it expects (WP-4b).
+
 ### Snapshot (inside `Attached`)
 
 Desktop size + layout + per terminal: ids/index/title/flags, size, cursor

@@ -75,6 +75,37 @@ bool same_state(const GridState& a, const GridState& b);
 ckv::Cell blank_cell();
 GridState blank_state(ckv::Size cells, std::size_t max_scrollback_lines);
 
+// The current side of a diff, borrowed rather than copied.
+//
+// This is the shape a live terminal can be read in without paying for a copy
+// of itself: `cells()` hands out a span into the emulator's own storage and
+// `status()` hands out the scalars, so a server at its flush tick copies only
+// the cells it is about to send (U0-b). The `GridState` overload below is the
+// same function with an owned current side, which is what the tests and the
+// attach path use.
+struct GridView {
+    ckv::Size cells{0, 0};
+    std::span<const ckv::Cell> grid;
+    GridCursor cursor;
+    std::uint32_t modes = 0;
+    std::string_view title;
+};
+
+// One row's changed columns, as [first, last) — the shape
+// `ckv::core::TerminalDamage` reports a row in.
+//
+// Deliberately its own type rather than that one: this file is the pure
+// algebra, and its inputs are plain values with no library seam behind them.
+// The conversion is a handful of integers per tick, which is nothing next to
+// what the hint buys — a diff that examines the rows a child touched instead of
+// the screen.
+struct RowDamage {
+    int first = 0;
+    int last = 0;
+
+    bool empty() const noexcept { return first >= last; }
+};
+
 // The ops that turn `previous` into `current`.
 //
 // `pushed` are the lines that entered the history since `previous` was
@@ -94,17 +125,46 @@ GridState blank_state(ckv::Size cells, std::size_t max_scrollback_lines);
 // The op order is fixed and is the apply order: the history push, then the
 // scroll, then the cells, then cursor, modes and title. A reader's history
 // grows before the screen moves off it.
+// `damaged` is what the caller already knows changed, one entry per row. Rows
+// it does not name are not examined at all, which is the difference between a
+// tick that costs the changed rows and one that costs the screen. An empty span
+// means "no information", and then every row is examined — which is what the
+// two-state overload passes, because a caller holding two values has no damage
+// report to offer.
+//
+// A hint that is WRONG costs correctness, unlike the scroll search below: rows
+// left out of it are rows the mirror will not be told about. It is a report
+// from the emulator, not a guess.
+std::vector<proto::GridOp> diff(const GridState& previous, const GridView& current,
+                                std::span<const std::vector<ckv::Cell>> pushed = {},
+                                std::span<const RowDamage> damaged = {});
+
 std::vector<proto::GridOp> diff(const GridState& previous, const GridState& current,
                                 std::span<const std::vector<ckv::Cell>> pushed = {});
 
+// Every row of a view, whatever it holds, plus the cursor, modes and title —
+// the one delta that assumes nothing at all about what the other end has.
+//
+// What an attach and a resize cost. A diff against a blank state would be
+// cheaper and would be wrong: it would emit only the rows that are not blank,
+// and the rows it skipped are exactly the ones where a client's mirror could
+// still be holding something else.
+std::vector<proto::GridOp> full_repaint(const GridView& current,
+                                        std::span<const std::vector<ckv::Cell>> pushed = {});
+
 // Applies `ops` to `mirror`, or refuses them and leaves it untouched.
+//
+// Named `apply_delta` and not `apply` because `std::apply` exists: an
+// unqualified call from inside a namespace that has a `std::vector` in the
+// argument list resolves to that one through ADL, and the error it produces
+// names `std::tuple_size` rather than anything a reader wrote.
 //
 // All-or-nothing on purpose. A mirror that has taken half a delta is a mirror
 // that lies about what a program has on screen, and the protocol's answer to
 // an impossible delta is already written down: the client resnapshots
 // (plans/05, the gap rule). So the ops are checked against the mirror's own
 // geometry before any of them are performed.
-bool apply(std::span<const proto::GridOp> ops, GridState& mirror);
+bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror);
 
 // The grid as the wire carries it — run-length encoded, whole rows in order —
 // and back. The attach snapshot uses this; a delta does not, because a delta

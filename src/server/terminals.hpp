@@ -74,6 +74,16 @@ public:
     void clear_damage() noexcept { session_->clear_damage(); }
     std::span<const ckv::Cell> cells() const noexcept { return session_->cells(); }
     std::span<const ckv::Cell> scrollback() const noexcept { return session_->scrollback(); }
+    // The scalar half — cursor, modes, title, the bell and printer counts —
+    // which a diff engine needs on every tick and which is not worth a grid
+    // copy to learn (ckVision's `status()`; plans/07 L-51).
+    ckv::term::TerminalStatus status() const { return session_->status(); }
+    // The ckVision seam this terminal owns, for the parts of the server that
+    // read a terminal rather than run one — the diff engine reads damage,
+    // cells, history and scalars through it and needs to know nothing about
+    // PTYs, which is why it is handed out rather than wrapped.
+    ckv::core::TerminalSubsession& session() noexcept { return *session_; }
+    const ckv::core::TerminalSubsession& session() const noexcept { return *session_; }
     ckv::term::TerminalSnapshot snapshot() const { return session_->snapshot(); }
     ckv::term::TerminalSnapshot snapshot(ckv::core::TerminalSnapshotOptions options) const {
         return session_->snapshot(options);

@@ -73,10 +73,10 @@ take first.
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Done** (2026-08-17) | — |
 | 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Done** (2026-08-17) | — |
 | 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Ready** | WP-1 ✓ |
-| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | **Ready** | WP-3 ✓, WP-4a ✓ |
+| 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | **Done** (2026-08-17) | WP-3 ✓, WP-4a ✓ |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
-| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b, U0-a |
+| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b ✓, U0-a ✓ |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
@@ -255,6 +255,43 @@ per terminal at the flush tick, monotonic per-terminal `seq`, and the gap rule
 *Done when*: N terminals diffed at tick rate without copying scrollback, with
 the cost measured rather than asserted; `seq` monotonicity has an adversarial
 test.
+**Done** (2026-08-17). `src/server/diff_engine.{hpp,cpp}`: one `TerminalDiffer`
+per terminal holding what its client is believed to hold and the sequence that
+belief is at, and a `DiffEngine` that flushes them.
+
+Measured, Release, 120×40 with a row rewritten every tick: **15.6 µs/tick**
+with no history and **15.3 µs/tick** with two thousand lines of it — flat, which
+is the property. **Sixty terminals**, each 120×40 and each holding two thousand
+lines, each with news every tick: **598 µs per flush tick**, 10 µs apiece, which
+is under two per cent of a 33 ms frame at 30 fps.
+
+Five decisions, three of them found by the tests rather than by thinking:
+
+  * **The engine takes ckVision's seam, not ckmux's `Terminal`.** Nothing here
+    needs a process — a damage report, borrowed cells, borrowed history and the
+    scalars is the whole input — and that is also what lets the cost be measured
+    against a bare emulator with no shell's scheduling in the number. It needed
+    U0-b's reads promoted to the seam upstream (plans/07 L-52); they had been
+    reachable only on the concrete classes.
+  * **`status()`, so a tick does not copy a grid to find the cursor.** Damage
+    flags the cursor, the modes and the title independently of any cell, and
+    `snapshot()` was the only way to read them (L-51).
+  * **`damage.full` is not an instruction to re-send.** It says "assume every row
+    changed", which for a diff means "examine every row". Treating it as "send
+    everything" made the first tick after every attach a full repaint, undoing
+    the snapshot that had just been sent. A size change is the one wholesale
+    case, and an empty belief is that same case.
+  * **Clearing damage belongs to the engine, once per tick.** A differ that
+    cleared what it had read would leave a second client watching the same
+    terminal told nothing about those rows. Both `flush` overloads therefore
+    clear, because the first thing that went wrong when only one of them did was
+    a measurement forty times too slow: a loop reading a differ directly, with
+    nothing clearing, re-copied the whole history every tick.
+  * **The belief advances by applying what was sent, not by copying the
+    terminal.** If the ops do not reproduce the terminal, the server's belief
+    diverges exactly as the client's mirror would — and the test that builds a
+    mirror from nothing but the deltas catches it. Copying the terminal there
+    would hide precisely the bug worth finding.
 
 **WP-5 — `RemoteTerminalSubsession` and the client mirror.** The ckmux class
 implementing `core::TerminalSubsession` over mirror state, adopted through

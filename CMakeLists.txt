@@ -55,6 +55,7 @@ add_library(ckmux_server STATIC
     src/common/keymap.cpp
     src/common/proto.cpp
     src/common/shell.cpp
+    src/server/diff_engine.cpp
     src/server/terminals.cpp)
 target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_server PUBLIC ckvision::cvision)
