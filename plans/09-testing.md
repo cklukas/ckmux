@@ -63,6 +63,19 @@ version-bump time, before users do — the pre-1.0 pin's safety net.
 
 ### 3. Server integration (labels `script`, `pty`)
 
+WP-2 landed the lifecycle half of this layer as
+`tests/test_server_lifecycle.cpp` (real `ckmux --server` processes on a private
+`CKMUX_SOCKET`: lazy start and the detached server outliving its client, an
+eight-way start race, stale-socket recovery, version-mismatch refusal with the
+remedy in words, a connection that does not say Hello first, `kill-server`,
+`Error{NotImplemented}`, and a garbage frame killing one connection and no
+other) and `tests/test_server_loop.cpp` (the same server in-process on a
+`ManualClock`, for the questions about *when*: a handshake that does not wait
+for a tick, a delta that arrives on the tick and not before, a CLI client that
+is sent no deltas, a client's death being a detach, and four hundred passes over
+a client that never reads). Both were mutation-checked, and the race case was
+stressed thirty times after a one-in-twenty flake was found and fixed.
+
 Real server process, scripted test client speaking the real protocol over a
 private `CKMUX_SOCKET`:
 

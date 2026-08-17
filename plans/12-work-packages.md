@@ -72,11 +72,11 @@ take first.
 | 3 | **U0-b** — damage/no-copy snapshot access | ckVision | 3–5 d | **Done** (2026-08-17) | — |
 | 4 | **WP-3** — Server-side terminal ownership | ckmux | 2–3 d | **Done** (2026-08-17) | — |
 | 5 | **WP-4a** — Grid diff algebra | ckmux | 2–3 d | **Done** (2026-08-17) | — |
-| 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Ready** | WP-1 ✓ |
+| 6 | **WP-2** — Server process, socket, and lifecycle | ckmux | 3–4 d | **Done** (2026-08-17) | WP-1 ✓ |
 | 7 | **WP-4b** — The diff engine on the live snapshot path | ckmux | 2–3 d | **Done** (2026-08-17) | WP-3 ✓, WP-4a ✓ |
 | 8 | **U0-c** — emulator: bell, DEC line drawing, RIS/DECALN, scrollback capacity | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
-| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | Blocked | WP-2, WP-4b ✓, U0-a ✓ |
+| 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Ready** | WP-2 ✓, WP-4b ✓, U0-a ✓ |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | Blocked | WP-5 |
 | 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | Blocked | WP-6, U0-c, U0-d |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
@@ -191,6 +191,52 @@ starters, stale-socket recovery, version-mismatch refusal, `kill-server`. No
 UI, no threads, links only ckVision's `core`+`term`.
 *Done when*: each lifecycle case above has a wire-level test against a real
 server process on a private `CKMUX_SOCKET`.
+**Done** (2026-08-17). `src/platform/{socket,poller,process}.{hpp,cpp}`,
+`src/server/server.{hpp,cpp}`, `src/client/server_connection.{hpp,cpp}`, and
+argv dispatch in `src/main.cpp` (`ckmux`, `ckmux --server <socket>
+[--foreground]`, `ckmux kill-server`). Nine wire-level cases against real
+processes plus six in-process loop cases on a `ManualClock`.
+
+What is deliberately NOT here: the UI client still runs its terminals in its own
+process. `connect_to_server` is the real lazy-start path and is exercised by the
+tests and by `kill-server`, but wiring the client's windows to a server's
+terminals is WP-5 and WP-6. Nobody should read "WP-2 done" as "ckmux is
+detachable yet".
+
+Five decisions:
+
+  * **Binding is not a lock, and that is the whole race.** A stale socket file
+    has to be unlinked before a bind can succeed, so two starters that each
+    unlink and bind BOTH succeed — and the one that went first is left listening
+    on a socket file nobody will ever reach again. So there is a sibling lock
+    file, `flock`ed exclusively and held for the server's whole life: a starter
+    takes the lock, and only then probes for a live server, unlinks and binds. A
+    starter that cannot take the lock has lost and goes back to connecting. Eight
+    concurrent starters is a test, not a thought experiment.
+  * **The hangup a shell acts on is a signal, and the reads that come with it.**
+    (WP-3's finding, applied here: the server's shutdown closes children before
+    it unlinks its socket, so there is no window in which a new server can start
+    while the old one still owns running programs.)
+  * **A signal is delivered to the loop, not acted on in the handler.** A handler
+    that shut the server down would be closing sockets and killing children on a
+    stack it does not own; it writes one byte down a self-pipe instead, which is
+    what makes `poll()` return and lets the loop — which owns everything — decide.
+  * **Unimplemented messages are answered.** A client waiting for a reply that
+    never comes is indistinguishable, to a reader, from a server that has hung.
+    Sessions and attach are `Error{NotImplemented}` with a sentence saying which
+    package brings them, and the connection survives.
+  * **A decode error is fatal for one connection and nothing else.** There is no
+    way to resynchronise a stream whose framing is wrong, and guessing means
+    acting on bytes of unknown provenance — so that client goes and the others
+    are untouched, which is a test of its own.
+
+Three mutations were checked to fail the suite, because a lifecycle test that has
+never been seen to fail is a claim about itself: removing the start lock (the
+eight-way race then leaves two servers alive), leaving the socket file behind on
+shutdown, and skipping the stale-socket unlink. A fourth finding came from
+stressing the suite thirty times: the race test sampled process states once and
+read a loser mid-teardown as a second server, about one run in twenty. It waits
+for the count to settle now.
 
 **WP-3 — Server-side terminal ownership.** One `PosixTerminalSubsession` per
 terminal: spawn, drain under a byte budget, resize with pixel fields, the

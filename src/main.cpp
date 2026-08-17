@@ -1,21 +1,109 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 //
-// The ckmux terminal host. M1 runs everything in this one process; M2 moves
-// the terminals behind a detached server and leaves this file a client.
+// The ckmux entry point, and the one place that decides which of the program's
+// three roles this invocation is (plans/02-architecture.md):
+//
+//   ckmux                     the client
+//   ckmux --server <socket>   the detached server; users never type this
+//   ckmux kill-server         a CLI utility, over the same socket protocol
+//
+// One binary keeps the client and the server the same build — they still shake
+// hands, because after an upgrade an old server meets a new binary, and the
+// handshake is what makes that say something a reader can act on rather than
+// producing nonsense.
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <string>
 
 #include "client/client_app.hpp"
+#include "client/server_connection.hpp"
 #include "common/config.hpp"
 #include "platform/clipboard.hpp"
 #include "platform/paths.hpp"
+#include "platform/process.hpp"
+#include "platform/socket.hpp"
+#include "server/server.hpp"
 #include "cvision/term/posix_clock.hpp"
 #include "cvision/term/posix_terminal.hpp"
 #include "cvision/term/terminal_clipboard.hpp"
 #include "cvision/ui/application.hpp"
 
-int main() {
+namespace {
+
+// `ckmux kill-server`: ends the server and every terminal in it.
+//
+// Deliberately does NOT start a server in order to kill it, which is what
+// sharing the client's connect path would have done — a reader who runs this
+// twice would find themselves with a new server the second time.
+int kill_server(const std::filesystem::path& socket) {
+    const ckm::platform::ConnectResult connected = ckm::platform::connect_to_server(socket);
+    if (connected.status != ckm::platform::ConnectStatus::Connected) {
+        if (connected.status == ckm::platform::ConnectStatus::NoServer) {
+            std::fprintf(stderr, "ckmux: no server is running at %s\n", socket.string().c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "ckmux: %s\n", connected.problem.c_str());
+        return 1;
+    }
+    ckm::platform::Stream stream(connected.fd);
+    ckm::proto::Hello hello;
+    hello.build = std::string(ckm::proto::kBuildIdentity);
+    hello.client_kind = ckm::proto::ClientKind::Cli;
+    (void)stream.send(ckm::proto::encode(hello));
+
+    ckm::proto::FrameReader reader;
+    ckm::proto::Message answer;
+    if (!ckm::client::await_message(stream, reader, answer)) {
+        std::fprintf(stderr, "ckmux: the server did not answer the handshake\n");
+        return 1;
+    }
+    if (const auto* refuse = std::get_if<ckm::proto::Refuse>(&answer)) {
+        // A server of another version can still be killed — that is usually
+        // exactly why somebody is running this — but it is worth saying which
+        // one they are talking to.
+        std::fprintf(stderr, "ckmux: %s\n", refuse->reason.c_str());
+        return 1;
+    }
+    (void)stream.send(ckm::proto::encode(ckm::proto::KillServer{}));
+    (void)stream.flush();
+    // The server closes the connection as it goes down; waiting for that is how
+    // this reports "done" rather than "asked".
+    ckm::proto::Message ignored;
+    (void)ckm::client::await_message(stream, reader, ignored, 2000);
+    return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    const std::filesystem::path socket = ckm::platform::socket_path();
+    if (argc >= 2 && std::strcmp(argv[1], "--server") == 0) {
+        // The socket is passed rather than resolved again, so a server always
+        // listens on the path the client that started it was looking at — one
+        // environment read, not two.
+        const std::filesystem::path listen_on =
+            argc >= 3 ? std::filesystem::path(argv[2]) : socket;
+        // `--foreground` is for tests and for a reader debugging a server: a
+        // process that double-forks cannot be waited for, and a test that
+        // cannot wait for its subject has to sleep and hope.
+        bool foreground = false;
+        for (int index = 3; index < argc; ++index)
+            if (std::strcmp(argv[index], "--foreground") == 0) foreground = true;
+        return ckm::server::run_server_process(listen_on, foreground);
+    }
+    if (argc >= 2 && std::strcmp(argv[1], "kill-server") == 0) return kill_server(socket);
+    if (argc >= 2 && argv[1][0] != '\0') {
+        // Every other subcommand arrives with WP-11. Saying so beats a client
+        // starting up and ignoring what was typed.
+        std::fprintf(stderr,
+                     "ckmux: `%s` is not a subcommand this build has yet.\n"
+                     "Available: ckmux (the client), ckmux kill-server.\n",
+                     argv[1]);
+        return 2;
+    }
+
     ckv::term::PosixClock clock;
     ckv::term::PosixTerminal terminal(clock);
     ckv::term::TerminalClipboardWriter clipboard(terminal);

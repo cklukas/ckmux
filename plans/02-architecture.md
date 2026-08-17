@@ -73,10 +73,19 @@ plan 05 — because old servers meet new binaries after upgrades).
 
 First client: connect → `ECONNREFUSED`/`ENOENT` → fork+exec
 `ckmux --server`, which double-forks, `setsid()`, chdir `/`, redirects stdio
-to the log, then **binds the socket** — the bind is the lock: a concurrent
-starter loses the bind race and simply retries connecting (with backoff,
+to the log, then **binds the socket** under a start lock (below): a concurrent
+starter loses the race and simply retries connecting (with backoff,
 ~2 s cap). Stale socket files (server crashed): connect fails with
 `ECONNREFUSED` → unlink, start fresh.
+
+**The bind is not the lock** — that first sentence was wrong, and WP-2 found out
+why. A stale socket file has to be unlinked before a bind can succeed, so two
+starters that each unlink and bind both succeed, and the one that went first is
+left listening on a socket file nobody will ever reach again. What settles the
+race is a sibling `default.sock.lock`, `flock`ed exclusively and held for the
+server's whole life: a starter takes the lock, and only under it probes for a
+live server, unlinks a stale socket and binds. A starter that cannot take the
+lock has lost, and goes back to connecting with the same backoff.
 
 Socket path: `$CKMUX_SOCKET`, else `<runtime>/ckmux-<uid>/default.sock`
 where `<runtime>` = `$XDG_RUNTIME_DIR` (Linux) / `$TMPDIR` (macOS) / `/tmp`

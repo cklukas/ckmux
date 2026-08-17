@@ -92,7 +92,7 @@ message will be seen, so it is designed, not an afterthought.
 | `SessionsChanged` | — | picker refresh hint |
 | `PasteAck` | `seq u32` | the credit half of `PasteChunk` (below); it was described under flow control and missing from this table |
 | `Pong` | `nonce u64` | |
-| `Error` | `code u16, context str, human str` | non-fatal errors (e.g. name collision) |
+| `Error` | `code u16, context str, human str` | non-fatal errors (e.g. name collision). Codes are `proto::ErrorCode`: `NotImplemented` (1) — understood, and this build does not do it yet — then `NoSuchTerminal`, `NoSuchSession`, `NameTaken`. A request the server cannot honour is always **answered**: a client waiting for a reply that never comes is indistinguishable, to a reader, from a server that has hung (WP-2). |
 
 ### `GridDelta` (hot path)
 

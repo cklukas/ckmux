@@ -26,6 +26,28 @@ if(NOT ckvision_FOUND)
     add_subdirectory("${CKMUX_CKVISION_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ckvision")
 endif()
 
+# What both ends are made of: the wire format, the configuration, the diff
+# algebra, and the platform calls. Its own library because the client and the
+# server are separate libraries that both need it, and a shared object linked
+# into both would be the same symbols twice in the one binary that links both.
+#
+# Nothing here may touch ckVision's `ui`, `widgets` or `scene`, for the same
+# reason the server may not: this is what the server is built out of.
+add_library(ckmux_common STATIC
+    src/common/config.cpp
+    src/common/grid_delta.cpp
+    src/common/keymap.cpp
+    src/common/proto.cpp
+    src/common/shell.cpp
+    src/platform/clipboard.cpp
+    src/platform/paths.cpp
+    src/platform/poller.cpp
+    src/platform/process.cpp
+    src/platform/socket.cpp)
+target_include_directories(ckmux_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(ckmux_common PUBLIC ckvision::cvision)
+ckmux_strict(ckmux_common)
+
 # The client object graph is a plain library so every part of it is reachable
 # from headless tests; only the thin terminal host needs a real backend. This
 # mirrors how ckVision's own examples are structured, for the same reason.
@@ -34,36 +56,27 @@ add_library(ckmux_client STATIC
     src/client/commands.cpp
     src/client/copy_mode.cpp
     src/client/prefix_overlay.cpp
-    src/common/config.cpp
-    src/common/keymap.cpp
-    src/common/proto.cpp
-    src/common/shell.cpp
-    src/platform/clipboard.cpp
-    src/platform/paths.cpp)
+    src/client/server_connection.cpp)
 target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_client PUBLIC ckvision::cvision)
+target_link_libraries(ckmux_client PUBLIC ckmux_common ckvision::cvision)
 ckmux_strict(ckmux_client)
 
-# The server is its own library and links only ckVision, so AGENTS.md's layer
-# rule — server code may include core and term, never ui, widgets or scene — is
-# a fact the build enforces rather than a convention a reader has to remember.
-# It is also what lets the server run with no host terminal at all, which is
-# the whole point of the split.
+# The server is its own library and links only ckVision's core and term through
+# ckmux_common, so AGENTS.md's layer rule — server code may include core and
+# term, never ui, widgets or scene — is a fact the build enforces rather than a
+# convention a reader has to remember. It is also what lets the server run with
+# no host terminal at all, which is the whole point of the split.
 add_library(ckmux_server STATIC
-    src/common/config.cpp
-    src/common/grid_delta.cpp
-    src/common/keymap.cpp
-    src/common/proto.cpp
-    src/common/shell.cpp
     src/server/diff_engine.cpp
+    src/server/server.cpp
     src/server/terminals.cpp)
 target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_server PUBLIC ckvision::cvision)
+target_link_libraries(ckmux_server PUBLIC ckmux_common ckvision::cvision)
 ckmux_strict(ckmux_server)
 
 if(UNIX)
     add_executable(ckmux src/main.cpp)
-    target_link_libraries(ckmux PRIVATE ckmux_client ckvision::cvision)
+    target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server ckvision::cvision)
     ckmux_strict(ckmux)
     install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

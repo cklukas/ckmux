@@ -46,6 +46,12 @@ namespace ckm::proto {
 // upgrade leaves old servers running and this message will be seen.
 inline constexpr std::uint32_t kProtocolVersion = 1;
 
+// What `Hello` and `HelloAck` put in their `build` field. Not a version check —
+// `kProtocolVersion` is the only thing that decides whether two ends can talk —
+// but a reader diagnosing a refusal wants to know which two builds met, and a
+// log line naming them is the difference between a bug report and a shrug.
+inline constexpr std::string_view kBuildIdentity = "ckmux 0.0.1";
+
 // u32 payload_len, u16 type, u16 flags.
 inline constexpr std::size_t kHeaderBytes = 8;
 
@@ -615,6 +621,19 @@ struct ClipboardSet {
     static constexpr MessageType kType = MessageType::ClipboardSet;
     std::string text;
     friend bool operator==(const ClipboardSet&, const ClipboardSet&) = default;
+};
+
+// What an `Error` code means. Non-fatal by definition: the connection survives,
+// and the client is told why one request could not be honoured (plans/05).
+enum class ErrorCode : std::uint16_t {
+    Unknown = 0,
+    // Understood, and this build does not do it yet. Answering rather than
+    // ignoring is the point: a client waiting for a reply that never comes is
+    // indistinguishable, to a reader, from a server that has hung.
+    NotImplemented = 1,
+    NoSuchTerminal = 2,
+    NoSuchSession = 3,
+    NameTaken = 4,
 };
 
 struct Error {

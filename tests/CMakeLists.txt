@@ -16,11 +16,20 @@ set(CKMUX_TEST_SOURCES
     test_keymap.cpp
     test_prefix.cpp
     test_proto.cpp
+    test_server_lifecycle.cpp
+    test_server_loop.cpp
     test_server_terminals.cpp
     test_shell.cpp)
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server ckvision::cvision)
+# The lifecycle tests run the real binary — a server that is not a real process
+# is not a server (WP-2). The path is a definition rather than a search, so a
+# test never finds a stale one from another build directory.
+if(TARGET ckmux)
+    target_compile_definitions(ckmux_tests PRIVATE CKMUX_BINARY_PATH="$<TARGET_FILE:ckmux>")
+    add_dependencies(ckmux_tests ckmux)
+endif()
 ckmux_strict(ckmux_tests)
 
 foreach(source ${CKMUX_TEST_SOURCES})
