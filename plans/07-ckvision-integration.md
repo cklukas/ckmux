@@ -152,9 +152,9 @@ break?", and only one of them wrapped at all. The rule now exists once:
 | L-30 | **`FieldKind::Note`** — static text a form *says* rather than asks, and consecutive notes materialize as one un-spaced paragraph instead of inheriting the form's blank row between answerable fields. | A checkbox can be labelled truthfully and still leave its reader guessing what ticking it costs them. The Settings dialog needs four lines of "here is what this actually does". |
 | L-31 | **`CheckGroup` and `RadioGroup` no longer consume `Enter`.** They toggled on it and reported it handled, so a dialog's default button was unreachable from the keyboard while any box had focus — which, in a settings dialog, is from the moment it opens. `Space` ticks a box, as it always did; `Enter` now reaches the form. | Found by driving the Settings dialog: tick the box, press Enter to save, and the box unticked itself instead. |
 
-U1-d is not closed: `Radio`, `Combo` and `Number` remain, and Printer
-Settings ([06](06-ui-design.md)) still wants them at M4. What landed is the
-part `Settings ▸ General…` needed, built so the rest slots in beside it.
+U1-d is closed: `Radio`, `Combo` and `Number` landed on 2026-08-17 beside the
+`Check` and `Note` above (L-41…L-42), so Printer Settings
+([06](06-ui-design.md)) can be a descriptor rather than a hand-built form.
 
 ### Landed (U0-c — what a terminal does when it is not drawing)
 
@@ -199,6 +199,13 @@ not the sequence, which is the argument [04](04-terminal-emulation.md) makes
 and the library now implements. Nothing opens a device, runs a command, or
 writes a file.
 
+### Landed (U1-d — the rest of the typed fields)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-41 | **`FieldKind::Radio`, `Combo` and `Number`**, with `MaterializedDialog::radios`/`combos` and `DialogResult::selected`/`numbers` parallel to the fields. Radio is captioned by the field's own label rather than labelled beside it — a set of alternatives is one question, and a left-column label would put it level with the first answer. Number stays an InputLine and is checked at accept time, like every other validator, then hands the caller a parsed value rather than text to parse again. Every new member carries an explicit initializer and goes on the end of the aggregate, because most dialogs in the tree brace-initialize the first three positionally. | Printer Settings ([06](06-ui-design.md)) is a radio group, a combo, two numbers and a checkbox. Hand-building it is exactly the "every settings form is hand-built" complaint U1-d exists about — and PRINT-1…6 now has no widget work left in front of it. |
+| L-42 | **A closed `ComboBox` no longer swallows `Enter`.** It committed to history and reported the key handled, so a dialog's default button was unreachable from the keyboard for as long as any combo had focus — in a settings dialog that opens on one, from the moment it appears. It now records the value and passes the key on; an open dropdown still takes Enter, because the choice is what Enter means there. Found by building the first descriptor form that contained a combo. | The same defect as L-31, in the third of the three option widgets. ckmux drives its dialogs from the keyboard by design ([06](06-ui-design.md)), so a control that eats the accept key is a dialog nobody can finish. |
+
 ### Landed (a command nothing was listening to)
 
 | # | Item | Why ckmux hit it |
@@ -212,7 +219,6 @@ writes a file.
 | U0-a | **Attach-an-existing-subsession** entry point on `Application` (today only `launch_terminal_subsession(spec)` exists — no way to hand it a custom/remote subsession). Without it, `TerminalView` change-notification (`notify_terminal_subsession_changed`) and `wait_handles()` aggregation don't reach mirror subsessions. The report calls this "a ~5-line addition"; it is the single cleanest enabler for ckmux. | M2 |
 | U0-b | **Damage/no-copy snapshot access**: dirty spans or a borrowed view, plus snapshot-without-scrollback. Today `snapshot()` deep-copies grid+scrollback+rasters per call — unacceptable at tick rate × N terminals, and flagged as a perf risk upstream too. | M2 |
 | U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
-| U1-d | **Typed dialog fields.** `FieldDescriptor` materializes text inputs only, so no descriptor dialog can express a radio group, a checkbox, a combo or a number field — every settings form in every ckVision application has to be hand-built today. Extend the descriptor to a field-kind variant (Text, Check, Radio, Combo, Number) with typed `DialogResult` values. Needed by Printer Settings ([06](06-ui-design.md)); the largest single piece of WP-PRINT, and squarely library-level. | M4 |
 | U2 | XTGETTCAP/DECRQSS/rectangles when an app demands them; `OSC 8` hyperlinks, inner side; `SGR 53` overline. *(Kitty keyboard child side and indexed-colour preservation have landed; see below.)* | later |
 
 Process note: each item goes through ckVision's own decision/verification

@@ -89,12 +89,12 @@ take first.
 | 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
 | 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
 | 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
-| 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Ready** | — |
+| 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-6 |
 | 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
 | 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
-| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | U1-d, WP-6 |
+| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | WP-6 |
 | 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | Blocked | WP-16 |
 | 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-16…WP-19, WP-20, PRINT-1…6, U1-a |
 | 31 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
@@ -263,12 +263,13 @@ author's tmux muscle-memory set is covered.
 Any app, correctly. [04-terminal-emulation.md](04-terminal-emulation.md) is the
 spec and holds the reference-app matrix.
 
-Three of its ckVision items are startable today and none of them waits on M2:
-**U1-a** tab stops, **U1-c** Media Copy capture behind a policy defaulting to
-deny, and **U1-d** the rest of the typed dialog fields — `Radio`, `Combo`,
-`Number` (`Check` and `Note` landed for `Settings ▸ General…`, L-29/L-30). They
-are emulator and widget work in files nothing in M2 touches; they sit late in
-the order because M2 is the promise, not because anything stops them.
+Three of its ckVision items were startable without M2 and are now **done**
+(2026-08-17): **U1-a** tab stops, **U1-c** Media Copy capture behind a policy
+defaulting to deny, and **U1-d** the rest of the typed dialog fields —
+`Radio`, `Combo`, `Number`, beside the `Check` and `Note` that landed for
+`Settings ▸ General…`. They were emulator and widget work in files nothing in
+M2 touches, which is exactly why they could be taken while the server was not
+the thing to work on. PRINT-1…6 now waits only on the wire.
 
 **WP-17 copy mode** — *done, 2026-08-17.* Search (with smartcase and
 wrapping), vi keys beside the arrow keys, character, line and rectangular
