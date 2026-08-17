@@ -99,6 +99,18 @@ bool TerminalMirror::apply(const proto::GridDelta& delta) {
     return true;
 }
 
+void TerminalMirror::open(ckv::Size cells) {
+    const std::size_t limit = state_.max_scrollback_lines;
+    state_ = blank_state(cells, limit);
+    history_cache_valid_ = false;
+    damage_ = everything(state_.cells);
+    sequence_ = 0;
+    needs_snapshot_ = false;
+    exited_ = false;
+    hold_ = false;
+    exit_status_.reset();
+}
+
 void TerminalMirror::apply(const proto::TermMeta& meta) {
     if (meta.title != state_.title) {
         state_.title = meta.title;

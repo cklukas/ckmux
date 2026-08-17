@@ -18,6 +18,7 @@
 #include <string>
 
 #include "client/client_app.hpp"
+#include "client/run_client.hpp"
 #include "client/server_connection.hpp"
 #include "common/config.hpp"
 #include "platform/clipboard.hpp"
@@ -106,8 +107,6 @@ int main(int argc, char** argv) {
 
     ckv::term::PosixClock clock;
     ckv::term::PosixTerminal terminal(clock);
-    ckv::term::TerminalClipboardWriter clipboard(terminal);
-    ckv::ui::Application app(terminal, clock, clipboard);
 
     ckm::client::ClientOptions options;
     // Reading the environment is an application's job, never the library's:
@@ -146,7 +145,14 @@ int main(int argc, char** argv) {
             .time = {local.tm_hour, local.tm_min, local.tm_sec}};
     };
 
-    ckm::client::ClientApp client(app, std::move(options));
-    app.run();
-    return 0;
+    // Attached, which is what ckmux is for: the terminals live in a server that
+    // outlives this process, and everything below the seam is the same interface
+    // M1 had (WP-5, WP-6). The server is started if none is listening, and the
+    // one thing a reader has to know about it is that quitting this window does
+    // not end their programs.
+    ckm::client::RunOptions run;
+    run.socket = socket;
+    run.executable = ckm::platform::executable_path(argv[0]);
+    run.client = std::move(options);
+    return ckm::client::run_attached_client(terminal, clock, std::move(run));
 }

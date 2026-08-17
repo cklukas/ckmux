@@ -282,14 +282,20 @@ CK_TEST(a_client_that_falls_behind_is_healed_by_a_snapshot_when_it_drains) {
     std::string burst;
     for (int line = 0; line < 24; ++line)
         burst += "a line of output that fills the screen " + std::to_string(line) + "\r\n";
+    // The mark that matters is the DELTA backlog, not the stream's hard
+    // high-water: past a quarter of a megabyte of queued screen there is no
+    // point adding more, because everything behind it — including every answer
+    // to every question the client asks — waits for a reader who is already
+    // behind (WP-7 measured a `Ping` at 2.8 seconds when only the 4 MiB mark
+    // stood in the way).
     int ticks = 0;
-    for (; ticks < 4000 && server.queued_bytes() <= ckm::platform::Stream::kHighWaterBytes;
+    for (; ticks < 4000 && server.queued_bytes() <= ckm::platform::Stream::kDeltaBacklogBytes;
          ++ticks) {
         terminal.session().feed_output(burst + std::to_string(ticks) + "\r\n");
         clock.advance(34'000'000);
         CK_CHECK(server.step());
     }
-    CK_CHECK(server.queued_bytes() > ckm::platform::Stream::kHighWaterBytes);
+    CK_CHECK(server.queued_bytes() > ckm::platform::Stream::kDeltaBacklogBytes);
     CK_CHECK(server.waiting_to_heal() || ticks > 0);
     std::printf("  [backpressure] %d ticks of full-screen output to reach the mark; %zu bytes "
                 "queued\n",

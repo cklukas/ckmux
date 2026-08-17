@@ -78,7 +78,7 @@ take first.
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Done** (2026-08-17) | WP-2 ✓, WP-4b ✓, U0-a ✓ |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Done** (2026-08-17) | WP-5 ✓ |
-| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Ready** | WP-6 ✓, U0-c ✓, U0-d ✓ |
+| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-17) | WP-6 ✓, U0-c ✓, U0-d ✓ |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | Blocked | WP-7 |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | Blocked | WP-8 |
@@ -430,6 +430,48 @@ attaches first.
 see the counter advanced — plus the flood budget gate at protocol level, with
 `Ping` round-trip latency asserted *during* a `yes` flood.
 *Done when*: both are green in CI, and the author starts daily use.
+**Implementation complete** (2026-08-17); the row stays short of `Done` because
+the second half of that sentence is the author's to give. Both gates are green:
+
+  * **The core promise.** A real server process, a real client, a child counting
+    in a real PTY, and a real client death. Measured: the first client saw
+    `count 3`; after 500 ms with nobody watching, the reattaching client was
+    handed `count 11` — and it kept counting. The rehydrated frame is compared
+    against the same terminal a moment later, cell for cell and style for style.
+  * **The flood gate.** `Ping` round trip while a child runs `yes`: **32 ms
+    worst, 24 ms mean** (Release).
+
+`ckmux` is now a client: `src/client/run_client.{hpp,cpp}` starts a server if
+none is listening, attaches, and runs ckVision's loop with the socket folded in
+(plans/02's D-021 pattern). Windows follow the server's terminals, which is what
+makes a reattach draw what is already running.
+
+Four defects, every one found by running it rather than by reading it:
+
+  * **No configured shell meant no shell at all.** `shell_launch("")` set an
+    empty executable, so with no configuration file *every* terminal failed to
+    launch — in M1 and in the server. `resolve_shell()` existed and was correct;
+    nothing called it. Every test had named a shell explicitly, which is exactly
+    how a default goes untested.
+  * **A delta could carry unbounded history.** A flooding child pushes thousands
+    of lines per tick; the delta carrying them was megabytes, past the
+    protocol's own 1 MiB cap — so the frame was refused and the client stopped
+    decoding anything. A delta now carries at most 256 lines.
+  * **Answering a flood with a snapshot cost 2.8 MB per tick.** The first fix
+    for the above was "ask for a snapshot instead", and the snapshot carries the
+    whole scrollback: measured at **426 KB/s of snapshots, five messages a
+    second, and a `Ping` that took three seconds**. Now a flood sends the SCREEN
+    and defers the history, with one snapshot to reconcile when it calms down:
+    **10 KB/s, thirty-three messages a second, `Ping` in 17–22 ms.** Forty-two
+    times fewer bytes.
+  * **The drain budget was per terminal, not per pass.** Parsing 64 KiB of flood
+    is 22 ms of real work — two thirds of a frame — so N flooding children cost
+    N × 22 ms and the loop stopped answering. It is now shared across the pass
+    with a floor per terminal.
+
+And one in ckmux's own socket layer: `Stream::receive` read until the socket ran
+dry, which under a flood is never — the client hung. Bounded now, the same rule
+the server applies to a PTY.
 
 ### M3 — sessions & management
 

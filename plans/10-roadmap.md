@@ -130,6 +130,14 @@ window-title stack — are both done (2026-08-17, ckVision `08c3dea` and
 client → reattach → advanced state, golden-verified); author starts daily
 use; flood budget gate passes at protocol level.
 
+**Both gates are green (2026-08-17, WP-7).** The core promise: a real server
+process, a real client, a child counting in a real PTY — `count 3` before the
+client died, `count 11` when the next one attached 500 ms later, still counting.
+The flood gate: a `Ping` answered in 32 ms worst / 24 ms mean while a child runs
+`yes`. `ckmux` itself is now a client of its own server: lazy start, attach,
+detach, reattach, and the M1 interface unchanged above the seam. What remains of
+this milestone's "done when" is the half only its author can give — daily use.
+
 ## M3 — Sessions & management (the multiplexer)
 
 Multiple sessions; startup session picker; new/rename/kill with

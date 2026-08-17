@@ -155,3 +155,23 @@ CK_TEST(with_no_usable_shell_named_anywhere_the_posix_floor_is_used) {
     CK_CHECK(resolved.front() == '/');
     CK_CHECK(::access(resolved.c_str(), X_OK) == 0);
 }
+
+CK_TEST(no_configured_shell_means_the_readers_own_shell) {
+    // The default case, and the one that was broken: with no configuration file
+    // there is no `[general] shell`, and a launch spec with an empty executable
+    // launches nothing. Every terminal ckmux opened failed — in M1 and in the
+    // server — and no test saw it because every test named a shell.
+    const ckm::ShellLaunch launch = ckm::shell_launch("", true);
+    CK_CHECK(!launch.executable.empty());
+    CK_CHECK(launch.executable.front() == '/');
+    CK_CHECK(launch.executable == ckm::resolve_shell());
+    // And it is still a login shell: the dash on argv[0] names the shell that
+    // was actually resolved, not the empty string it was asked with.
+    CK_CHECK(launch.argv0.size() > 1);
+    CK_CHECK(launch.argv0.front() == '-');
+    CK_CHECK(launch.argv0.find('/') == std::string::npos);
+
+    const ckm::ShellLaunch interactive = ckm::shell_launch("", false);
+    CK_CHECK(interactive.executable == ckm::resolve_shell());
+    CK_CHECK(interactive.arguments.size() == 1U);
+}

@@ -90,8 +90,12 @@ bool ServerSession::handle(const proto::Message& message) {
         return true;
     }
     if (const auto* opened = std::get_if<proto::TermOpened>(&message)) {
-        RemoteTerminalSubsession& terminal = ensure_terminal(opened->term);
-        (void)terminal;
+        // Sized from the announcement, so the full repaint that follows it fits.
+        // A mirror left at no size would refuse that delta, ask for a snapshot,
+        // and take a round trip to learn something it had already been told.
+        ensure_terminal(opened->term)
+            .mirror()
+            .open(ckv::Size{opened->columns, opened->rows});
         return true;
     }
     if (const auto* closed = std::get_if<proto::TermClosed>(&message)) {

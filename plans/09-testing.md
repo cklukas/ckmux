@@ -127,6 +127,17 @@ mutations were checked to fail it (no healing, no takeover, no high-water rule a
 all) — and one of those first appeared to pass because the flag it removed is set
 in two places, which is worth knowing about the code rather than about the test.
 
+WP-7 landed the milestone gates as `tests/test_core_promise.cpp`, and they are
+the only tests in the suite that run the real `ckmux` binary as a server with a
+real child in a real PTY: the core promise (spawn a counter, attach, kill the
+client, wait, reattach — `count 3` before, `count 11` after 500 ms unwatched),
+the rehydrated frame compared cell for cell and style for style against the same
+terminal a moment later, and the flood gate (`Ping` round trip while a child runs
+`yes`: 32 ms worst, 24 ms mean). Every defect WP-7 found was found by running it
+rather than by reading it — including the one that mattered most, that with no
+configuration file at all *no terminal could ever start*, because every other
+test had named a shell explicitly.
+
 ### 4. Client UI (labels `script`, `golden`)
 
 `HeadlessTerminal` hosts the real client against a scripted fake server

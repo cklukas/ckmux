@@ -45,7 +45,14 @@ std::string resolve_shell() {
 
 ShellLaunch shell_launch(const std::string& shell, bool login) {
     ShellLaunch launch;
-    launch.executable = shell;
+    // No shell configured means the reader's own, which is what `[general]
+    // shell` is documented to default to (plans/08) — and resolving it HERE is
+    // the point: this is the one function both the client and the server reach
+    // a shell through, and a caller that forgot would produce a launch spec with
+    // no program in it. That is not a hypothetical: with no configuration file
+    // at all, every terminal ckmux opened failed to launch, in M1 and in the
+    // server, and nothing noticed because every test set a shell explicitly.
+    launch.executable = shell.empty() ? resolve_shell() : shell;
     if (!login) {
         // Explicit rather than relying on the shell noticing its stdin is a
         // terminal: it always is here, but a shell that was told plainly is
@@ -56,7 +63,7 @@ ShellLaunch shell_launch(const std::string& shell, bool login) {
     // The dash, and nothing else, is what makes this a login shell. No
     // argument does it: -l is bash and zsh but not every shell, and the
     // convention every shell does agree on is the one login(1) established.
-    launch.argv0 = "-" + std::string(base_name(shell));
+    launch.argv0 = "-" + std::string(base_name(launch.executable));
     return launch;
 }
 

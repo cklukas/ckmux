@@ -504,17 +504,31 @@ void Server::flush_tick() {
     }
 
     const std::vector<proto::GridDelta> deltas = diffs_.flush(terminals_);
+
+    // A terminal that scrolled more in one tick than a delta may carry says so
+    // rather than sending it. What the client needs then is the same thing a
+    // client that fell behind needs, and it arrives the same way.
+    for (const TerminalId id : terminals_.ids()) {
+        const TerminalDiffer* differ = diffs_.differ_for(id);
+        if (differ == nullptr || !differ->needs_snapshot()) continue;
+        for (const std::unique_ptr<Client>& client : clients_)
+            if (client->attached) client->dirty_snapshot = true;
+    }
+
     if (deltas.empty()) return;
     for (const std::unique_ptr<Client>& client : clients_) {
         // Only the attached client, and only a UI: a CLI utility has no screen,
         // and a connection that has not attached has not asked for one.
         if (!client->attached || client->kind != proto::ClientKind::Ui) continue;
         if (client->dirty_snapshot) continue;  // waiting to be healed
-        // Above the high-water mark a client stops being sent deltas at all.
+        // Past the backlog mark a client stops being sent deltas at all.
         // Sending anyway would grow a queue that is already too big — and every
         // byte queued behind the mark is a byte the reader will never see,
-        // because what finally arrives is a snapshot that supersedes it.
-        if (client->stream.over_high_water()) {
+        // because what finally arrives is a snapshot that supersedes it. It is
+        // also what keeps every OTHER answer on the connection prompt: a `Pong`
+        // queued behind four megabytes of stale screen arrives seconds late,
+        // which is what the flood gate measured before this mark existed.
+        if (client->stream.over_delta_backlog()) {
             client->dirty_snapshot = true;
             continue;
         }

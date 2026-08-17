@@ -188,15 +188,28 @@ std::vector<TerminalId> Terminals::ids() const {
     return result;
 }
 
-std::size_t Terminals::drain(std::size_t byte_budget_per_terminal) {
+std::size_t Terminals::drain(std::size_t byte_budget_for_the_pass) {
     std::size_t worked = 0;
+    const std::size_t count = terminals_.size();
+    if (count == 0) return 0;
+    // Shared out, with a floor. What a drain costs is parsing, and parsing is
+    // the whole of a loop's pass: giving every terminal the full budget means a
+    // pass that grows with the number of busy children until nothing else in the
+    // loop gets a turn.
+    const std::size_t share = std::max(kMinimumDrainShare, byte_budget_for_the_pass / count);
     // By index, because a drain reads child output and nothing here may assume
     // the collection is unchanged afterwards — a future exit handler that
-    // closes a terminal must not invalidate this walk.
-    for (std::size_t index = 0; index < terminals_.size(); ++index) {
+    // closes a terminal must not invalidate this walk. Starting where the last
+    // pass stopped is what keeps the first terminal from being the only one
+    // served when a budget runs short.
+    const std::size_t start = count == 0 ? 0 : drain_cursor_ % count;
+    drain_cursor_ = (start + 1) % count;
+    for (std::size_t step = 0; step < count; ++step) {
+        const std::size_t index = (start + step) % count;
+        if (index >= terminals_.size()) break;
         Terminal* const terminal = terminals_[index].get();
         if (terminal == nullptr) continue;
-        if (terminal->drain(byte_budget_per_terminal)) ++worked;
+        if (terminal->drain(share)) ++worked;
         // A child's exit is observed by the same read that found the end of
         // its output, so this is the moment the status exists.
         terminal->observe_exit();

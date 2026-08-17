@@ -178,10 +178,21 @@ public:
     std::size_t size() const noexcept { return terminals_.size(); }
     std::vector<TerminalId> ids() const;
 
-    // Drains every terminal, each under its own budget, and returns how many
-    // produced output. Exit is observed here too, because the PTY reaching its
-    // read boundary IS the child exiting and the two cannot be separated.
-    std::size_t drain(std::size_t byte_budget_per_terminal);
+    // Drains every terminal and returns how many produced output. Exit is
+    // observed here too, because the PTY reaching its read boundary IS the child
+    // exiting and the two cannot be separated.
+    //
+    // The budget is for the whole PASS, shared out, not one budget each.
+    // Parsing is what a drain costs — 64 KiB of a flooding child is 22 ms of
+    // real work, two thirds of a frame at 30 fps — so a per-terminal budget
+    // means the pass costs that much again for every flooding child, and the
+    // loop stops answering anything else. Each terminal is guaranteed a floor
+    // so that many quiet terminals cannot starve one busy one, and the walk
+    // starts where the last one left off so the same terminal is not always
+    // served first.
+    std::size_t drain(std::size_t byte_budget_for_the_pass);
+    // The smallest share a terminal gets, however many there are.
+    static constexpr std::size_t kMinimumDrainShare = 4u * 1024u;
 
     // Every PTY this server is waiting on, for one `poll()` over all of them.
     std::vector<ckv::term::WaitHandle> wait_handles() const;
@@ -205,6 +216,8 @@ private:
     // Monotonic, never reused. Starts at 1 so that 0 can mean "no terminal"
     // on the wire without a separate flag.
     TerminalId next_id_ = 1;
+    // Where the next pass starts its round robin.
+    std::size_t drain_cursor_ = 0;
 };
 
 // The launch spec a terminal is built from, as the server composes it out of

@@ -54,6 +54,13 @@ public:
     // healing needs no message of its own.
     void attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels);
 
+    // Sends one message to the server. The mirrors send their own input and
+    // resizes; this is for what belongs to the attachment rather than to a
+    // terminal — asking for a new one, closing one, naming one.
+    void request(const proto::Message& message) const {
+        if (send_) send_(message);
+    }
+
     // One message from the server. Returns false for a message this client does
     // not understand, which the caller logs rather than acts on.
     bool handle(const proto::Message& message);

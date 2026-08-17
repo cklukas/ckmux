@@ -105,7 +105,23 @@ struct ClientOptions {
     // Returns a reference because ownership belongs to the `Application` either
     // way — launched or adopted (ckVision U0-a) — so the lifetime rule "the
     // session outlives every view that borrows it" is stated in one place.
+    //
+    // The reference must outlive every view that borrows it, which is the same
+    // rule ckVision states for a launched or adopted session. Where that
+    // lifetime lives is the source's business: M1 hands it to the
+    // `Application`, and an attached client keeps its mirrors in its own
+    // session object because a mirror has no descriptors for the application to
+    // wait on and nothing for it to drain.
     std::function<ckv::term::TerminalSubsession&(TerminalRequest)> terminal_source;
+    // What "New Terminal" does.
+    //
+    // Unset opens one here and now, which is M1. A client attached to a server
+    // ASKS for one and opens the window when the server says the terminal
+    // exists — because a window with nothing behind it is a window that lies,
+    // and because whether the terminal could be created at all is the server's
+    // answer to give. Returning false means the request could not be sent, and
+    // the client falls back to saying so rather than to opening one locally.
+    std::function<bool()> request_new_terminal;
     // How long the prefix stays silent before the which-key popup appears.
     std::int64_t which_key_delay_nanos = 500'000'000;
     // How often window captions are re-read from the children. The emulator
@@ -131,6 +147,10 @@ public:
 
     // Opens a terminal window running the configured shell and focuses it.
     ckv::widgets::Window* new_terminal();
+    // Opens a window for a terminal that already exists — what an attached
+    // client does when the server announces one, including every terminal that
+    // was already running when it attached.
+    ckv::widgets::Window* open_terminal(std::string title);
 
     // --- State the UI derives from, exposed so tests can assert on the
     // same values the rendering does rather than scraping cells ----------
@@ -173,7 +193,6 @@ private:
     // adding to whatever is already there.
     void install_clock();
     void refresh_footer();
-    ckv::widgets::Window* open_terminal(std::string title);
     void close_terminal(ckv::widgets::Window* window);
     void confirm_then_close(ckv::widgets::Window* window);
     void focus_active_terminal();

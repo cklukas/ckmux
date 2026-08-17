@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 #include "platform/socket.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -337,12 +338,14 @@ bool Stream::flush() {
     return true;
 }
 
-bool Stream::receive(std::string& into) {
+bool Stream::receive(std::string& into, std::size_t byte_budget) {
     char buffer[64 * 1024];
-    for (;;) {
-        const ssize_t count = ::read(fd_, buffer, sizeof buffer);
+    while (byte_budget > 0) {
+        const std::size_t want = std::min(byte_budget, sizeof buffer);
+        const ssize_t count = ::read(fd_, buffer, want);
         if (count > 0) {
             into.append(buffer, static_cast<std::size_t>(count));
+            byte_budget -= static_cast<std::size_t>(count);
             continue;
         }
         if (count == 0) return false;  // the peer closed: a detach, from here
@@ -350,6 +353,9 @@ bool Stream::receive(std::string& into) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return true;
         return false;
     }
+    // Out of budget with bytes still waiting. Not an error and not the end: the
+    // caller comes back after doing everything else it has to do.
+    return true;
 }
 
 void Stream::close() noexcept {

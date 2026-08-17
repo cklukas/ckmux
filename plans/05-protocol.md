@@ -168,6 +168,20 @@ WP-PRINT).
 
 ## Flow control
 
+- **Two marks, not one.** The 4 MiB high-water below is where a stream is in
+  trouble; **256 KiB** is where sending more *screen* stops being worth doing.
+  A delta describes a moment, and one still queued when the next tick comes
+  round describes a moment that has passed — while everything else on the
+  connection waits behind it. Measured under a `yes` flood with only the 4 MiB
+  mark in place, a `Ping` took **2.8 seconds** to come back; with the 256 KiB
+  delta mark it takes **20 ms** (WP-7).
+- **A delta carries at most 256 lines of history.** A flooding child pushes
+  thousands per tick, and a delta carrying them all is past the 1 MiB payload
+  cap — a refused frame, not a slow one. Past that the screen still goes and the
+  history does not: the client's scrollback falls behind while its screen stays
+  live, and one snapshot reconciles it when the flood stops. Answering the flood
+  with a snapshot *instead* was measured at 2.8 MB per tick, which is what made
+  the `Ping` above take three seconds.
 - **Server → client**: per-client outbound queue, high-water 4 MiB. Above
   high-water: stop queueing `GridDelta`s, mark `dirty_snapshot`; when the
   queue drains below low-water, send one fresh `Attached` snapshot. Slow or

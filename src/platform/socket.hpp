@@ -127,8 +127,22 @@ private:
 // knows that.
 class Stream {
 public:
-    // 4 MiB, the high-water mark of plans/05.
+    // 4 MiB, the high-water mark of plans/05: past this the stream is in
+    // trouble and nothing more should be queued at all.
     static constexpr std::size_t kHighWaterBytes = 4u * 1024u * 1024u;
+    // 256 KiB, and a different question: how much SCREEN may be queued ahead of
+    // a reader before sending more of it stops being worth doing.
+    //
+    // A delta describes a moment. One that is still waiting behind a queue when
+    // the next tick comes round describes a moment that has already passed, and
+    // queueing another behind it only adds to what the reader has to sit through
+    // before seeing the present. Worse, everything else on the connection —
+    // every answer to every question a client asks — waits behind it too:
+    // measured against a flooding child, a `Ping` took **2.8 seconds** to come
+    // back with only the 4 MiB mark in the way. A quarter of a megabyte is a
+    // frame or two of a large screen; past it the answer is the one the protocol
+    // already gives, which is a snapshot when the queue drains.
+    static constexpr std::size_t kDeltaBacklogBytes = 256u * 1024u;
 
     Stream() = default;
     explicit Stream(int fd) : fd_(fd) {}
@@ -151,13 +165,23 @@ public:
     // gone.
     bool flush();
 
-    // Reads whatever has arrived, appending to `into`. Returns false at
-    // end-of-stream (the peer closed, which is how a detach looks from here)
-    // or on a fatal error.
-    bool receive(std::string& into);
+    // Reads what has arrived, appending to `into`, up to `byte_budget`. Returns
+    // false at end-of-stream (the peer closed, which is how a detach looks from
+    // here) or on a fatal error.
+    //
+    // The budget is not an optimisation. A peer that writes as fast as this
+    // reads — a server carrying a child running `yes`, or a client pasting a
+    // file — never lets the socket run dry, so a loop that read "until there is
+    // nothing left" would never return, and the caller would never get back to
+    // its own screen, its own keyboard, or its own timers. It is the same rule
+    // the server applies to a PTY (WP-3) and for the same reason: bounded reads
+    // are what fairness is made of.
+    bool receive(std::string& into, std::size_t byte_budget = 1024 * 1024);
 
     std::size_t queued() const noexcept { return pending_.size() - sent_; }
     bool over_high_water() const noexcept { return queued() > kHighWaterBytes; }
+    // Whether there is already more screen queued than is worth adding to.
+    bool over_delta_backlog() const noexcept { return queued() > kDeltaBacklogBytes; }
     bool wants_write() const noexcept { return queued() > 0; }
 
     void close() noexcept;

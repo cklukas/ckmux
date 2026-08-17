@@ -101,8 +101,23 @@ std::optional<proto::GridDelta> TerminalDiffer::flush(TerminalId id,
 
     const TerminalStatus status = source.status();
     const GridView view = view_of(source, status);
+
+    // More scrolled away in one tick than a delta may carry: the screen goes and
+    // the history waits. Answering this with a snapshot — which does carry the
+    // history — is what a first version did, and it cost 2.8 MB per tick under
+    // `yes`, with every other answer on the connection queued behind it.
+    const bool flooded = damage.scrollback_pushed > kMaxHistoryLinesPerDelta;
+    if (flooded) history_diverged_ = true;
+    // And when it calms down, one snapshot puts the history back. Once, not per
+    // tick: `history_diverged_` is cleared by taking it.
+    if (!flooded && history_diverged_) {
+        needs_snapshot_ = true;
+        return std::nullopt;
+    }
+
     const std::vector<std::vector<ckv::Cell>> pushed =
-        newest_history_lines(source, status.cells.width, damage.scrollback_pushed);
+        flooded ? std::vector<std::vector<ckv::Cell>>{}
+                : newest_history_lines(source, status.cells.width, damage.scrollback_pushed);
 
     proto::GridDelta delta;
     delta.term = id;
@@ -182,6 +197,8 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
     // of having to take that one on trust.
     believed_ = state_of(view);
     sequence_ = 0;
+    needs_snapshot_ = false;
+    history_diverged_ = false;
     return state;
 }
 

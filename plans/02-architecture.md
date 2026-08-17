@@ -113,7 +113,11 @@ loop:
   poll(fds, next_tick_deadline)
   – accept new clients → handshake
   – client socket readable → decode messages → apply (input, layout ops, …)
-  – PTY readable → subsession.drain(64 KiB budget) → emulator state advances
+  – PTY readable → terminals.drain(64 KiB for the PASS, shared) → emulator
+    state advances. Shared, not per terminal: parsing 64 KiB of a flooding
+    child is 22 ms of real work in an optimised build, so a budget each means a
+    pass that grows with the number of busy children until the loop answers
+    nothing else (WP-7 measured exactly that).
   – PTY writable → drain pending input queue (paste backpressure)
   – SIGCHLD → reap, mark terminal exited, apply on-exit policy
   – tick due (max-fps) → for each attached session: diff/damage per

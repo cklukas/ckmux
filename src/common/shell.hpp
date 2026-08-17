@@ -43,6 +43,10 @@ std::string resolve_shell();
 //                  skipped. Right when ckmux itself was started from a
 //                  shell that already ran them, and the reader would rather
 //                  not pay for them again in every window.
+// `shell` empty means the reader's own shell, resolved by `resolve_shell()`:
+// that is what `[general] shell` defaults to, and doing it here rather than at
+// each call site is what keeps a caller from producing a launch spec with no
+// program in it.
 ShellLaunch shell_launch(const std::string& shell, bool login);
 
 }  // namespace ckm

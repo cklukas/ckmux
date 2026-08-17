@@ -384,6 +384,13 @@ void ClientApp::open_calendar() {
 }
 
 ckv::widgets::Window* ClientApp::new_terminal() {
+    // Attached to a server, this is a request rather than an act: the window is
+    // opened when the server says the terminal exists (plans/03). Locally it is
+    // both at once, which is what M1 is.
+    if (options_.request_new_terminal) {
+        (void)options_.request_new_terminal();
+        return nullptr;
+    }
     return open_terminal("Terminal " + std::to_string(next_terminal_number_++));
 }
 

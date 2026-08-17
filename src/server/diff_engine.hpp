@@ -48,6 +48,27 @@ GridCursor cursor_of(const ckv::term::TerminalStatus& status);
 std::vector<std::vector<ckv::Cell>> newest_history_lines(const ckv::core::TerminalSubsession& source,
                                                          int width, std::size_t count);
 
+// The most history one delta may carry.
+//
+// A flooding child pushes thousands of lines per tick — `yes` against a 64 KiB
+// drain budget is nearly four thousand — and a delta carrying them all is
+// megabytes, past the protocol's own payload cap for a delta (plans/05: 1 MiB).
+// A frame over the cap is not merely large: it is refused, and a stream whose
+// framing cannot be trusted is a connection that has to end.
+//
+// Past this many lines the SCREEN still goes and the history does not. That is
+// the trade this package had to make, and it was made against a measurement:
+// answering a flood with a snapshot instead — the obvious first answer, since a
+// snapshot carries the history whole — meant a **2.8 MB snapshot every tick**,
+// which buried every other answer on the connection behind it and made a `Ping`
+// take three seconds to come back. A reader watching a flooding terminal is
+// watching the screen; the history they will page into afterwards is reconciled
+// with one snapshot when the flood stops.
+//
+// Two hundred and fifty six is several screens' worth: an ordinary program
+// scrolling briskly stays well under it, and what goes over is a flood.
+inline constexpr std::size_t kMaxHistoryLinesPerDelta = 256;
+
 class TerminalDiffer {
 public:
     // The belief starts empty at a size of nothing, so the first flush of a
@@ -77,6 +98,12 @@ public:
     proto::TerminalState snapshot(TerminalId id, const ckv::core::TerminalSubsession& source);
 
     std::uint32_t sequence() const noexcept { return sequence_; }
+    // Whether the last flush gave up on saying it incrementally. The server
+    // reads this and has the client resnapshotted; taking a snapshot clears it.
+    bool needs_snapshot() const noexcept { return needs_snapshot_; }
+    // Whether a flood has been outrunning what a delta can carry, so that the
+    // client's history is behind while its screen is not.
+    bool history_diverged() const noexcept { return history_diverged_; }
     // What the client is believed to hold. Public because the tests compare it
     // against a mirror built only from the deltas — which is the one check that
     // says the belief is not a story the server tells itself.
@@ -89,6 +116,8 @@ private:
     // history, because the client is what a reader pages through.
     GridState believed_;
     std::uint32_t sequence_ = 0;
+    bool needs_snapshot_ = false;
+    bool history_diverged_ = false;
 };
 
 // Every terminal the server owns, diffed at the flush tick.

@@ -11,6 +11,7 @@
 #if !defined(_WIN32)
 
 #include <chrono>
+#include <cstdio>
 #include <csignal>
 #include <functional>
 #include <string>
@@ -345,3 +346,59 @@ CK_TEST(a_terminal_reports_only_what_changed_since_the_host_caught_up) {
 }
 
 #endif  // !_WIN32
+
+CK_TEST(the_drain_budget_is_for_the_pass_and_not_for_each_child) {
+    // Parsing IS what a drain costs — 64 KiB of a flooding child is 22 ms of
+    // real work in an optimised build, two thirds of a frame at 30 fps — so a
+    // budget handed to every terminal separately means a pass that grows with
+    // the number of busy children until the loop answers nothing else. That was
+    // measured, not imagined: it is what made a `Ping` take half a second to
+    // come back with one flood running (WP-7's gate).
+    Terminals terminals(test_settings());
+    Terminal& first = terminals.open(spec_running("yes first-child"));
+    Terminal& second = terminals.open(spec_running("yes second-child"));
+    Terminal& third = terminals.open(spec_running("yes third-child"));
+    CK_CHECK(pump_until(terminals, [&] {
+        return !screen_text(first).empty() && !screen_text(second).empty() &&
+               !screen_text(third).empty();
+    }));
+
+    // How much a pass actually absorbs, counted in the lines each emulator says
+    // entered its history — which is the only honest measure of "how much did
+    // this pass parse".
+    const std::size_t budget = 64 * 1024;
+    std::size_t lines = 0;
+    for (int pass = 0; pass < 6; ++pass) {
+        // A moment for the children to refill their PTYs. `yes` is blocked in
+        // write() the instant the buffer is full, and a pass that measures
+        // immediately after another one measures the scheduler rather than the
+        // budget.
+        (void)::usleep(20000);
+        for (const ckm::server::TerminalId id : terminals.ids())
+            if (Terminal* terminal = terminals.find(id)) terminal->clear_damage();
+        (void)terminals.drain(budget);
+        std::size_t pass_lines = 0;
+        for (const ckm::server::TerminalId id : terminals.ids())
+            if (Terminal* terminal = terminals.find(id))
+                pass_lines += terminal->damage().scrollback_pushed;
+        lines = std::max(lines, pass_lines);
+    }
+    // The shortest line these children write is twelve bytes ("first-child" and
+    // a newline), so a pass that honoured the budget across all three cannot
+    // have taken in many more than budget/12 lines. Slack for a partial line at
+    // each end and for the screens themselves — and still nowhere near the three
+    // times over that a per-terminal budget would produce, which is the thing
+    // being pinned.
+    const std::size_t lines_in_budget = budget / 12;
+    CK_CHECK(lines > 0U);
+    CK_CHECK(lines <= lines_in_budget + 3U * 24U);
+    CK_CHECK(lines < 2U * lines_in_budget);
+
+    // And every one of them is served: a share has a floor, so a busy neighbour
+    // cannot starve a terminal down to nothing.
+    CK_CHECK(Terminals::kMinimumDrainShare > 0U);
+    for (int pass = 0; pass < 8; ++pass) (void)terminals.drain(budget);
+    CK_CHECK(!screen_text(first).empty());
+    CK_CHECK(!screen_text(second).empty());
+    CK_CHECK(!screen_text(third).empty());
+}

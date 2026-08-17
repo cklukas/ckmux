@@ -47,6 +47,14 @@ public:
     // protocol says — resnapshot — so both set `needs_snapshot()`.
     bool apply(const proto::GridDelta& delta);
 
+    // A terminal the server has just announced. `TermOpened` says how big it is
+    // but not what is on it, so the mirror starts blank at that size — and the
+    // size is the part that matters: the first delta for a new terminal is a
+    // full repaint, and a repaint cannot be applied to a grid of no size. A
+    // mirror left at nothing would refuse it, ask for a snapshot, and only then
+    // catch up, which is a round trip for something already known.
+    void open(ckv::Size cells);
+
     void apply(const proto::TermMeta& meta);
     void apply(const proto::TermClosed& closed);
 
