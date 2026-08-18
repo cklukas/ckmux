@@ -484,8 +484,20 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     // Generous on purpose: what is being asserted is that the server never stops
     // answering, not how fast this machine is. A server that read without a
     // budget, or wrote to a slow client without a queue, would not answer at all
-    // — the failure this gate catches is unbounded, not marginal.
-    CK_CHECK(worst_ms < 1000.0);
+    // — the failure this gate catches is unbounded, not marginal. Sanitizer
+    // builds run the whole flood several times slower for the same behaviour,
+    // so the budget scales with the build rather than the assertion weakening:
+    // unbounded still fails either way.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    constexpr double kWorstBudgetMs = 5000.0;
+#elif defined(__has_feature) && \
+    (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+     __has_feature(undefined_behavior_sanitizer))
+    constexpr double kWorstBudgetMs = 5000.0;
+#else
+    constexpr double kWorstBudgetMs = 1000.0;
+#endif
+    CK_CHECK(worst_ms < kWorstBudgetMs);
 
     ckm::proto::KillServer kill;
     client.session.request(kill);
