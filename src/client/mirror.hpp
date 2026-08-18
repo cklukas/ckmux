@@ -37,9 +37,16 @@ public:
     TerminalMirror() = default;
 
     // Everything the server said about this terminal at attach time. Replaces
-    // whatever was held — a snapshot is the server's answer to "we have lost
-    // track", so believing any of the old state would defeat it — and restarts
-    // the sequence, which is what makes the next delta's `seq == 1` meaningful.
+    // the whole screen — a snapshot is the server's answer to "we have lost
+    // track", so believing any of the old picture would defeat it — and
+    // restarts the sequence, which is what makes the next delta's `seq == 1`
+    // meaningful.
+    //
+    // What it does NOT replace is whether the child is still running: the
+    // snapshot has no field for that, so a client's only source is the
+    // `TermClosed` it was already sent, and a reattach that forgot it showed a
+    // dead shell as a live terminal (mirror.cpp says the rest). `open()` is
+    // the seam that clears it, for a terminal that really is a new one.
     void adopt(const proto::TerminalState& state);
 
     // Applies one delta. Returns false when it was refused, which happens for

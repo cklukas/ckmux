@@ -155,6 +155,66 @@ CK_TEST(search_walks_forwards_and_backwards_and_wraps) {
     CK_CHECK(!find_match(lines, "", Point{0, 0}, true).has_value());
 }
 
+CK_TEST(a_repeated_search_moves_along_the_line_it_is_on) {
+    // `from` is exclusive, and that has to hold within a line as much as
+    // between lines: two matches on one line cost a reader pressing `n` a whole
+    // lap of the history before the second one came round.
+    const std::vector<CopyLine> lines = document({"one two one"}, 16);
+    const std::optional<Point> first = find_match(lines, "one", Point{0, 0}, true);
+    CK_CHECK(first.has_value());
+    if (first) {
+        CK_CHECK(first->y == 0);
+        CK_CHECK(first->x == 8);
+    }
+    // And round again to the one it started past, rather than "not found".
+    const std::optional<Point> second = find_match(lines, "one", Point{8, 0}, true);
+    CK_CHECK(second.has_value());
+    if (second) CK_CHECK(second->x == 0);
+    const std::optional<Point> backwards = find_match(lines, "one", Point{8, 0}, false);
+    CK_CHECK(backwards.has_value());
+    if (backwards) CK_CHECK(backwards->x == 0);
+}
+
+CK_TEST(a_search_lands_on_a_column_rather_than_on_a_byte) {
+    // The cursor is indexed by column, and a byte offset is the same number
+    // only while every character is one byte wide. With a box-drawing character
+    // in front of it the cursor landed inside that character instead — and a
+    // selection started there copied half of one.
+    std::vector<CopyLine> lines;
+    CopyLine line;
+    line.push_back("│");  // three bytes, one column
+    line.push_back("é");  // two bytes, one column
+    for (const char c : std::string("found")) line.push_back(std::string(1, c));
+    lines.push_back(std::move(line));
+
+    const std::optional<Point> hit = find_match(lines, "found", Point{0, 0}, true);
+    CK_CHECK(hit.has_value());
+    if (hit) {
+        CK_CHECK(hit->y == 0);
+        CK_CHECK(hit->x == 2);
+    }
+}
+
+CK_TEST(a_search_from_outside_the_document_answers_rather_than_reads_past_it) {
+    // `find_match` is a public function over a document its caller composed, so
+    // a stale or invented cursor has to be an answer: indexing the line vector
+    // with it was a crash bought by a point nobody had clamped.
+    const std::vector<CopyLine> lines = document({"alpha", "beta"}, 8);
+    CK_CHECK(find_match(lines, "beta", Point{0, 99}, true).has_value());
+    CK_CHECK(find_match(lines, "alpha", Point{0, -7}, false).has_value());
+    CK_CHECK(find_match(lines, "beta", Point{500, 0}, true).has_value());
+    CK_CHECK(!find_match(lines, "gamma", Point{0, -99}, true).has_value());
+}
+
+CK_TEST(a_terminal_nothing_has_sized_yet_composes_one_blank_line) {
+    // No width is no document. Slicing the buffers at a made-up width of one
+    // would open copy mode on a column of single letters as tall as the
+    // history.
+    const ckv::core::TerminalSnapshot never_sized;
+    const std::vector<CopyLine> lines = compose_history(never_sized);
+    CK_CHECK(lines.size() == 1U);
+}
+
 CK_TEST(a_lower_case_search_does_not_care_about_case_and_a_capital_does) {
     const std::vector<CopyLine> lines = document({"Error: nothing", "error: something"}, 20);
     // Smartcase: all lower case means "I do not care", so the first hit is

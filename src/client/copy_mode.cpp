@@ -2,7 +2,7 @@
 #include "client/copy_mode.hpp"
 
 #include <algorithm>
-#include <cctype>
+#include <limits>
 #include <utility>
 
 #include "cvision/core/text.hpp"
@@ -22,16 +22,72 @@ std::string line_text(const CopyLine& line, int from, int to) {
     return out;
 }
 
-std::string lowered(std::string_view text) {
-    std::string out(text);
-    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return out;
-}
+// ASCII case folding, and deliberately only ASCII. `std::tolower` answers by
+// locale, and a search whose results depend on the reader's `LANG` is not one
+// feature but as many as there are locales (AGENTS.md determinism). Bytes over
+// 127 are left alone, which for UTF-8 text means a search over it is exact
+// rather than wrong.
+char folded(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
 
 bool has_upper(std::string_view text) {
     for (const char c : text)
-        if (std::isupper(static_cast<unsigned char>(c)) != 0) return true;
+        if (c >= 'A' && c <= 'Z') return true;
     return false;
+}
+
+// One line as searchable text, plus the column each byte of it came from.
+//
+// A match is reported as a COLUMN, because that is what the cursor is indexed
+// by and what a selection is defined in. A byte offset is the same number only
+// while every grapheme is one byte wide, and the first box-drawing character in
+// a line of program output ends that: the cursor landed inside the character
+// before the match, and a selection started there copied half of it.
+struct SearchableLine {
+    std::string text;
+    std::vector<int> columns;  // one entry per byte of `text`
+};
+
+SearchableLine searchable(const CopyLine& line, bool fold) {
+    SearchableLine out;
+    for (std::size_t column = 0; column < line.size(); ++column)
+        for (const char byte : line[column]) {
+            out.text.push_back(fold ? folded(byte) : byte);
+            out.columns.push_back(static_cast<int>(column));
+        }
+    // The same trailing blanks `line_text` drops: a terminal pads every row out
+    // to its width, and those spaces were never typed — a query ending in one
+    // must not match the padding at the end of every line in the history.
+    while (!out.text.empty() && out.text.back() == ' ') {
+        out.text.pop_back();
+        out.columns.pop_back();
+    }
+    return out;
+}
+
+// The first match starting in `[lowest, highest]` searching forwards, or the
+// last one searching backwards. The window is what makes `from` exclusive
+// within a line as well as between lines.
+std::optional<int> match_in(const SearchableLine& line, const std::string& needle, bool forwards,
+                            int lowest, int highest) {
+    if (highest < lowest || needle.empty() || needle.size() > line.text.size())
+        return std::nullopt;
+    if (forwards) {
+        for (std::size_t at = line.text.find(needle); at != std::string::npos;
+             at = line.text.find(needle, at + 1)) {
+            const int column = line.columns[at];
+            if (column > highest) break;  // columns only grow along the line
+            if (column >= lowest) return column;
+        }
+        return std::nullopt;
+    }
+    for (std::size_t at = line.text.rfind(needle); at != std::string::npos;) {
+        const int column = line.columns[at];
+        if (column < lowest) break;
+        if (column <= highest) return column;
+        if (at == 0) break;
+        at = line.text.rfind(needle, at - 1);
+    }
+    return std::nullopt;
 }
 
 // Ordered corners, so every caller below reads top-left to bottom-right and
@@ -45,7 +101,13 @@ std::pair<ckv::Point, ckv::Point> ordered(ckv::Point a, ckv::Point b) {
 
 std::vector<CopyLine> compose_history(const ckv::core::TerminalSnapshot& snapshot) {
     std::vector<CopyLine> lines;
-    const int width = std::max(1, snapshot.cells.width);
+    const int width = snapshot.cells.width;
+    // A terminal with no width is one nothing has sized yet — a mirror before
+    // its first snapshot. Both buffers are rows of the terminal's OWN width, so
+    // there is no second number to slice them at: a made-up width of 1 would
+    // turn a history of ten thousand cells into ten thousand one-column lines
+    // and open copy mode on a column of letters.
+    if (width <= 0) return {CopyLine{std::string(" ")}};
     const auto append = [&lines, width](const std::vector<ckv::Cell>& cells, std::size_t begin,
                                         std::size_t end) {
         for (std::size_t row = begin; row + static_cast<std::size_t>(width) <= end;
@@ -104,34 +166,44 @@ std::string paste_bytes(std::string_view text, bool bracketed) {
 std::optional<ckv::Point> find_match(const std::vector<CopyLine>& lines, const std::string& query,
                                      ckv::Point from, bool forwards) {
     if (query.empty() || lines.empty()) return std::nullopt;
+    const int count = static_cast<int>(lines.size());
+    // Where the search starts, clamped rather than trusted. This is a public
+    // function over a document its caller composed, and a row outside that
+    // document indexed the vector out of bounds — a crash bought by a cursor
+    // that was merely stale, on a path with no other way to notice.
+    const int row = std::clamp(from.y, 0, count - 1);
+    const CopyLine& start_line = lines[static_cast<std::size_t>(row)];
+    const int column = std::clamp(from.x, 0, static_cast<int>(start_line.size()));
     // Smartcase: an all-lower-case query means "I do not care", and a capital
     // anywhere in it means the reader typed one on purpose.
-    const bool sensitive = has_upper(query);
-    const std::string needle = sensitive ? query : lowered(query);
+    const bool fold = !has_upper(query);
+    std::string needle = query;
+    if (fold)
+        for (char& c : needle) c = folded(c);
 
-    const int count = static_cast<int>(lines.size());
-    for (int step = 1; step <= count; ++step) {
-        const int row = forwards ? (from.y + step) % count : ((from.y - step) % count + count) % count;
-        const std::string text =
-            line_text(lines[static_cast<std::size_t>(row)], 0,
-                      static_cast<int>(lines[static_cast<std::size_t>(row)].size()));
-        const std::string haystack = sensitive ? text : lowered(text);
-        const std::size_t hit = forwards ? haystack.find(needle) : haystack.rfind(needle);
-        if (hit == std::string::npos) continue;
-        // The column is a byte offset into the joined text; a line of ASCII —
-        // which is what a search hits in practice — makes the two the same,
-        // and a wide character before the match only shifts the cursor, never
-        // the line it lands on.
-        return ckv::Point{static_cast<int>(hit), row};
+    constexpr int kAnyColumn = std::numeric_limits<int>::max();
+    const SearchableLine start = searchable(start_line, fold);
+    // `from` is exclusive, and that has to hold WITHIN a line as well as
+    // between them: a reader pressing `n` on a line with two matches in it was
+    // sent a whole lap round the history to come back to the second one.
+    if (const std::optional<int> hit = forwards
+                                           ? match_in(start, needle, true, column + 1, kAnyColumn)
+                                           : match_in(start, needle, false, 0, column - 1))
+        return ckv::Point{*hit, row};
+    // Every other line, in order, wrapping: a history is a loop to a reader
+    // searching it.
+    for (int step = 1; step < count; ++step) {
+        const int at = forwards ? (row + step) % count : ((row - step) % count + count) % count;
+        const SearchableLine line = searchable(lines[static_cast<std::size_t>(at)], fold);
+        if (const std::optional<int> hit = match_in(line, needle, forwards, 0, kAnyColumn))
+            return ckv::Point{*hit, at};
     }
-    // The line the cursor is already on is searched last, so a repeated search
-    // in a document with one match does not report "not found".
-    const std::string text = line_text(lines[static_cast<std::size_t>(std::clamp(from.y, 0, count - 1))], 0,
-                                       static_cast<int>(lines[static_cast<std::size_t>(
-                                           std::clamp(from.y, 0, count - 1))].size()));
-    const std::string haystack = sensitive ? text : lowered(text);
-    if (haystack.find(needle) != std::string::npos)
-        return ckv::Point{static_cast<int>(haystack.find(needle)), std::clamp(from.y, 0, count - 1)};
+    // The side of the starting line the search began past, searched last, so a
+    // document with exactly one match in it does not answer "not found" to a
+    // reader searching again from that match.
+    if (const std::optional<int> hit = forwards ? match_in(start, needle, true, 0, column)
+                                                : match_in(start, needle, false, column, kAnyColumn))
+        return ckv::Point{*hit, row};
     return std::nullopt;
 }
 
@@ -352,24 +424,32 @@ bool CopyModeView::on_key(const ckv::KeyEvent& event) {
 }
 
 void CopyModeView::yank_and_exit() {
+    if (finished_) return;
     std::string text = selected_text(lines_, mode_, anchor_, cursor_);
     // With nothing marked, yank takes the line the cursor is on. A reader who
     // pressed `y` meant to copy something, and refusing them the obvious
     // answer would make the key feel broken.
     if (text.empty() && mode_ == SelectionMode::None)
         text = selected_text(lines_, SelectionMode::Line, cursor_, cursor_);
-    if (finished_) return;
     finished_ = true;
-    // Both callbacks may detach this view, so nothing touches members after
-    // the first one runs.
-    if (on_copy) on_copy(std::move(text));
-    if (on_exit) on_exit();
+    // Both handlers are taken as values BEFORE either runs, because either may
+    // destroy this view — `on_copy` reaches the client, which is free to leave
+    // copy mode from inside it — and reading `on_exit` off a member afterwards
+    // would be reading freed memory. Taking them also empties the members, so a
+    // handler that comes back round here finds nothing left to call.
+    std::function<void(std::string)> copy = std::move(on_copy);
+    std::function<void()> exit = std::move(on_exit);
+    if (copy) copy(std::move(text));
+    if (exit) exit();
 }
 
 void CopyModeView::finish() {
     if (finished_) return;
     finished_ = true;
-    if (on_exit) on_exit();
+    // Moved out first, for the reason yank_and_exit states: leaving destroys
+    // this view, and the member must not be touched once it may have.
+    std::function<void()> exit = std::move(on_exit);
+    if (exit) exit();
 }
 
 }  // namespace ckm::client

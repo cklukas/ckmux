@@ -28,7 +28,7 @@ verification evidence: the "ckmux Architecture Review" artifact of 2026-08-18.
 | R2 | Server fairness & loop health | C2, M-S1…M-S5, m-exit-msg | **open** — blocked: `src/server/*` uncommitted peer hunks; consider ckVision `request_termination()` (landed `1664403`) for M-S3 |
 | R3 | Mirror geometry & resize | C3 | **open** — needs a proto geometry op; sequence after R1 |
 | R4 | Platform fd & signal hygiene | M-F1…M-F5, m-plat | **done** — Debug + ASan suites green; the server-side adoption of `AcceptResult`/`Poller::outcome` is R2's row; the PTY half of the SIGPIPE fix is R7's |
-| R5 | Client lifetimes & reattach windows | C4, M-L1…M-L3, M-R4, m-client | **ongoing** — M-R4, copy-mode, prefix-overlay and connection fixes applied and compile-verified; C4/M-L1/M-L2/M-L3 fully specified, waiting on the peer landing to apply; Send Prefix waits on ckVision `TerminalView::send_key` (R7) |
+| R5 | Client lifetimes & reattach windows | C4, M-L1…M-L3, M-R4, m-client | **ongoing** — M-R4, copy-mode, prefix-overlay and connection fixes committed (Debug + ASan green); C4/M-L1/M-L2/M-L3 fully specified in the R5 report, waiting on the peer landing to apply; Send Prefix unblocked by ckVision `TerminalView::send_key`, applies with the freed files |
 | R6 | Config & keymap truthfulness | M-T1, m-conf | **ongoing** — all config fixes, ~16 tests, and plans/08 spec updates applied and compile-verified; suite run pending full link; keymap chord spelling (item 9) fully designed, waits for the peer landing |
 | R7 | ckVision upstream fixes | U1…U3 | **ongoing** |
 | R8 | Reattach feature gaps | M-R1…M-R3, m-replay | **open** — needs proto additions (R1) and R7's damage flags first |

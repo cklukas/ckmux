@@ -116,8 +116,13 @@ bool PrefixOverlay::on_key(const ckv::KeyEvent& event) {
 void PrefixOverlay::finish(std::string chord) {
     if (finished_) return;
     finished_ = true;
-    // The callback detaches this view, so nothing may touch members after it.
-    if (on_chord) on_chord(std::move(chord));
+    // Taken as a value before it runs, not called through the member: the
+    // callback's whole job is to end this overlay, and a `std::function` that
+    // destroys the object holding it is destroying itself mid-call. Moving it
+    // out first also empties the member, so a second chord finds nothing to
+    // call rather than a handler that has already had its say.
+    std::function<void(std::string)> chosen = std::move(on_chord);
+    if (chosen) chosen(std::move(chord));
 }
 
 }  // namespace ckm::client

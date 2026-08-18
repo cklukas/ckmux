@@ -410,6 +410,63 @@ CK_TEST(an_exited_child_is_an_exited_terminal_to_the_view) {
     if (remote.status().exit_code.has_value()) CK_CHECK(*remote.status().exit_code == 3);
 }
 
+CK_TEST(a_snapshot_does_not_bring_an_exited_child_back_to_life) {
+    // Reattaching hands a client every terminal whole, and the wire has no
+    // field for "the child exited" (proto::TerminalState) — so a mirror that
+    // let `adopt` clear what a `TermClosed` had already told it showed a dead
+    // shell as a live terminal after every reattach: no banner, no status, and
+    // a window a reader could type into with nothing on the other end.
+    FakeServer server;
+    server.child_printed("done\r\n");
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().adopt(server.snapshot());
+
+    ckm::proto::TermClosed closed;
+    closed.term = server.id;
+    closed.exited = 1;
+    closed.exit_status = 3;
+    closed.hold = 1;  // the window stays, banner and all (plans/03 on-exit)
+    remote.mirror().apply(closed);
+    CK_CHECK(remote.state() == ckv::core::TerminalSubsessionState::Exited);
+
+    // The reattach: the same terminal, stated whole, exactly as a server states
+    // it to a client that has come back.
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(remote.state() == ckv::core::TerminalSubsessionState::Exited);
+    CK_CHECK(remote.mirror().exited());
+    CK_CHECK(remote.status().exit_code.has_value());
+    if (remote.status().exit_code.has_value()) CK_CHECK(*remote.status().exit_code == 3);
+    // And the screen still came from the snapshot rather than from before it.
+    CK_CHECK(mirror_text(remote.mirror()).find("done") != std::string::npos);
+
+    // The one way back to alive is the server announcing a terminal, which is
+    // sound because ids are never reused: a `TermOpened` really is a different
+    // program behind the same mirror.
+    remote.mirror().open(ckv::Size{40, 8});
+    CK_CHECK(!remote.mirror().exited());
+    CK_CHECK(!remote.status().exit_code.has_value());
+    CK_CHECK(remote.state() != ckv::core::TerminalSubsessionState::Exited);
+}
+
+CK_TEST(a_terminal_that_only_left_the_session_reports_no_exit_status) {
+    // `exited = 0` is the server saying the terminal went somewhere else — a
+    // move — and it sends nothing in the status field because there is nothing
+    // to report. Stored anyway, that zero becomes "the program finished with 0"
+    // over a program that is still running in another session.
+    FakeServer server;
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().adopt(server.snapshot());
+
+    ckm::proto::TermClosed left;
+    left.term = server.id;
+    left.exited = 0;
+    left.exit_status = 0;
+    remote.mirror().apply(left);
+    CK_CHECK(!remote.mirror().exited());
+    CK_CHECK(!remote.status().exit_code.has_value());
+    CK_CHECK(remote.state() != ckv::core::TerminalSubsessionState::Exited);
+}
+
 CK_TEST(the_whole_client_ui_drives_a_terminal_it_does_not_own) {
     // The acceptance criterion, stated as a test: the real `ClientApp` — its
     // window, its footer, its prefix, its menus — with terminals that live

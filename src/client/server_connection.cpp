@@ -2,6 +2,7 @@
 #include "client/server_connection.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <string>
 #include <utility>
@@ -21,6 +22,28 @@ int millis_left(const clock_type::time_point& deadline) {
     return static_cast<int>(left.count());
 }
 
+// Gets everything queued onto the socket, or says it could not within the
+// budget.
+//
+// `Stream::send` is a queue over a non-blocking descriptor: it writes what the
+// socket will take and keeps the rest. Nothing here reads the queue afterwards,
+// so a handshake the kernel would not take whole stayed half-written while this
+// client waited for the answer to it — and the message a reader was shown
+// blamed the server for not answering a question it had never been asked.
+bool flush_fully(platform::Stream& stream, const clock_type::time_point& deadline) {
+    while (stream.wants_write()) {
+        if (!stream.flush()) return false;  // the peer is gone
+        if (!stream.wants_write()) break;
+        const int remaining = millis_left(deadline);
+        if (remaining <= 0) return false;
+        pollfd waiting{stream.fd(), POLLOUT, 0};
+        const int ready = ::poll(&waiting, 1, remaining);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::Message& message,
@@ -36,7 +59,17 @@ bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::
         const int remaining = millis_left(deadline);
         if (remaining <= 0) return false;
         pollfd waiting{stream.fd(), POLLIN | POLLHUP, 0};
-        if (::poll(&waiting, 1, remaining) <= 0) return false;
+        const int ready = ::poll(&waiting, 1, remaining);
+        // A signal is not an answer. `SIGWINCH` arrives whenever the reader
+        // resizes the window they started ckmux in, and interrupting the wait
+        // used to end it — `ckmux` reported that the server never answered the
+        // handshake, because somebody had dragged a window corner. The deadline
+        // still bounds the loop, so retrying cannot spin.
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (ready == 0) return false;  // the budget ran out
         std::string arrived;
         const bool alive = stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) return false;
@@ -101,6 +134,16 @@ ServerConnection connect_to_server(const std::filesystem::path& socket,
     hello.build = std::string(proto::kBuildIdentity);
     hello.client_kind = kind;
     (void)result.stream.send(proto::encode(hello));
+    // Written out before anything waits for the answer to it, and a failure
+    // named for what it is: a server cannot answer a handshake it was never
+    // given, so "did not answer" would be this client blaming the other end for
+    // its own unsent bytes.
+    if (!flush_fully(result.stream, deadline)) {
+        result.status = ServerConnection::Status::TimedOut;
+        result.problem = "the handshake could not be sent to the server at " + socket.string();
+        result.stream.close();
+        return result;
+    }
 
     proto::FrameReader reader;
     proto::Message answer;

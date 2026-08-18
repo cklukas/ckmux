@@ -7,8 +7,11 @@
 #if !defined(_WIN32)
 
 #include <string>
+#include <variant>
 
 #include "client/client_app.hpp"
+#include "client/remote_terminal.hpp"
+#include "common/proto.hpp"
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/widgets/terminal_view.hpp"
@@ -56,6 +59,37 @@ struct Fixture {
     bool press_prefix() { return press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "b"}); }
     // Lets posted work run: the overlay tears itself down off the stack that
     // is still executing its own key handler.
+    void settle() { app.step(clock.now_nanos()); }
+};
+
+// A client whose one terminal records what is typed at it instead of forking
+// anything.
+//
+// The seam is the one an attached client drives (WP-5), so the bytes recorded
+// here are the bytes a program would have been given. `/bin/cat` would echo
+// them back eventually, and "eventually" is the problem: a test that waits for
+// a child either races it or — as this one did — asserts nothing at all.
+struct TypedIntoFixture {
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    std::string typed;
+    // Declared before the client: the client opens its window while it is
+    // being constructed, and that window borrows this.
+    ckm::client::RemoteTerminalSubsession child{
+        1, ckv::term::embedded_xterm_sixel_profile(),
+        [this](const ckm::proto::Message& message) {
+            if (const auto* input = std::get_if<ckm::proto::Input>(&message)) typed += input->bytes;
+        }};
+    ClientApp client{app, [this] {
+        ClientOptions options = test_options();
+        options.terminal_source =
+            [this](ckm::client::TerminalRequest) -> ckv::term::TerminalSubsession& { return child; };
+        return options;
+    }()};
+
+    bool press(ckv::KeyChord chord) { return app.dispatch(ckv::KeyEvent{std::move(chord)}); }
+    bool press_prefix() { return press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "b"}); }
     void settle() { app.step(clock.now_nanos()); }
 };
 
@@ -142,20 +176,39 @@ CK_TEST(a_digit_focuses_the_terminal_with_that_number) {
 }
 
 CK_TEST(pressing_the_prefix_twice_sends_a_literal_prefix_to_the_program) {
-    Fixture f;
+    TypedIntoFixture f;
+    // The terminal has a size before anything is typed at it, exactly as one
+    // the server has announced does.
+    f.child.mirror().open(Size{80, 24});
     f.settle();
-    auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(f.app.focused());
-    CK_CHECK(view != nullptr);
+    CK_CHECK(dynamic_cast<ckv::widgets::TerminalView*>(f.app.focused()) != nullptr);
+    f.typed.clear();
 
     CK_CHECK(f.press_prefix());
     CK_CHECK(f.press_prefix());
     f.settle();
 
     CK_CHECK(!f.client.prefix_pending());
-    // /bin/cat echoes what it is given, so the child endpoint is the honest
-    // place to look: 0x02 is Ctrl+B.
-    CK_CHECK(view->session().take_pending_input().find('\x02') != std::string::npos ||
-             f.client.desktop().windows().size() == 1U);
+    // What the program received, and the whole of it: 0x02 is what a terminal
+    // sends for Ctrl+B, and a reader who typed ^B ^B into their editor wants
+    // that one byte — not a second copy of it from the press that armed the
+    // prefix, and not nothing at all.
+    CK_CHECK(f.typed == std::string("\x02", 1));
+}
+
+CK_TEST(an_ordinary_key_reaches_the_program_as_the_bytes_a_terminal_sends) {
+    // The other half of the same claim, and the control the test above needs:
+    // the prefix is the ONE key ckmux keeps, so anything else has to arrive at
+    // the child encoded the way the outer terminal would have encoded it.
+    TypedIntoFixture f;
+    f.child.mirror().open(Size{80, 24});
+    f.settle();
+    f.typed.clear();
+
+    CK_CHECK(f.press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "x"}));
+    CK_CHECK(f.press(ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}));
+    f.settle();
+    CK_CHECK(f.typed == "x\r");
 }
 
 CK_TEST(the_which_key_popup_stays_out_of_the_way_until_the_reader_pauses) {

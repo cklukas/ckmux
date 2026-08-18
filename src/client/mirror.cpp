@@ -50,9 +50,23 @@ void TerminalMirror::adopt(const proto::TerminalState& state) {
     // the next delta's seq of 1 means something (plans/05).
     sequence_ = 0;
     needs_snapshot_ = false;
-    exited_ = false;
-    hold_ = false;
-    exit_status_.reset();
+    // The exit state deliberately survives.
+    //
+    // A snapshot replaces the SCREEN. Whether the child is still running is a
+    // fact about a process, and `proto::TerminalState` carries no field for it
+    // (common/proto.hpp) — so a snapshot cannot restate what a `TermClosed`
+    // already said, and clearing it here brought a dead shell's window back
+    // alive-looking after every reattach: no banner, no exit code, and a
+    // terminal a reader could type into with nothing on the other end.
+    //
+    // `open()` is the seam for a terminal that genuinely starts again: it
+    // clears all three. That is sound because the server mints terminal ids
+    // monotonically and never reuses one (server/terminals.hpp), so a
+    // `TermOpened` for an id is the only statement that a terminal by that id
+    // is new — and a mirror never outlives the connection it was filled over
+    // (`ServerSession::connection_lost` drops them all). When the snapshot
+    // grows an exit field, `adopt` takes the state from `state` and this
+    // becomes the fallback for a server that did not send one.
 }
 
 bool TerminalMirror::apply(const proto::GridDelta& delta) {
@@ -105,6 +119,10 @@ void TerminalMirror::open(ckv::Size cells) {
     damage_ = everything(state_.cells);
     sequence_ = 0;
     needs_snapshot_ = false;
+    // The one place a mirror goes from dead back to alive, and the reason
+    // `adopt` may leave the exit state alone: a `TermOpened` is the server
+    // announcing a terminal, ids are never reused, so this really is a
+    // different program behind the same mirror.
     exited_ = false;
     hold_ = false;
     exit_status_.reset();
@@ -120,7 +138,15 @@ void TerminalMirror::apply(const proto::TermMeta& meta) {
 void TerminalMirror::apply(const proto::TermClosed& closed) {
     exited_ = closed.exited != 0;
     hold_ = closed.hold != 0;
-    exit_status_ = closed.exit_status;
+    // A status only when something exited. `exited == 0` is the server saying
+    // the terminal left this session without dying — a move (server.cpp) — and
+    // it sends 0 in the status field because there is nothing to report. Stored
+    // anyway, that zero becomes `status().exit_code == 0` and a view draws "the
+    // program finished" over a program that is still running somewhere else.
+    if (exited_)
+        exit_status_ = closed.exit_status;
+    else
+        exit_status_.reset();
     // The banner a view draws for an exited terminal is part of its picture, so
     // the change is damage like any other.
     note_every_row();

@@ -27,8 +27,10 @@ struct ServerConnection {
         // be found or run.
         CannotStart,
         // A server was starting, or is running, and never became reachable
-        // within the budget. Distinct from CannotStart because the remedies are
-        // different: this one is worth retrying or looking at a log for.
+        // within the budget — including a handshake that could not be written
+        // out or answered in time. Distinct from CannotStart because the
+        // remedies are different: this one is worth retrying or looking at a
+        // log for, and `problem` names which half of it happened.
         TimedOut,
         // The socket is there and this user may not use it, or its directory is
         // not safe to use.
