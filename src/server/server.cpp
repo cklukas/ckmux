@@ -101,6 +101,7 @@ const char* name_of(proto::MessageType type) {
         case proto::MessageType::ListSessions: return "ListSessions";
         case proto::MessageType::NewSession: return "NewSession";
         case proto::MessageType::Attach: return "Attach";
+        case proto::MessageType::Attached: return "Attached";
         case proto::MessageType::Detach: return "Detach";
         case proto::MessageType::KillServer: return "KillServer";
         default: break;
@@ -153,8 +154,15 @@ std::int64_t Server::nanos_until_tick() const {
 }
 
 bool Server::step() {
+    const std::int64_t now = clock_.now_nanos();
     poller_.clear();
-    poller_.watch(listener_.fd(), platform::Interest::Read);
+    // The listener, unless accepting is paused — and then it is left out of the
+    // set rather than merely left unasked. A listener with a connection pending
+    // is readable until that connection is accepted, so watching one this
+    // server has decided not to ask from is a `poll()` that returns instantly,
+    // every time, for as long as the pause lasts.
+    if (now >= accept_paused_until_nanos_)
+        poller_.watch(listener_.fd(), platform::Interest::Read);
     poller_.watch(SignalPipe::instance().reader(), platform::Interest::Read);
     for (const std::unique_ptr<Client>& client : clients_) {
         if (!client->stream.open()) continue;
@@ -168,9 +176,35 @@ bool Server::step() {
         if (handle.kind == ckv::term::WaitHandleKind::PosixFileDescriptor)
             poller_.watch(static_cast<int>(handle.value), platform::Interest::Read);
 
-    const std::int64_t until_tick = nanos_until_tick();
-    const int timeout_ms = static_cast<int>(std::min<std::int64_t>(until_tick / 1'000'000, 1'000));
+    std::int64_t until_wake = nanos_until_tick();
+    // A pause is a deadline like the tick is, and the wait must not sleep past
+    // it: nothing else will wake this loop while the listener is out of the
+    // set, so a server that slept its full tick would still be right, and a
+    // server with no terminals and no clients would sit there for a second
+    // longer than it said it would.
+    if (accept_paused_until_nanos_ > now)
+        until_wake = std::min(until_wake, accept_paused_until_nanos_ - now);
+    const int timeout_ms = static_cast<int>(std::min<std::int64_t>(until_wake / 1'000'000, 1'000));
     const std::vector<platform::Ready>& ready = poller_.wait(timeout_ms);
+    switch (poller_.outcome()) {
+        case platform::Poller::Outcome::Failed:
+            // A wait that failed will fail the same way again, and the empty
+            // set it hands back cannot be told from a timeout — which is a loop
+            // running at full speed with nothing to show for it. Three in a row
+            // is a system this server cannot work on, so it says so and goes,
+            // which at least gets the children closed down properly.
+            if (++poll_failures_ >= 3) {
+                std::fprintf(stderr, "ckmux server: cannot wait on its descriptors; stopping\n");
+                running_ = false;
+                return false;
+            }
+            break;
+        case platform::Poller::Outcome::Interrupted:  // the next pass looks again
+        case platform::Poller::Outcome::TimedOut:
+        case platform::Poller::Outcome::Ready:
+            poll_failures_ = 0;
+            break;
+    }
 
     bool child_output = false;
     for (const platform::Ready& event : ready) {
@@ -219,26 +253,52 @@ bool Server::step() {
     if (clock_.now_nanos() >= next_tick_nanos_) flush_tick();
 
     // Connections that asked to go, and the streams that died under them.
+    const std::size_t before = clients_.size();
     clients_.erase(std::remove_if(clients_.begin(), clients_.end(),
                                   [](const std::unique_ptr<Client>& client) {
                                       return client->closing || !client->stream.open();
                                   }),
                    clients_.end());
+    // A closed connection is a descriptor back. Waiting out the rest of an
+    // accept pause when the thing it was waiting for has already happened only
+    // makes the next reader wait for nothing.
+    if (clients_.size() < before) accept_paused_until_nanos_ = 0;
     return running_;
 }
 
 void Server::accept_pending() {
     for (;;) {
-        std::string refusal;
-        const int fd = listener_.accept_one(refusal);
-        if (fd < 0) {
-            if (!refusal.empty()) std::fprintf(stderr, "ckmux server: %s\n", refusal.c_str());
-            return;
+        const platform::Listener::AcceptResult result = listener_.accept_one();
+        switch (result.status) {
+            case platform::Listener::AcceptStatus::Accepted: {
+                auto client = std::make_unique<Client>();
+                client->id = next_client_++;
+                client->stream = platform::Stream(result.fd);
+                clients_.push_back(std::move(client));
+                continue;
+            }
+            case platform::Listener::AcceptStatus::Idle:
+                // Nothing waiting: the ordinary answer, several times a second,
+                // and worth no word to anybody.
+                return;
+            case platform::Listener::AcceptStatus::Retry:
+                // A signal, or a peer that hung up while it was in the queue.
+                continue;
+            case platform::Listener::AcceptStatus::Refused:
+            case platform::Listener::AcceptStatus::Failed:
+                std::fprintf(stderr, "ckmux server: %s\n", result.problem.c_str());
+                return;
+            case platform::Listener::AcceptStatus::Exhausted:
+                // Out of descriptors. Asking again is wrong — nothing will have
+                // changed — and so is going back round the loop, which would
+                // find the listener readable and come straight back here. So
+                // accepting stops for a moment, and the listener stops being
+                // watched with it (M-S2).
+                std::fprintf(stderr, "ckmux server: %s; not accepting for a second\n",
+                             result.problem.c_str());
+                accept_paused_until_nanos_ = clock_.now_nanos() + 1'000'000'000;
+                return;
         }
-        auto client = std::make_unique<Client>();
-        client->id = next_client_++;
-        client->stream = platform::Stream(fd);
-        clients_.push_back(std::move(client));
     }
 }
 
@@ -398,8 +458,17 @@ void Server::handle(Client& client, const proto::Message& message) {
             send(client, error);
             return;
         }
-        const int columns = std::max(1, static_cast<int>(resize->rect.width));
-        const int rows = std::max(1, static_cast<int>(resize->rect.height));
+        // Clamped at both ends. The floor because a terminal of no size is not
+        // a terminal; the ceiling because `rect` is two `u16`s, and a client
+        // asking for 65535 by 65535 is asking this server to allocate four
+        // billion cells on its say-so. It is also what makes the attach
+        // snapshot bounded rather than merely usually small: the budget is
+        // arithmetic over grids whose size has a maximum (R1's
+        // kSnapshotPayloadBudget).
+        const int columns = std::clamp(static_cast<int>(resize->rect.width), 1,
+                                       static_cast<int>(proto::kMaxGridColumns));
+        const int rows = std::clamp(static_cast<int>(resize->rect.height), 1,
+                                    static_cast<int>(proto::kMaxGridRows));
         terminal->resize(columns, rows, columns * std::max(0, client.cell_pixels.width),
                          rows * std::max(0, client.cell_pixels.height));
         return;
@@ -426,16 +495,23 @@ void Server::handle(Client& client, const proto::Message& message) {
         // Where a shell opens, and what it is told about its machine. The
         // server is the one that knows both, because it is the process that will
         // hold the child (plans/02) — a client's own environment is its own.
-        if (const char* const home = std::getenv("HOME"); home != nullptr && *home != '\0')
-            spec.working_directory = home;
-        else
-            spec.working_directory = "/";
+        // Stated in the options rather than read here: a terminal that opened
+        // in whatever HOME the process that started this server happened to
+        // carry would open somewhere different depending on who started it.
+        spec.working_directory = options_.working_directory;
         // The size the client asked for, if it said — a `NewTerminal` carries a
         // rect for exactly this. A client with no opinion yet gets a
         // conventional screen and corrects it the moment its view is laid out,
-        // which is one frame away.
-        spec.columns = request->rect.width > 0 ? static_cast<int>(request->rect.width) : 80;
-        spec.rows = request->rect.height > 0 ? static_cast<int>(request->rect.height) : 24;
+        // which is one frame away. Held to the same ceiling a resize is, and
+        // for the same reason: a grid this server will allocate is one the
+        // protocol can carry back out again.
+        spec.columns = request->rect.width > 0
+                           ? std::min(static_cast<int>(request->rect.width),
+                                      static_cast<int>(proto::kMaxGridColumns))
+                           : 80;
+        spec.rows = request->rect.height > 0 ? std::min(static_cast<int>(request->rect.height),
+                                                        static_cast<int>(proto::kMaxGridRows))
+                                             : 24;
         spec.pixel_width = spec.columns * std::max(0, client.cell_pixels.width);
         spec.pixel_height = spec.rows * std::max(0, client.cell_pixels.height);
         Terminal& terminal = open_terminal(session->id, spec);
@@ -579,6 +655,32 @@ void Server::advance_kills() {
             ++index;
             continue;
         }
+        if (!still_running.empty() && pending.force) {
+            // The grace is up and the reader ticked the kill. The signal goes
+            // now, and the reaping is watched on the tick like everything else:
+            // `terminals_.close()` escalates too, but it escalates by WAITING —
+            // up to three seconds per terminal, inside a loop that is meanwhile
+            // serving nobody (M-S3). Ten terminals that ignore SIGTERM used to
+            // freeze this server for half a minute.
+            if (!pending.killed) {
+                for (const TerminalId id : still_running)
+                    if (Terminal* const terminal = terminals_.find(id)) terminal->request_kill();
+                pending.killed = true;
+                pending.kill_deadline_nanos = now + 2'000'000'000;
+                ++index;
+                continue;
+            }
+            if (now < pending.kill_deadline_nanos) {
+                // Killed, not yet reaped. A child wedged in a write to its own
+                // PTY cannot finish dying until the loop's next drain empties
+                // it, which is precisely what carrying on gets it.
+                ++index;
+                continue;
+            }
+            // Two seconds after a SIGKILL and still not reaped is a child in a
+            // state no signal can complete. `close()` is the last resort, and
+            // it is bounded.
+        }
         if (!still_running.empty() && !pending.force) {
             // The reader said not to kill. What is left keeps running, and so
             // does the session holding it — saying so is better than pretending
@@ -592,9 +694,11 @@ void Server::advance_kills() {
                 if (watcher->greeted) send_session_list(*watcher);
             continue;
         }
-        // Out of time with the escalation enabled, or everything is already
-        // gone: closing is what actually removes a terminal either way, and
-        // ckVision's close escalates to SIGKILL for whatever is left.
+        // Everything has gone, or everything that was left has been killed and
+        // given its two seconds to be reaped. Closing is what actually removes a
+        // terminal either way, and by now it costs nothing: ckVision reaped the
+        // children on the loop's own drains, so there is nothing for `close()`
+        // to wait for.
         for (const TerminalId id : session->terminals) {
             (void)terminals_.close(id);
             diffs_.forget(id);
@@ -620,6 +724,12 @@ void Server::begin_close(TerminalId id, bool force, int grace_seconds) {
         if (pending.term != id) continue;
         pending.force = force;
         pending.deadline_nanos = deadline;
+        // Replaced, escalation included: a reader who asks again has given this
+        // program a fresh grace, and carrying "already killed" across it would
+        // spend the new grace waiting to reap a signal the reader has just
+        // superseded.
+        pending.killed = false;
+        pending.kill_deadline_nanos = 0;
         return;
     }
     closes_.push_back(PendingClose{id, deadline, force});
@@ -641,6 +751,26 @@ void Server::advance_closes() {
             ++index;
             continue;
         }
+        if (terminal->live() && pending.force) {
+            // The grace is up with the kill ticked. The signal now, the reaping
+            // on the tick — the same two stages a session kill goes through, and
+            // for the same reason: `close()` escalates by waiting, and a loop
+            // that waits has stopped being a server (M-S3).
+            if (!pending.killed) {
+                terminal->request_kill();
+                closes_[index].killed = true;
+                closes_[index].kill_deadline_nanos = now + 2'000'000'000;
+                ++index;
+                continue;
+            }
+            if (now < pending.kill_deadline_nanos) {
+                ++index;
+                continue;
+            }
+            // Two seconds after a SIGKILL and still not reaped is a child no
+            // signal can finish. `close()` is the last resort, and it is
+            // bounded.
+        }
         if (terminal->live() && !pending.force) {
             // The reader said not to kill. The program keeps running, and its
             // terminal with it — saying so beats pretending it closed.
@@ -651,11 +781,49 @@ void Server::advance_closes() {
             closes_.erase(closes_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
         }
-        // The child exited on the asking, or the time is up with the
-        // escalation enabled. Closing is what removes a terminal either way —
-        // ckVision's close escalates to SIGKILL for whatever is left.
+        // The child exited — on the asking, or on the kill that followed it.
+        // Closing is what removes a terminal either way, and by now it costs
+        // nothing: the reaping already happened on one of the loop's drains.
         closes_.erase(closes_.begin() + static_cast<std::ptrdiff_t>(index));
         remove_terminal(pending.term, /*exited=*/true);
+    }
+}
+
+void Server::notice_exits() {
+    for (const TerminalId id : terminals_.ids()) {
+        Terminal* const terminal = terminals_.find(id);
+        if (terminal == nullptr || terminal->exit_announced()) continue;
+        // The flag ckVision grew for exactly this: `mark_exited` and
+        // `mark_failed` used to change a terminal's life without setting any
+        // damage at all, so a damage-gated transport — which this is — missed
+        // every child that ended on its own while a reader was watching it. The
+        // window stayed alive-looking with nothing behind it but a shell that
+        // had gone (m-exit-msg). Read before `diffs_.flush`, which is what
+        // clears it.
+        if (!terminal->session().damage().lifecycle) continue;
+        terminal->observe_exit();
+        if (terminal->live()) continue;
+        terminal->mark_exit_announced();
+        const std::optional<int> status = terminal->exit_status();
+        const bool failed = !status.has_value() || *status != 0;
+        const bool hold = options_.settings.on_exit == ExitPolicy::Hold ||
+                          (options_.settings.on_exit == ExitPolicy::HoldOnError && failed);
+        if (!hold) {
+            remove_terminal(id, /*exited=*/true);
+            continue;
+        }
+        // Held: the window stays, with a banner, because a program that failed
+        // has said something on that screen and closing it takes the evidence
+        // away (plans/03 on-exit). So the terminal is NOT removed — its last
+        // screen is what the banner is drawn over, and it is this server that
+        // still holds it.
+        proto::TermClosed closed;
+        closed.term = id;
+        closed.exited = 1;
+        closed.exit_status = status.value_or(0);
+        closed.hold = 1;
+        if (Session* const home = session_holding(id))
+            if (Client* const watcher = client_attached_to(home->id)) send(*watcher, closed);
     }
 }
 
@@ -854,13 +1022,25 @@ void Server::detach(Client& client, proto::DetachReason reason, std::string text
 }
 
 void Server::send_snapshot(Client& client) {
+    // Cleared HERE, before anything is sent, and not at the end: a `send` below
+    // that goes over the high-water mark sets this flag, and clearing it
+    // afterwards threw away the one thing saying that the client which had just
+    // been handed a snapshot did not get all of it. That is half of the
+    // re-snapshot loop (M-S5); the shared `ready_for_screen` gate is the other.
+    client.dirty_snapshot = false;
     proto::Snapshot snapshot;
     snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, client.desktop.width));
     snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, client.desktop.height));
     const Session* const session = session_for(client.session);
     snapshot.focused_term = session != nullptr ? session->focused : 0;
+    const std::vector<TerminalId> held =
+        session != nullptr ? session->terminals : std::vector<TerminalId>{};
+
+    // Pass one: every terminal WITHOUT its history. A grid is what a terminal
+    // IS and has to go whole; a history is what it remembers, and what is left
+    // of the budget once the grids are measured is what the histories share.
     std::uint16_t index = 0;
-    for (const TerminalId id : session != nullptr ? session->terminals : std::vector<TerminalId>{}) {
+    for (const TerminalId id : held) {
         Terminal* terminal = terminals_.find(id);
         if (terminal == nullptr) continue;
         // Taking a snapshot restarts that terminal's sequence, so the first
@@ -870,6 +1050,40 @@ void Server::send_snapshot(Client& client) {
         state.index = index++;
         snapshot.terminals.push_back(std::move(state));
     }
+    // The eight bytes are `Attached::session`, which the snapshot's own measure
+    // does not include: what is being held to the budget is the whole payload,
+    // because that is what the decoder at the far end measures.
+    const std::size_t spent = 8 + proto::encoded_size(snapshot);
+    if (spent > proto::kSnapshotPayloadBudget) {
+        // Unreachable with the geometry ceiling in place — a thousand by a
+        // thousand is a megabyte of cells, and a session would need several to
+        // get here — and said out loud rather than quietly truncated: a reader
+        // whose session cannot be sent needs to be told that, not handed a
+        // desktop with terminals missing from it.
+        std::fprintf(stderr,
+                     "ckmux server: session %llu is too large to send (%zu bytes of screens "
+                     "alone)\n",
+                     static_cast<unsigned long long>(client.session), spent);
+        detach(client, proto::DetachReason::SessionKilled,
+               "this session is too large for one snapshot; the screens alone are past the "
+               "protocol's limit");
+        return;
+    }
+
+    // Pass two: the histories. Each terminal takes what it can from an equal
+    // share of what is left, and what it does not use passes to the next — so
+    // one terminal with a long history cannot starve the others, and terminals
+    // with none do not waste their share.
+    std::size_t remaining = proto::kSnapshotPayloadBudget - spent;
+    std::size_t left = snapshot.terminals.size();
+    for (proto::TerminalState& state : snapshot.terminals) {
+        Terminal* terminal = terminals_.find(state.term);
+        const std::size_t share = remaining / std::max<std::size_t>(1, left);
+        if (terminal != nullptr)
+            remaining -= diffs_.fill_history(state.term, state, terminal->session(), share);
+        --left;
+    }
+
     proto::Attached attached;
     attached.session = client.session;
     attached.snapshot = std::move(snapshot);
@@ -877,19 +1091,68 @@ void Server::send_snapshot(Client& client) {
     // The pictures, after the grid (WP-16): the believed set, exactly what the
     // clients already watching hold, so every mirror agrees until the next
     // tick moves them all together.
-    for (const TerminalId id : session != nullptr ? session->terminals : std::vector<TerminalId>{})
+    for (const TerminalId id : held)
         for (const proto::Message& op : diffs_.attach_images(id)) send(client, op);
-    client.dirty_snapshot = false;
 }
 
 void Server::send(Client& client, const proto::Message& message) {
     if (!client.stream.open()) return;
-    if (!client.stream.send(proto::encode(message))) {
+    bool oversize = false;
+    const std::string frame = proto::encode(message, &oversize);
+    if (oversize) {
+        // A frame past the cap is not a large frame: it is one the peer's
+        // decoder refuses, so putting it on the wire loses both the message and
+        // the connection. Learning it here means the connection survives.
+        std::fprintf(stderr,
+                     "ckmux server: refusing to send %s to client %llu: it is past the protocol's "
+                     "cap for its kind\n",
+                     name_of(proto::type_of(message)),
+                     static_cast<unsigned long long>(client.id));
+        if (proto::type_of(message) == proto::MessageType::Attached) {
+            // A snapshot that will not fit cannot be answered with a snapshot,
+            // so this is the one message whose refusal ends the connection
+            // rather than queueing another attempt behind it.
+            detach(client, proto::DetachReason::SessionKilled, "this session is too large to send");
+        } else {
+            // Everything else is a client that has missed something, which is
+            // the state a fresh snapshot exists to repair.
+            client.dirty_snapshot = true;
+        }
+        return;
+    }
+    if (client.stream.queued() + frame.size() > platform::Stream::kHardLimitBytes) {
+        // Not slow: not reading. Thirty-two megabytes is eight snapshots and
+        // eight high-water marks past anything a working connection queues, so
+        // what is on the other end of this one is a process that has stopped
+        // taking bytes — and the memory it is costing is this server's, while
+        // the terminals it was watching are not its to hold up. A reconnect is
+        // a path the protocol already defines; an unbounded queue is not.
+        //
+        // Nothing is sent to say so, because a connection with thirty-two
+        // megabytes waiting is a connection nothing further will be read from.
+        // The client meets EOF, which it already treats as a lost connection,
+        // and the fact lives in the server's log where it can be acted on.
+        drop(client, "fell too far behind to be worth queueing for");
+        return;
+    }
+    if (!client.stream.send(frame)) {
         // Over the high-water mark. The bytes are queued — dropping half a frame
         // would desynchronise the stream — but nothing more should be queued
         // until it drains, and the client will need a fresh snapshot when it
         // does (plans/05).
-        client.dirty_snapshot = true;
+        //
+        // Except when the frame that went over the mark IS the fresh snapshot.
+        // A repair does not mark what it repaired as broken: the snapshot is
+        // queued in full and will arrive, so there is nothing to re-send, and
+        // asking for another one would queue a second copy of the same four
+        // megabytes behind the first. The budget a snapshot is held to is the
+        // high-water mark itself (proto::kSnapshotPayloadBudget), so a session
+        // near it trips this every single time — which is how the M-S5 loop
+        // came back at four-megabyte granularity instead of per tick. What a
+        // client that really has missed something needs is said by the delta
+        // gate, which marks it when it actually skips a delta.
+        if (proto::type_of(message) != proto::MessageType::Attached)
+            client.dirty_snapshot = true;
     }
 }
 
@@ -926,29 +1189,48 @@ void Server::flush_tick() {
     if (!kills_.empty()) advance_kills();
     // And a terminal being closed, for the same reason.
     if (!closes_.empty()) advance_closes();
+    // Then the children nobody asked to end. After the two above, so that a
+    // terminal this server is already closing is removed by `advance_closes`
+    // and never announced twice; before `diffs_.flush`, which clears the
+    // lifecycle damage this reads.
+    notice_exits();
 
     // A client that fell behind is healed before anything else is sent to it: a
-    // fresh snapshot, once its queue has drained. The deltas it missed are gone
-    // and cannot be reconstructed — the diff engine's belief moved on without
-    // it — so repairing is not an option and pretending otherwise would put a
-    // screen in front of a reader that no program ever drew (plans/05).
+    // fresh snapshot, once there is room for a screen again. The deltas it
+    // missed are gone and cannot be reconstructed — the diff engine's belief
+    // moved on without it — so repairing is not an option and pretending
+    // otherwise would put a screen in front of a reader that no program ever
+    // drew (plans/05).
     for (const std::unique_ptr<Client>& client : clients_) {
         if (!client->attached || !client->dirty_snapshot) continue;
         (void)client->stream.flush();
-        if (client->stream.queued() > 0) continue;  // still draining
+        // The same question the delta gate asks, in the same words. Waiting for
+        // a queue that is completely empty while deltas stop at a quarter of a
+        // megabyte is how a client whose socket drains slower than a snapshot
+        // came to be re-snapshotted on every tick, forever (M-S5).
+        if (!client->stream.ready_for_screen()) continue;
         send_snapshot(*client);
     }
 
     const DiffEngine::Tick tick = diffs_.flush(terminals_);
 
     // A terminal that scrolled more in one tick than a delta may carry says so
-    // rather than sending it. What the client needs then is the same thing a
-    // client that fell behind needs, and it arrives the same way.
+    // rather than sending it. What the client watching THAT session needs is
+    // the same thing a client that fell behind needs, and it arrives the same
+    // way — but only that client. A flood in one session is not a reason to
+    // re-snapshot every other reader on the machine, and the latch is sticky:
+    // it clears only when a snapshot is taken, so a broadcast turned one noisy
+    // terminal into a full snapshot per tick for everybody, forever, including
+    // clients watching sessions that terminal has nothing to do with
+    // (13-architecture-review C2). With the filter, a terminal in a session
+    // nobody is attached to dirties nobody, and its latch clears naturally on
+    // the snapshot the first watcher to attach is given.
     for (const TerminalId id : terminals_.ids()) {
         const TerminalDiffer* differ = diffs_.differ_for(id);
         if (differ == nullptr || !differ->needs_snapshot()) continue;
-        for (const std::unique_ptr<Client>& client : clients_)
-            if (client->attached) client->dirty_snapshot = true;
+        const Session* const home = session_holding(id);
+        if (home == nullptr) continue;
+        if (Client* const watcher = client_attached_to(home->id)) watcher->dirty_snapshot = true;
     }
 
     if (tick.deltas.empty() && tick.images.empty()) return;
@@ -959,14 +1241,16 @@ void Server::flush_tick() {
         const Session* const watched = session_for(client->session);
         if (watched == nullptr) continue;
         if (client->dirty_snapshot) continue;  // waiting to be healed
-        // Past the backlog mark a client stops being sent deltas at all.
+        // With no room for a screen, a client stops being sent deltas at all.
         // Sending anyway would grow a queue that is already too big — and every
         // byte queued behind the mark is a byte the reader will never see,
         // because what finally arrives is a snapshot that supersedes it. It is
         // also what keeps every OTHER answer on the connection prompt: a `Pong`
         // queued behind four megabytes of stale screen arrives seconds late,
-        // which is what the flood gate measured before this mark existed.
-        if (client->stream.over_delta_backlog()) {
+        // which is what the flood gate measured before this mark existed. The
+        // same predicate the heal gate above uses, so that no queue can satisfy
+        // one and not the other.
+        if (!client->stream.ready_for_screen()) {
             client->dirty_snapshot = true;
             continue;
         }
@@ -1040,6 +1324,10 @@ int run_server_process(const std::filesystem::path& socket, bool foreground) {
     // The server owns the emulator, so the server owns the settings that decide
     // what a terminal tells its child it can do (plans/08).
     options.settings = ckm::load_settings(ckm::platform::config_file_path()).settings;
+    // Read once, here, where this process is being composed — not per terminal
+    // from inside the server, which is meant to be a thing a test can drive
+    // with every environmental fact already decided for it.
+    options.working_directory = ckm::platform::home_directory().string();
 
     ckv::term::PosixClock clock;
     Server server(std::move(options), clock);

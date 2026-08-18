@@ -244,6 +244,12 @@ bool Terminals::close(TerminalId id) {
 }
 
 void Terminals::close_all() {
+    // Asked all at once, then closed one at a time. The waiting inside `close()`
+    // is per terminal, so a server shutting down with ten terminals used to pay
+    // ten graces one after another; asking first means the graces run down
+    // together and the last child is not still being asked when the first one's
+    // has already expired.
+    for (const std::unique_ptr<Terminal>& terminal : terminals_) terminal->request_termination();
     // Closed before the vector is emptied, and in open order, so that every
     // child has had SIGHUP→SIGTERM→SIGKILL applied to its process group before
     // this function returns. A destructor that merely released the sessions

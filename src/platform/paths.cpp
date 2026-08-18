@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include <string>
 
+#include <pwd.h>
+#include <unistd.h>
+
 namespace ckm::platform {
 
 const char* environment_value(const char* name) {
@@ -27,6 +30,20 @@ std::filesystem::path config_file_path() {
     // would write into whatever directory ckmux happened to start in, so
     // return nothing and let the caller treat it as "no configuration".
     return {};
+}
+
+std::filesystem::path home_directory() {
+    // The database answer, which is about the user rather than about how this
+    // process was started. `getpwuid` may fail — a network directory that is
+    // unreachable, a uid with no entry — and that is what the fallbacks are.
+    if (const ::passwd* const entry = ::getpwuid(::getuid());
+        entry != nullptr && entry->pw_dir != nullptr && entry->pw_dir[0] == '/')
+        return std::filesystem::path(entry->pw_dir);
+    if (const char* const home = environment_directory("HOME"))
+        return std::filesystem::path(home);
+    // Somewhere that certainly exists, so that a terminal opens rather than
+    // failing to launch over a directory nobody can be sure of.
+    return std::filesystem::path("/");
 }
 
 }  // namespace ckm::platform

@@ -49,4 +49,19 @@ const char* environment_directory(const char* name);
 // writing has to know where to create one.
 std::filesystem::path config_file_path();
 
+// The user's home directory: what the password database says, else `$HOME`
+// when it is an absolute path, else `/`.
+//
+// The password database comes first on purpose. `$HOME` describes the
+// environment a process was started in, and a server is a process some client
+// happened to start — from a cron job, from another user's `su`, from a shell
+// whose HOME was set to a build directory. The passwd entry describes the
+// USER, which is what "where does a terminal open" is actually asking about,
+// and it is the same answer whichever client started the server.
+//
+// Never empty, and always absolute: a relative working directory is resolved
+// against wherever the server happened to be started, which is a different
+// directory every time.
+std::filesystem::path home_directory();
+
 }  // namespace ckm::platform

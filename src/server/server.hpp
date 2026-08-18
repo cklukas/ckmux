@@ -54,6 +54,13 @@ public:
     struct Options {
         std::filesystem::path socket;
         Settings settings;
+        // Where a terminal opens when nothing else says. Stated once, by
+        // whoever starts the server, rather than read out of the ambient
+        // environment every time a window is opened: a server is a process some
+        // client happened to start, and the environment it inherited is not a
+        // decision anybody made (plans/02 — a client's own environment is its
+        // own). `run_server_process` fills it from the user's home directory.
+        std::string working_directory = "/";
     };
 
     enum class StartStatus {
@@ -187,6 +194,13 @@ private:
         SessionId session = 0;
         std::int64_t deadline_nanos = 0;
         bool force = true;
+        // The second deadline, and whether the signal that started it has gone
+        // out. A child wedged writing to a full PTY cannot act on any signal
+        // until somebody empties it, so the escalation is a signal and then a
+        // wait on the tick — not a signal and a hope, and above all not
+        // `close()`, which does its own waiting inside this loop.
+        std::int64_t kill_deadline_nanos = 0;
+        bool killed = false;
     };
     void begin_kill(Session& session, bool force, int grace_seconds);
     void advance_kills();
@@ -198,9 +212,17 @@ private:
         TerminalId term = 0;
         std::int64_t deadline_nanos = 0;
         bool force = true;
+        // The same second deadline a pending kill keeps, for the same reason.
+        std::int64_t kill_deadline_nanos = 0;
+        bool killed = false;
     };
     void begin_close(TerminalId term, bool force, int grace_seconds);
     void advance_closes();
+    // Tells the watchers about children that ended on their own — the ones
+    // nobody asked to close. On the tick, once, per terminal: what happens next
+    // is the reader's `[general] on-exit`, which either takes the window away
+    // or keeps it with a banner over the last screen the program drew.
+    void notice_exits();
     // Actually removes one terminal: the PTY, the diffs, the session row, and
     // the watcher's window. `exited` distinguishes a child that ended from a
     // terminal that merely left for another session — the client keeps a
@@ -236,6 +258,19 @@ private:
     std::vector<PendingKill> kills_;
     std::vector<PendingClose> closes_;
     SessionId next_session_ = 1;
+    // When accepting may be tried again. A descriptor table that has run out
+    // does not refill by being asked: `accept()` fails, the listener stays
+    // readable, `poll()` returns instantly, and the loop spins at 100 % CPU for
+    // the life of the process. So the listener is not merely un-asked while
+    // this is in the future, it is un-WATCHED — a listener that is still in the
+    // poll set brings the loop straight back here, and the spin survives the
+    // fix.
+    std::int64_t accept_paused_until_nanos_ = 0;
+    // Consecutive `poll()` failures. A wait that failed will fail the same way
+    // again, and the empty set it returns is indistinguishable from a timeout —
+    // which is the same spin by another route, with nothing in the log to say
+    // so.
+    int poll_failures_ = 0;
     // Whether this server has ever had a session. A server that has just
     // started has none and must not read that as "the work is done" — it is
     // waiting for the client that started it to say what it wants.

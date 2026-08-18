@@ -136,6 +136,12 @@ public:
     // read boundary, and the status has to be picked up when that happens
     // rather than polled for later.
     void observe_exit();
+    // Whether the clients have already been told this child ended. The exit is
+    // looked for on every tick and `live()` stays false forever afterwards, so
+    // without this a held window would be announced dead once a frame, for as
+    // long as the reader left it open.
+    bool exit_announced() const noexcept { return exit_announced_; }
+    void mark_exit_announced() noexcept { exit_announced_ = true; }
 
     std::span<const ckv::term::WaitHandle> wait_handles() const noexcept {
         return session_->wait_handles();
@@ -148,6 +154,11 @@ public:
     // for itself how long to wait; the waiting is a reader's setting, not a
     // library's constant.
     void request_termination() noexcept { session_->request_termination(); }
+    // Ends the child now and returns at once — SIGKILL on the process group,
+    // again sent by ckVision. What a server does at the end of a grace it timed
+    // itself, so that the escalation costs a signal rather than the seconds
+    // `close()` spends reaping inside a loop with other terminals to serve.
+    void request_kill() noexcept { session_->request_kill(); }
     // SIGHUP → SIGTERM → grace → SIGKILL, on the process group, in ckVision.
     // Idempotent: a client that asks twice is not an error.
     void close() noexcept;
@@ -162,6 +173,7 @@ private:
     int pixel_height_ = 0;
     std::optional<int> exit_status_;
     bool closed_ = false;
+    bool exit_announced_ = false;
 };
 
 // Every terminal this server owns.

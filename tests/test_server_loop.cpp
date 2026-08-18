@@ -4,12 +4,17 @@
 // process (test_server_lifecycle.cpp); these are the ones about WHEN the loop
 // does things, and a tick that only happens when real time passes cannot be
 // tested by waiting for real time — it can only be tested by owning the clock.
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <system_error>
 #include <variant>
+#include <vector>
 
+#include <fcntl.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include "client/server_connection.hpp"
@@ -357,6 +362,89 @@ CK_TEST(a_second_starter_loses_the_lock_rather_than_replacing_the_first_server) 
     forget(socket);
 }
 
+CK_TEST(an_exhausted_descriptor_table_does_not_spin_the_loop) {
+    // What a server does when it cannot accept: nothing, for a moment, and
+    // without burning a core to do it. `accept()` fails with EMFILE while the
+    // connection stays pending, and a pending connection is what keeps a
+    // listener readable — so a loop that reads "cannot accept" as "ask again"
+    // polls a descriptor that is ready instantly, for the life of the process,
+    // at 100 % of one core (M-S2).
+    //
+    // Checked by the clock rather than by the poll set, because the poll set is
+    // not the property: a listener that is still watched but no longer asked
+    // from spins exactly as badly as one that is asked. What has to be true is
+    // that the passes SLEEP.
+    const std::filesystem::path socket = private_socket("nofd");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    // The connection the server will fail to take. It does not survive that
+    // failure on every system — a BSD `accept` takes the connection off the
+    // queue before it allocates a descriptor for it, so the one that answers
+    // EMFILE has already destroyed what it could not hand over — which is why
+    // the resumption below is measured with a connection made afterwards
+    // rather than with this one.
+    WireClient rejected;
+    CK_CHECK(rejected.connect(socket));
+
+    // A descriptor table made to run out: the soft limit comes down to the next
+    // free descriptor number, so everything already open stays open and the
+    // next one asked for is refused. That is EMFILE as a server meets it,
+    // without opening ten thousand files to get there.
+    const int next_free = ::open("/dev/null", O_RDONLY);
+    CK_CHECK(next_free >= 0);
+    if (next_free < 0) return;
+    (void)::close(next_free);
+    struct ::rlimit previous{};
+    CK_CHECK(::getrlimit(RLIMIT_NOFILE, &previous) == 0);
+    struct ::rlimit tight = previous;
+    tight.rlim_cur = static_cast<::rlim_t>(next_free);
+    CK_CHECK(::setrlimit(RLIMIT_NOFILE, &tight) == 0);
+
+    CK_CHECK(server.step());
+    CK_CHECK(server.client_count() == 0U);
+
+    // The descriptors come back, and a fresh connection arrives on the socket —
+    // so the listener is readable again, which is exactly the state the spin
+    // lived in. The pause still holds through it: it is a decision about time,
+    // not a guess about the table.
+    CK_CHECK(::setrlimit(RLIMIT_NOFILE, &previous) == 0);
+    WireClient arriving;
+    CK_CHECK(arriving.connect(socket));
+    const auto started = std::chrono::steady_clock::now();
+    for (int pass = 0; pass < 5; ++pass) {
+        CK_CHECK(server.step());
+        CK_CHECK(server.client_count() == 0U);
+    }
+    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - started)
+                           .count();
+    // Five passes that each waited for their own tick — a sixth of a second at
+    // 30 fps. A spinning loop does the same five in microseconds, and the bound
+    // is set well below what these actually cost so that a slow machine cannot
+    // fail it and a spin cannot pass it.
+    CK_CHECK(spent > 50);
+
+    // A second later the listener is watched again and the connection that has
+    // been waiting all along is taken — and then served, which is the whole
+    // claim: the pause ends by itself, without anybody having to reconnect and
+    // without the server having spent the second asking.
+    clock.advance(1'100'000'000);
+    CK_CHECK(server.step());
+    // At least one: on a system whose failed accept left the first connection
+    // on the queue, this pass takes both.
+    CK_CHECK(server.client_count() >= 1U);
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    arriving.say(hello);
+    ckm::proto::Message answer;
+    CK_CHECK(pump(server, arriving, answer));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(answer));
+    forget(socket);
+}
+
 namespace {
 
 // Steps the server — advancing the manual clock one tick per pass so the
@@ -605,6 +693,251 @@ CK_TEST(a_move_reparents_the_terminal_and_the_child_never_notices) {
     forget(socket);
 }
 
+CK_TEST(a_terminal_cannot_be_asked_to_be_larger_than_a_grid_may_be) {
+    // A rect on the wire is two `u16`s, and every one of the 65535 values in
+    // each was granted: a client could ask this server to allocate four billion
+    // cells, and the server would try. The ceiling is the protocol's own, so
+    // both ends refuse the same number — and it is also what makes the attach
+    // snapshot bounded by arithmetic rather than by hope, because the budget is
+    // computed over grids that have a maximum size (R1).
+    //
+    // Asked one dimension at a time on purpose: proving that a ceiling holds
+    // does not require a test that allocates what a missing ceiling would.
+    const std::filesystem::path socket = private_socket("toobig");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::proto::NewTerminal wide;
+    wide.command = "sleep 30";
+    wide.rect.width = 65535;
+    wide.rect.height = 2;
+    client.say(wide);
+
+    ckm::proto::TermOpened opened;
+    CK_CHECK(await_message(server, clock, client, opened));
+    CK_CHECK(opened.columns == ckm::proto::kMaxGridColumns);
+    CK_CHECK(opened.rows == 2);
+
+    // And a resize is held to it too — the same client, the same terminal, and
+    // the other dimension.
+    ckm::proto::MoveResize taller;
+    taller.term = opened.term;
+    taller.rect.width = 3;
+    taller.rect.height = 65535;
+    client.say(taller);
+    for (int pass = 0; pass < 8; ++pass) {
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+    }
+    ckm::server::Terminal* const terminal = server.terminals().find(opened.term);
+    CK_CHECK(terminal != nullptr);
+    if (terminal != nullptr) {
+        CK_CHECK(terminal->columns() == 3);
+        CK_CHECK(terminal->rows() == static_cast<int>(ckm::proto::kMaxGridRows));
+    }
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_child_that_exits_on_its_own_closes_its_window) {
+    // A window whose program ends by itself, with nobody having asked. The exit
+    // is the one change a terminal makes after it stops making any others, so a
+    // transport gated on damage — which this is — has to look at exactly that
+    // flag; before it did, a shell that ran out of input left a window that
+    // went on looking alive over nothing at all (m-exit-msg).
+    const std::filesystem::path socket = private_socket("selfexit");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("exit 3"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    ckm::proto::TermClosed closed;
+    CK_CHECK(await_message(server, clock, client, closed));
+    CK_CHECK(closed.term == id);
+    CK_CHECK(closed.exited == 1);
+    // What it exited with, not a stand-in: "exited 3" and "exited 0" are
+    // different windows to a reader.
+    CK_CHECK(closed.exit_status == 3);
+    // Held, because the reader's default keeps the window of a program that
+    // failed — what it printed there is the only evidence there is (plans/03
+    // on-exit). So the terminal is still the server's, and its last screen with
+    // it.
+    CK_CHECK(closed.hold == 1);
+    CK_CHECK(server.terminals().find(id) != nullptr);
+
+    // And exactly once. `live()` is false forever afterwards, so a server that
+    // announced what it saw rather than what it had not yet said would send one
+    // of these every frame, for as long as the reader left the window open.
+    for (int tick = 0; tick < 20; ++tick) {
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message message;
+        while (client.take(message))
+            CK_CHECK(!std::holds_alternative<ckm::proto::TermClosed>(message));
+        ::usleep(2'000);
+    }
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_client_that_never_reads_is_let_go_rather_than_queued_for) {
+    // Three marks, three questions. The backlog mark asks whether more SCREEN
+    // is worth queueing, the high-water mark asks whether the stream is in
+    // trouble, and this one asks whether the peer is reading AT ALL — the only
+    // one of the three whose answer is to end the connection.
+    //
+    // Driven with answers rather than with screen, because screen is already
+    // bounded: past a quarter of a megabyte a client is sent no deltas at all.
+    // What nothing bounded was a client that keeps ASKING and never collects,
+    // and thirty-two megabytes of a server's memory held for one such peer is
+    // what this ends.
+    const std::filesystem::path socket = private_socket("laggard");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient deaf;
+    CK_CHECK(deaf.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    deaf.say(hello);
+
+    // Enough sessions that one answer is worth having. A hundred is a lot for
+    // one machine and nothing for a protocol: the point is that the size of an
+    // answer is the reader's business and the queue holding it is the server's.
+    for (int index = 0; index < 100; ++index) {
+        ckm::proto::NewSession make;
+        make.name = "a-named-session-" + std::to_string(index);
+        deaf.say(make);
+    }
+    // Four and a half kilobytes an answer, eight thousand times: comfortably
+    // past the limit, from a client that has not read a byte of any of it.
+    for (int index = 0; index < 8'000; ++index) deaf.say(ckm::proto::ListSessions{});
+
+    std::size_t highest_queued = 0;
+    for (int pass = 0; pass < 200 && server.client_count() > 0; ++pass) {
+        (void)deaf.stream.flush();
+        CK_CHECK(server.step());
+        highest_queued = std::max(highest_queued, server.queued_bytes());
+        clock.advance(34'000'000);
+    }
+    // Let go, rather than queued for. No message went with it: a connection
+    // with thirty-two megabytes waiting is one nothing further will be read
+    // from, so the client meets EOF — a path it already treats as a lost
+    // connection — and the reason lives in the server's log.
+    CK_CHECK(server.client_count() == 0U);
+    CK_CHECK(highest_queued <= ckm::platform::Stream::kHardLimitBytes);
+
+    // And the server is unharmed: one peer that stopped reading is not a reason
+    // to stop serving the others.
+    WireClient ordinary;
+    CK_CHECK(ordinary.connect(socket));
+    ckm::proto::Hello greeting;
+    greeting.build = "a test";
+    ordinary.say(greeting);
+    ckm::proto::Message answer;
+    CK_CHECK(pump(server, ordinary, answer));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(answer));
+    forget(socket);
+}
+
+CK_TEST(a_program_that_ignores_sigterm_does_not_hold_the_loop) {
+    // The escalation at the end of a grace has to cost a SIGNAL, not a wait.
+    //
+    // `Terminals::close()` escalates too — ckVision reaps for a second, sends
+    // SIGKILL, and reaps for two more — and every one of those seconds is spent
+    // inside this loop, with every other terminal on the machine frozen behind
+    // it. Three programs that ignore SIGTERM used to cost one pass of three
+    // seconds; a session of ten cost half a minute (M-S3). So the server asks,
+    // watches, kills, watches, and only then closes — and by the time it closes
+    // there is nothing left to wait for.
+    const std::filesystem::path socket = private_socket("nokillwait");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.kill_empty_session = false;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+    // A second session, so that ending the first one does not end the server
+    // with it — what is being timed here is the loop, and a loop that has
+    // stopped cannot be slow.
+    ckm::proto::NewSession keep;
+    keep.name = "keep";
+    client.say(keep);
+    ckm::proto::SessionList listed;
+    CK_CHECK(await_message(server, clock, client, listed));
+
+    // Three programs that decline every polite signal, each waited for until it
+    // has drawn its marker — a trap that is not installed yet is a program that
+    // would have gone on the asking.
+    std::vector<ckm::server::TerminalId> ids;
+    for (int index = 0; index < 3; ++index) {
+        ckm::server::Terminal& terminal = server.open_terminal(
+            0, spec_running("trap '' HUP TERM; printf T-READY; while :; do sleep 1; done"));
+        ids.push_back(terminal.id());
+        CK_CHECK(await_marker(server, clock, terminal, "T-READY"));
+    }
+
+    ckm::proto::KillSession kill;
+    kill.force = 1;
+    kill.grace_seconds = 0;  // no grace at all: the escalation is due immediately
+    client.say(kill);
+
+    // Every pass from here is timed, and the terminals have to be gone by the
+    // end of it. Both halves matter: a loop that never blocks but never ends
+    // the children either would pass one of these and fail the promise.
+    long slowest_ms = 0;
+    bool gone = false;
+    for (int pass = 0; pass < 300 && !gone; ++pass) {
+        clock.advance(34'000'000);
+        const auto pass_started = std::chrono::steady_clock::now();
+        CK_CHECK(server.step());
+        const long spent = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now() - pass_started)
+                                                 .count());
+        slowest_ms = std::max(slowest_ms, spent);
+        gone = true;
+        for (const ckm::server::TerminalId id : ids)
+            if (server.terminals().find(id) != nullptr) gone = false;
+        ::usleep(5'000);
+    }
+    CK_CHECK(gone);
+    // One pass of the loop, however much killing it had to do. The bound is
+    // generous — the passes actually cost under a millisecond — because what is
+    // being pinned is that nothing WAITED, not how fast this machine is.
+    CK_CHECK(slowest_ms < 500);
+
+    // And the connection was answerable throughout, which is what "does not
+    // hold the loop" means to a reader: their other session is still theirs.
+    client.say(ckm::proto::Ping{4242});
+    ckm::proto::Pong pong;
+    CK_CHECK(await_message(server, clock, client, pong));
+    CK_CHECK(pong.nonce == 4242U);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
 CK_TEST(a_move_to_a_new_session_creates_one_around_the_terminal) {
     // The close dialog's "a new session" answer, at the wire: the flag —
     // not a magic id — creates the destination and the terminal arrives in
@@ -636,6 +969,314 @@ CK_TEST(a_move_to_a_new_session_creates_one_around_the_terminal) {
     ckm::server::Terminal* const moved = server.terminals().find(id);
     CK_CHECK(moved != nullptr);
     CK_CHECK(moved != nullptr && moved->live());
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_flood_in_one_session_does_not_re_snapshot_another) {
+    // C2. The latch a flooded terminal sets is sticky — it clears only when a
+    // snapshot is taken — and the scan that reads it used to dirty every
+    // attached client on the server, with no session filter at all. One noisy
+    // shell in one session therefore turned delta delivery into a full snapshot
+    // per tick for every reader on the machine, including the ones whose
+    // sessions that terminal has nothing to do with, and it did not stop.
+    const std::filesystem::path socket = private_socket("floodfilter");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    // The reader watching the flood, who has stopped reading. That is what
+    // keeps the latch on: a client that cannot be healed is a snapshot that is
+    // never taken, and a snapshot that is never taken is a latch that stays set
+    // for as long as the server runs.
+    WireClient watcher;
+    CK_CHECK(watcher.connect(socket));
+    CK_CHECK(greet_and_attach(server, watcher));
+
+    // And a reader in another session entirely, who reads everything promptly
+    // and is owed nothing but news of terminals they actually have.
+    WireClient other;
+    CK_CHECK(other.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    other.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, other, greeting));
+    ckm::proto::NewSession second;
+    second.name = "second";
+    other.say(second);
+    ckm::proto::SessionList listed;
+    CK_CHECK(await_message(server, clock, other, listed));
+    CK_CHECK(listed.sessions.size() == 2U);
+    ckm::proto::Attach attach;
+    attach.session = listed.sessions.back().id;
+    attach.columns = 40;
+    attach.rows = 8;
+    other.say(attach);
+    ckm::proto::Attached attached;
+    CK_CHECK(await_message(server, clock, other, attached));
+
+    // The noisy terminal, in the FIRST session — the one the silent watcher
+    // holds and the other reader has never seen.
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    std::string burst;
+    for (int line = 0; line < 24; ++line)
+        burst += "a line of output that fills the screen " + std::to_string(line) + "\r\n";
+
+    // Enough queued for the silent watcher that it is past the mark and cannot
+    // be healed while it stays silent.
+    int ticks = 0;
+    for (; ticks < 4000 && server.queued_bytes() <= ckm::platform::Stream::kDeltaBacklogBytes;
+         ++ticks) {
+        terminal.session().feed_output(burst);
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message arrived;
+        while (other.take(arrived)) {
+        }
+    }
+    CK_CHECK(server.queued_bytes() > ckm::platform::Stream::kDeltaBacklogBytes);
+
+    // The flood: more scrolled away in one tick than a delta may carry, which
+    // is what makes that terminal say it needs a snapshot rather than sending
+    // one — and the latch stays set until somebody takes it.
+    std::string flood;
+    for (int line = 0; line < 400; ++line)
+        flood += "scrolled away " + std::to_string(line) + "\r\n";
+    terminal.session().feed_output(flood);
+    clock.advance(34'000'000);
+    CK_CHECK(server.step());
+
+    int snapshots_for_the_other = 0;
+    for (int tick = 0; tick < 40; ++tick) {
+        // The program carries on saying a little — which is what keeps the
+        // latch being noticed: a differ with no damage to look at never gets to
+        // see that its terminal has calmed down, so a flood followed by total
+        // silence sets nothing at all. And because the watcher of that session
+        // is past its mark and cannot be healed, the latch is never taken, and
+        // it is set again on every tick. That is the "forever" of C2.
+        terminal.session().feed_output("still going\r\n");
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message arrived;
+        while (other.take(arrived))
+            if (std::holds_alternative<ckm::proto::Attached>(arrived)) ++snapshots_for_the_other;
+    }
+    // Not one. Not one per tick, and not one at all: nothing about that
+    // terminal is this reader's business.
+    CK_CHECK(snapshots_for_the_other == 0);
+    // And the flood WAS noticed, by the client it concerns — which is the half
+    // of this that has to keep working.
+    CK_CHECK(server.waiting_to_heal());
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_client_that_drains_slowly_is_healed_once_and_not_forever) {
+    // The other half of M-S5. The latch is sticky and the heal gate used to
+    // want a queue that was completely empty while the delta gate stopped at a
+    // quarter of a megabyte — so a client whose socket drained slower than a
+    // snapshot could oscillate between the two, and `send_snapshot` cleared the
+    // very flag its own overflow had just set. What a reader who fell behind is
+    // owed is one snapshot, and then deltas again.
+    const std::filesystem::path socket = private_socket("healonce");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    std::string flood;
+    for (int line = 0; line < 400; ++line)
+        flood += "scrolled away " + std::to_string(line) + "\r\n";
+    terminal.session().feed_output(flood);
+    clock.advance(34'000'000);
+    CK_CHECK(server.step());
+    // And then the program calms down and says one more thing, which is what a
+    // flood actually looks like: `yes` for a while, then a prompt. A terminal
+    // that says nothing further reports no damage at all, and a differ with no
+    // damage to look at is a differ that never gets to notice it has calmed —
+    // so the history stays behind until the next thing the child prints, by
+    // design (diff_engine's own early return).
+    terminal.session().feed_output("and then it calmed down\r\n");
+
+    int snapshots = 0;
+    for (int tick = 0; tick < 60; ++tick) {
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message arrived;
+        while (client.take(arrived))
+            if (std::holds_alternative<ckm::proto::Attached>(arrived)) ++snapshots;
+    }
+    // Exactly one, over sixty ticks of a terminal that has been quiet since.
+    // The latch is cleared by the snapshot that answers it, and a client that
+    // is up to date is not dirty.
+    CK_CHECK(snapshots == 1);
+    CK_CHECK(!server.waiting_to_heal());
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_snapshot_that_fills_the_queue_is_not_asked_for_twice) {
+    // A repair does not mark what it repaired as broken.
+    //
+    // A snapshot is held to a four-megabyte budget and the stream's high-water
+    // mark is four megabytes, so a session with a real history lands on the
+    // wrong side of the mark every single time it is sent. `Stream::send`
+    // answers false — meaning "stop adding", because the bytes ARE queued and
+    // will arrive — and a server that read that as "this client is behind"
+    // marked it for another snapshot, queued a second copy of the same four
+    // megabytes the moment the first drained, and did it again. That is the
+    // M-S5 loop at four-megabyte granularity instead of per tick, on a client
+    // that is missing nothing at all. What a client that has really missed
+    // something needs is said by the delta gate, which marks it when it
+    // actually skips a delta.
+    const std::filesystem::path socket = private_socket("bigsnap");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.scrollback = 2000;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    // A terminal with a history worth sending: two hundred columns of text with
+    // no two neighbours alike, because a screenful of blanks run-length encodes
+    // to almost nothing and would make this measure nothing.
+    ckm::server::TerminalSpec spec = spec_running("sleep 30");
+    spec.columns = 200;
+    spec.rows = 10;
+    spec.pixel_width = 200 * 9;
+    spec.pixel_height = 10 * 18;
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec);
+    std::string chunk;
+    for (std::size_t line = 0; line < 1'500; ++line) {
+        // One column short of the width, so no line depends on how a write
+        // that lands exactly on the last column is wrapped.
+        for (std::size_t column = 0; column + 1 < 200U; ++column)
+            chunk.push_back(static_cast<char>('a' + ((line * 7 + column) % 26)));
+        chunk += "\r\n";
+        // Fed in pieces the emulator's own step budget can swallow whole: a
+        // larger call would leave a tail pending and the next one would find
+        // less room than it needed.
+        if (chunk.size() < (16U << 10U)) continue;
+        terminal.session().feed_output(chunk);
+        chunk.clear();
+    }
+    if (!chunk.empty()) terminal.session().feed_output(chunk);
+    // The history really is there before anybody attaches. Said out loud
+    // because everything below is a measurement of what it costs to send, and
+    // a shortfall here — a parser budget swallowed, a scrollback setting that
+    // did not reach the emulator — would quietly turn that measurement into
+    // nothing that passed.
+    CK_CHECK(terminal.scrollback().size() / 200U > 1'200U);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    client.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, client, greeting));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+
+    // Something already waiting on the connection before the snapshot goes,
+    // from a client that asked and has not collected — so that the snapshot
+    // lands on top of it and the queue is over the mark rather than a few
+    // kilobytes under it. Answers, not screen: what is being set up is a full
+    // queue, and the client is owed none of it back.
+    for (int round = 0; round < 400 && server.queued_bytes() < 512u * 1024u; ++round) {
+        for (int index = 0; index < 2'000; ++index) client.say(ckm::proto::Ping{7});
+        // Pushed all the way out before the next round, and it takes more than
+        // one flush: a write takes what the socket will hold and queues the
+        // rest, so a round that pushed once left more behind than it sent. A
+        // backlog on THIS side is the opposite of what is being built — it
+        // would mean the asking never arrived, and the `Attach` below would sit
+        // behind a megabyte of pings that nothing ever pushes.
+        for (int push = 0; push < 500 && client.stream.wants_write(); ++push) {
+            (void)client.stream.flush();
+            CK_CHECK(server.step());
+        }
+    }
+    CK_CHECK(server.queued_bytes() >= 512u * 1024u);
+    CK_CHECK(!client.stream.wants_write());
+
+    ckm::proto::Attach attach;
+    attach.columns = 200;
+    attach.rows = 10;
+    client.say(attach);
+    for (int pass = 0; pass < 8 && server.queued_bytes() <= ckm::platform::Stream::kHighWaterBytes;
+         ++pass) {
+        (void)client.stream.flush();
+        CK_CHECK(server.step());
+    }
+    // The measurement this case rests on: the snapshot really did take the
+    // queue past the high-water mark, which is what makes `send` answer false
+    // for a client that has missed nothing.
+    CK_CHECK(server.queued_bytes() > ckm::platform::Stream::kHighWaterBytes);
+
+    // And now it drains, at the rate a socket moves: one pass of the loop puts
+    // a buffer's worth into the pipe and the client takes a buffer's worth out,
+    // and a Unix socket's buffer is small — eight kilobytes where this was
+    // measured — so four and a half megabytes is some hundreds of passes, and
+    // how many is a fact about the host rather than about this server. Hence a
+    // loop that runs until the queue is empty and then sixty passes more,
+    // rather than a guessed count: sixty is far longer than the heal gate needs
+    // to notice a drained queue and put a second snapshot on it, which is the
+    // thing that must not happen.
+    int snapshots = 0;
+    int drained_at = -1;
+    int tick = 0;
+    ckm::proto::Attached received;
+    for (; tick < 4'000; ++tick) {
+        clock.advance(34'000'000);
+        (void)client.stream.flush();
+        CK_CHECK(server.step());
+        std::string arrived;
+        (void)client.stream.receive(arrived, 64u * 1024u);
+        if (!arrived.empty()) CK_CHECK(client.reader.append(arrived));
+        ckm::proto::Message message;
+        while (client.reader.next(message) == ckm::proto::DecodeError::None)
+            if (const auto* attached = std::get_if<ckm::proto::Attached>(&message)) {
+                ++snapshots;
+                received = *attached;
+            }
+        if (drained_at < 0 && server.queued_bytes() == 0U) drained_at = tick;
+        if (drained_at >= 0 && tick > drained_at + 60) break;
+    }
+    // Said out loud, so that a failure here reads as a measurement rather than
+    // as a riddle: how many snapshots crossed, what is still queued, and how
+    // long it took to get there.
+    std::printf("  [snapshot drain] %d Attached, %zu bytes left after %d ticks\n", snapshots,
+                server.queued_bytes(), tick);
+
+    // One. Not one per drain cycle, and nothing left waiting to be healed: the
+    // client has everything the server had when it attached.
+    CK_CHECK(snapshots == 1);
+    CK_CHECK(!server.waiting_to_heal());
+    CK_CHECK(server.queued_bytes() == 0U);
+    // Complete, which a partial frame could never be: a snapshot that had been
+    // cut short would not decode at all, and this one carries the terminal's
+    // whole screen and the history that fitted the budget.
+    CK_CHECK(received.snapshot.terminals.size() == 1U);
+    if (received.snapshot.terminals.size() == 1U) {
+        const ckm::proto::TerminalState& state = received.snapshot.terminals.front();
+        CK_CHECK(state.term == terminal.id());
+        CK_CHECK(state.columns == 200);
+        CK_CHECK(state.rows == 10);
+        CK_CHECK(!state.grid.empty());
+        // Most of what the server held, which is what a four-megabyte budget
+        // buys at this width — and far more than a truncated frame could
+        // possibly carry.
+        CK_CHECK(state.scrollback.size() > 800U);
+    }
+
     server.terminals().close_all();
     forget(socket);
 }

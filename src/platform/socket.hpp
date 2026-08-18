@@ -203,6 +203,19 @@ public:
     // frame or two of a large screen; past it the answer is the one the protocol
     // already gives, which is a snapshot when the queue drains.
     static constexpr std::size_t kDeltaBacklogBytes = 256u * 1024u;
+    // 32 MiB, and the last of the three questions. The backlog mark asks
+    // whether more SCREEN is worth queueing; the high-water mark asks whether
+    // the stream is in trouble; this one asks whether the peer is reading AT
+    // ALL. Eight times the high-water mark and eight times a whole snapshot, so
+    // an ordinary burst — a snapshot, a session list, and a tick of deltas
+    // behind them — never comes near it, and only a connection nothing is being
+    // read from does.
+    //
+    // Past it the memory is the server's and the terminals are not the client's:
+    // the answer is to let the connection go, because a reconnect is a path the
+    // protocol already defines (plans/05's universal recovery) and an unbounded
+    // queue is not.
+    static constexpr std::size_t kHardLimitBytes = 32u * 1024u * 1024u;
 
     Stream() = default;
     // Takes ownership of `fd`, and makes the no-SIGPIPE guarantee flush()
@@ -253,6 +266,16 @@ public:
     bool over_high_water() const noexcept { return queued() > kHighWaterBytes; }
     // Whether there is already more screen queued than is worth adding to.
     bool over_delta_backlog() const noexcept { return queued() > kDeltaBacklogBytes; }
+    // Whether this peer has stopped reading rather than merely fallen behind.
+    bool over_hard_limit() const noexcept { return queued() > kHardLimitBytes; }
+    // Whether there is room to put a screen on this connection at all.
+    //
+    // One question, one answer, asked by the gate that decides a healing
+    // snapshot may go and by the gate that stops sending deltas alike — because
+    // a client that satisfies one and not the other oscillates between them,
+    // and a queue that drains slower than a snapshot is then re-snapshotted
+    // forever (M-S5).
+    bool ready_for_screen() const noexcept { return !over_delta_backlog(); }
     bool wants_write() const noexcept { return queued() > 0; }
 
     void close() noexcept;
