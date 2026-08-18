@@ -558,6 +558,11 @@ PTY, emulator, scrollback, and id all unchanged; both sessions' clients see the
 layout update; the child never notices.
 **WP-11 — CLI subcommands.** `ls`, `new`, `attach`, `kill-session`,
 `kill-server`, `check-config`, over the same protocol with `client_kind = cli`.
+`--help` and `--version` landed ahead of the package (2026-08-18): both are
+answered in `main()` without touching a socket, the help page is the CLI's
+reference (typeset for 80 columns, measured by `test_cli.cpp`), and the
+unknown-argument refusal points at `--help` instead of listing subcommands
+in a second place.
 **WP-12 — Config v1 remainder.** *Done, 2026-08-17.* Every key in
 [08-configuration.md](08-configuration.md)'s table is read, validated and
 defaulted; `bind`/`unbind` work and a rebinding reaches dispatch, the footer,

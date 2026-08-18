@@ -65,6 +65,7 @@ One binary, three roles (dispatch on argv):
 | `ckmux` (and `attach`, `new`, `ls`, …) | client / CLI |
 | `ckmux --server <socket>` (internal) | server; users never type this |
 | `ckmux check-config`, `kill-server`, … | CLI utilities over the same socket protocol |
+| `ckmux --help` / `--version` (also `-h`, `help`, `-V`) | answered in `main()` alone; no socket, no server |
 
 Single binary keeps client/server versions paired (they still handshake —
 plan 05 — because old servers meet new binaries after upgrades).

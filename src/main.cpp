@@ -7,6 +7,9 @@
 //   ckmux --server <socket>   the detached server; users never type this
 //   ckmux kill-server         a CLI utility, over the same socket protocol
 //
+// `--help` and `--version` are answered here too, before any role begins:
+// they touch no socket and start nothing.
+//
 // One binary keeps the client and the server the same build — they still shake
 // hands, because after an upgrade an old server meets a new binary, and the
 // handshake is what makes that say something a reader can act on rather than
@@ -15,7 +18,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <initializer_list>
 #include <string>
+#include <string_view>
 
 #include "client/client_app.hpp"
 #include "client/run_client.hpp"
@@ -32,6 +37,54 @@
 #include "cvision/ui/application.hpp"
 
 namespace {
+
+bool is_any_of(const char* argument, std::initializer_list<const char*> spellings) {
+    for (const char* spelling : spellings)
+        if (std::strcmp(argument, spelling) == 0) return true;
+    return false;
+}
+
+// `ckmux --help`: the whole CLI on one page. The defaults the page states
+// restate platform/socket.cpp and platform/paths.hpp; a change there edits
+// this page in the same commit, or the help lies (plans/11-conventions.md).
+// Typeset by hand for an 80-column terminal, and the CLI tests measure that.
+void print_cli_help() {
+    const std::string_view identity = ckm::proto::kBuildIdentity;
+    std::printf(
+        "%.*s — a terminal multiplexer, like tmux, with a face.\n"
+        "\n"
+        "Usage:\n"
+        "  ckmux              Attach: your terminal windows, starting the server if\n"
+        "                     none is listening. Quitting the client leaves the server\n"
+        "                     and every program in it running; run ckmux again to\n"
+        "                     return to them.\n"
+        "  ckmux kill-server  End the server and every terminal in it.\n"
+        "  ckmux --help       This page (also -h, help).\n"
+        "  ckmux --version    The build identity, which client and server compare\n"
+        "                     when they meet (also -V).\n"
+        "\n"
+        "Internal:\n"
+        "  ckmux --server <socket> [--foreground]\n"
+        "                     The detached server. A client starts one by itself when\n"
+        "                     none answers, so the only reason to type this is\n"
+        "                     debugging: --foreground keeps it in front of you with\n"
+        "                     its diagnostics on stderr; a detached server writes\n"
+        "                     them to a log beside the socket.\n"
+        "\n"
+        "Environment:\n"
+        "  CKMUX_SOCKET       The server socket, used exactly as given. Default:\n"
+        "                     $XDG_RUNTIME_DIR/ckmux-<uid>/default.sock, with $TMPDIR\n"
+        "                     and then /tmp standing in when there is no runtime\n"
+        "                     directory.\n"
+        "  CKMUX_CONFIG       The configuration file, used exactly as given. Default:\n"
+        "                     $XDG_CONFIG_HOME/ckmux/ckmux.conf, ordinarily\n"
+        "                     ~/.config/ckmux/ckmux.conf. A missing file is the\n"
+        "                     ordinary case: every setting has a default.\n"
+        "\n"
+        "Inside the client, every command is in the menu bar and F1 opens the help\n"
+        "pages; nothing has to be memorized before it can be found.\n",
+        static_cast<int>(identity.size()), identity.data());
+}
 
 // `ckmux kill-server`: ends the server and every terminal in it.
 //
@@ -95,12 +148,23 @@ int main(int argc, char** argv) {
         return ckm::server::run_server_process(listen_on, foreground);
     }
     if (argc >= 2 && std::strcmp(argv[1], "kill-server") == 0) return kill_server(socket);
+    if (argc >= 2 && is_any_of(argv[1], {"--help", "-h", "help"})) {
+        print_cli_help();
+        return 0;
+    }
+    if (argc >= 2 && is_any_of(argv[1], {"--version", "-V"})) {
+        // The same identity the handshake sends, so the number in a bug
+        // report is the number the wire compares.
+        const std::string_view identity = ckm::proto::kBuildIdentity;
+        std::printf("%.*s\n", static_cast<int>(identity.size()), identity.data());
+        return 0;
+    }
     if (argc >= 2 && argv[1][0] != '\0') {
         // Every other subcommand arrives with WP-11. Saying so beats a client
         // starting up and ignoring what was typed.
         std::fprintf(stderr,
                      "ckmux: `%s` is not a subcommand this build has yet.\n"
-                     "Available: ckmux (the client), ckmux kill-server.\n",
+                     "`ckmux --help` lists what is.\n",
                      argv[1]);
         return 2;
     }
