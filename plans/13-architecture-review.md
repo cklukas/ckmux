@@ -35,6 +35,65 @@ verification evidence: the "ckmux Architecture Review" artifact of 2026-08-18.
 | R9 | Build & enforcement | m-build, layer lint, fuzz targets | **done** — layer rule mechanically enforced (`tools/check_layers.py`, ctest `layer_check` + self-test); install ships `bin/ckmux` alone; `CKMUX_SANITIZE` forwards; source checkout outranks an installed package; `ckmux_platform` is a real target; `-Wconversion` opt-in (`CKMUX_WCONVERSION`); honest label taxonomy (unit/e2e/pty/golden/script/architecture/fuzz-corpus); three libFuzzer targets with 21 checked-in seeds, corpus-gated in ctest |
 | R10 | Documentation truth | m-docs, plans/12 queue states | **done** — plans/12 queue re-derived (ten rows corrected, "a Blocked row whose prerequisites are all done is a bug in this file" now stated); plans/05 catalog carries per-row liveness; plans/10 status/risks current, three open questions resolved; plans/02 describes the mechanisms that exist; plans/07 records L-57…L-62 and the real consumption precedence; README done earlier (`a357512`) |
 
+## Field defects after remediation (2026-08-18, night)
+
+Reported live from a running ckmux + cksetup session, after the remediation
+above landed: cksetup's own Terminal Report, opened inside a ckmux terminal
+window, showed `Mouse events seen: 0` (the outer host had decoded 869) and
+`SIXEL graphics: no` (DA1 with no parameter 4) despite the outer host
+supporting both.
+
+- **SIXEL — confirmed, fixed.** `run_client.cpp:65` read
+  `terminal.capabilities().sixel_graphics` and called
+  `session.set_host_sixel(...)` exactly once, at the top of
+  `run_attached_client`, before the event loop had processed a single
+  iteration. `baseline_capabilities().sixel_graphics` is `false`
+  (`capabilities.hpp:228`), and the DA1/XTSMGRAPHICS probe that would refine
+  it resolves asynchronously through the terminal's own `poll()` — so
+  `host_sixel_` was cached `false` for the life of the client, and every
+  `Attach` this client ever sent carried `host_sixel = 0`, regardless of what
+  the reader's real terminal offered (`terminals.cpp:75`:
+  `profile.sixel = settings.sixel == Auto && spec.host_sixel`). Fixed at the
+  right layer: ckVision's `Application` already swallowed the resolving
+  `CapabilityChangedEvent` internally (a repaint, `application.cpp:744`) with
+  no way for a host to observe it — added
+  `Application::set_capability_changed_handler(std::function<void()>)`,
+  fired in the same branch, after the repaint. `run_client.cpp` installs a
+  handler that re-reads `terminal.capabilities().sixel_graphics` and calls
+  `session.set_host_sixel(...)` again whenever it fires, so a terminal opened
+  after the probe resolves — which is the overwhelming majority of them —
+  advertises correctly. No test existed for either half; none is added here
+  beyond the fix landing (a `HeadlessTerminal`-based host has no probe race
+  to reproduce against — the bug is a real-terminal-only timing hazard).
+- **Mouse — investigated exhaustively, not reproduced against current HEAD.**
+  Two independent tests were written and both pass on the tree as it stands:
+  `a_click_the_child_asked_for_reaches_it_over_the_wire`
+  (`tests/test_remote_terminal.cpp`) drives the encode/status chain directly
+  (child enables SGR 1000+1006 → wire modes → mirror → `status()` →
+  `TerminalView::on_mouse` → `send_input`), and
+  `a_click_inside_a_remote_terminal_window_reaches_the_child_over_the_wire`
+  drives the same scenario through a real `Application`/`Desktop`/`Window`
+  dispatch and `topmost_view_at` hit-test — the layer the first test
+  bypasses. Both confirm bytes reach `proto::Input` correctly. Ruled out
+  along the way: bit-shift mismatch between `modes_of()` (producer) and
+  `status()` (consumer) for the new tracking-level bits — none, bits 7–8
+  consistently on both ends; a config-parsing regression zeroing
+  `[terminal] mouse` — the key still parses correctly and defaults `true`;
+  `TerminalView::on_mouse` reading `profile()` as a gate — it does not, only
+  `status()`; `Window::on_mouse` or the new D-051 scrollbar frame overlay
+  stealing the click — `Window::on_mouse` returns `false` for anything that
+  is not its own chrome, and the scrollbar is a frame overlay, not a content
+  sibling. Given this session's remediation bumped the protocol to v3 and
+  landed the mouse-tracking-level and kitty-flag work only hours before this
+  report arrived, the leading explanation is that the running client and/or
+  server predate this session's commits. **Action for whoever reproduces
+  this next: rebuild both binaries from current HEAD, `ckmux kill-server`,
+  and restart before retesting** — if the symptom survives a clean
+  rebuild+restart, that rules out staleness and the next step is a real
+  two-process reproduction (`test_core_promise.cpp`'s pattern: a forked
+  server, a real socket, a real host terminal or a recorded one) rather than
+  the synthetic harnesses used here.
+
 ## Critical findings
 
 - **C1 — encode has no size cap; a default-config attach snapshot exceeds the

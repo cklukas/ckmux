@@ -58,11 +58,22 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         (void)connection.stream.send(proto::encode(message));
     });
     ckv::ui::Application app(terminal, clock);
-    // What this display can actually show, said once and carried on every
-    // Attach: the server folds it into the graphics advertisement the
-    // children this client opens are given (WP-16). Read from the probed
-    // capabilities, the same evidence Help ▸ Terminal Report shows.
+    // What this display can actually show, carried on every Attach: the
+    // server folds it into the graphics advertisement the children this
+    // client opens are given (WP-16). The evidence a capability probe
+    // resolves to — Sixel's DA1 parameter 4 chief among them — arrives
+    // asynchronously, and this application (and the terminal it wraps) exist
+    // before any reply has had a chance to land. Reading `capabilities()`
+    // only here, once, read whatever was true before the probe answered:
+    // every terminal this client ever opened advertised no Sixel support to
+    // its child, regardless of what the real host offered (field report,
+    // 2026-08-18 — cksetup's own Terminal Report showed DA1 without
+    // parameter 4 on a host that has it). The handler keeps this live for
+    // every terminal opened from here on; this first call is only the
+    // fallback for whatever opens before the first reply does.
     session.set_host_sixel(terminal.capabilities().sixel_graphics);
+    app.set_capability_changed_handler(
+        [&session, &terminal] { session.set_host_sixel(terminal.capabilities().sixel_graphics); });
     // Where the bytes are reassembled into frames. Declared here rather than
     // beside the loop because a reconnection has to start it over: half a frame
     // from a server that has gone is not the beginning of one from its

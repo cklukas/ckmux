@@ -278,6 +278,50 @@ CK_TEST(the_child_dialect_the_view_encodes_is_the_one_the_server_reported) {
     }
 }
 
+CK_TEST(a_click_the_child_asked_for_reaches_it_over_the_wire) {
+    // A field report: a child that enabled mouse tracking (SGR modern) saw
+    // zero mouse events after the wire carried a tracking LEVEL instead of a
+    // bare bit (D-054) — this is the reattach-review's own regression class,
+    // caught here by driving the exact chain a click takes: child enables
+    // 1000+1006, the emulator's damage crosses the wire, the mirror rehydrates
+    // it, and a real TerminalView's on_mouse must decide to forward it.
+    FakeServer server;
+    std::vector<ckm::proto::Message> sent;
+    RemoteTerminalSubsession remote(server.id, server.profile,
+                                    [&sent](const ckm::proto::Message& message) {
+                                        sent.push_back(message);
+                                    });
+    server.child_printed("ready");
+    remote.mirror().adopt(server.snapshot());
+
+    ckv::ui::RoleRegistry registry;
+    ckv::ui::StandardRoles roles = ckv::ui::intern_standard_roles(registry);
+    ckv::ui::Theme theme = ckv::ui::make_classic_theme(registry, roles);
+    ckv::widgets::TerminalView view(remote);
+    view.set_context(ckv::ui::Context{&theme, &registry, nullptr});
+    view.set_bounds(ckv::Rect{0, 0, 40, 8});
+
+    // DEC 1000 (report presses) + DEC 1006 (SGR encoding) — the modern combo
+    // the field report's outer host and the embedded emulator both named.
+    server.child_printed("\x1b[?1000h\x1b[?1006h");
+    for (const ckm::proto::GridDelta& delta : server.tick()) CK_CHECK(remote.mirror().apply(delta));
+    CK_CHECK(remote.status().mouse_reporting_enabled);
+    CK_CHECK(remote.status().mouse_tracking == ckv::core::TerminalMouseTracking::Buttons);
+
+    ckv::MouseEvent click;
+    click.action = ckv::MouseAction::Down;
+    click.button = ckv::MouseButton::Left;
+    click.cell = ckv::Point{3, 2};
+    CK_CHECK(view.on_mouse(click));
+    CK_CHECK(!sent.empty());
+    if (!sent.empty()) {
+        const auto* input = std::get_if<ckm::proto::Input>(&sent.back());
+        CK_CHECK(input != nullptr);
+        // SGR: `CSI < b ; x ; y M`, 1-based, button 0 = left-down.
+        if (input != nullptr) CK_CHECK(input->bytes == "\x1b[<0;4;3M");
+    }
+}
+
 CK_TEST(a_reader_pages_back_through_a_history_the_client_holds) {
     // Paging is local, which is why the client keeps the history at all
     // (plans/05): PgUp must not be a round trip, and after WP-6 it must work
@@ -782,6 +826,82 @@ CK_TEST(the_whole_client_ui_drives_a_terminal_it_does_not_own) {
         if (std::holds_alternative<ckm::proto::Input>(sent[index])) leaked = true;
     }
     CK_CHECK(!leaked);
+}
+
+CK_TEST(a_click_inside_a_remote_terminal_window_reaches_the_child_over_the_wire) {
+    // A field report (2026-08-18): a child that turned on SGR mouse tracking
+    // saw zero mouse events, while the same host's KEYS reached it fine —
+    // narrowing the break to something point-dispatch-specific rather than
+    // the encode/status chain (already covered, and passing, in
+    // `the_child_dialect_the_view_encodes_is_the_one_the_server_reported`'s
+    // sibling test above). This drives the one layer that test does not: a
+    // real `Desktop`/`Window`/`Application` hit-test, exactly as a reader's
+    // click arrives — `topmost_view_at` finding the terminal view under the
+    // point, not a direct call to `view.on_mouse`.
+    FakeServer server;
+    std::vector<ckm::proto::Message> sent;
+
+    ckv::term::HeadlessTerminal host(ckv::Size{80, 24});
+    ckv::ManualClock clock;
+    ckv::ui::Application app(host, clock);
+
+    ckm::client::ClientOptions options;
+    options.settings.shell = "/bin/sh";
+    options.settings.scrollback = 200;
+    options.local_now = [] {
+        return ckm::client::LocalMoment{{2026, 8, 17}, {12, 0, 0}};
+    };
+    RemoteTerminalSubsession* remote_ptr = nullptr;
+    options.terminal_source = [&](ckm::client::TerminalRequest request) -> ckv::term::TerminalSubsession& {
+        ckm::proto::NewTerminal ask;
+        ask.command = request.launch.executable;
+        sent.push_back(ask);
+        auto remote = std::make_unique<RemoteTerminalSubsession>(
+            server.id, request.launch.profile,
+            [&sent](const ckm::proto::Message& message) { sent.push_back(message); });
+        remote->mirror().set_history_limit(request.options.max_scrollback_lines);
+        remote_ptr = remote.get();
+        return app.adopt_terminal_subsession(std::move(remote));
+    };
+
+    ckm::client::ClientApp client(app, std::move(options));
+    app.step(0);
+    CK_CHECK(client.new_terminal() != nullptr);
+    CK_CHECK(remote_ptr != nullptr);
+    if (remote_ptr == nullptr) return;
+
+    // The child turns on modern SGR mouse tracking, the mirror adopts it, and
+    // the window over it repaints — same sequence a real reattach or a real
+    // program's own startup takes.
+    server.child_printed("\x1b[?1000h\x1b[?1006h");
+    remote_ptr->mirror().adopt(server.snapshot());
+    app.root().notify_terminal_subsession_changed(*remote_ptr);
+    app.step(0);
+    CK_CHECK(remote_ptr->status().mouse_reporting_enabled);
+
+    ckv::widgets::Window* const window = client.desktop().windows()[0];
+    CK_CHECK(window != nullptr);
+    if (window == nullptr) return;
+    const ckv::Rect content = window->content_rect();
+    // Well inside the content area, away from the title bar and any frame
+    // overlay (the scrollbar sits on the right edge, D-051) — an ordinary
+    // click, not a boundary case.
+    const ckv::Point at{content.x + content.width / 2, content.y + content.height / 2};
+
+    const std::size_t inputs_before = std::count_if(
+        sent.begin(), sent.end(),
+        [](const ckm::proto::Message& message) { return std::holds_alternative<ckm::proto::Input>(message); });
+    CK_CHECK(app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Left, at,
+                                          std::nullopt, ckv::Modifier::None}));
+    const std::size_t inputs_after = std::count_if(
+        sent.begin(), sent.end(),
+        [](const ckm::proto::Message& message) { return std::holds_alternative<ckm::proto::Input>(message); });
+    CK_CHECK(inputs_after == inputs_before + 1);
+    if (inputs_after != inputs_before + 1) return;
+    const auto* const input = std::get_if<ckm::proto::Input>(&sent.back());
+    CK_CHECK(input != nullptr);
+    // SGR: `CSI < 0 ; x ; y M` — button 0 (left) pressed, 1-based coordinates.
+    if (input != nullptr) CK_CHECK(input->bytes.rfind("\x1b[<0;", 0) == 0 && input->bytes.back() == 'M');
 }
 
 CK_TEST(a_childs_clipboard_write_reaches_the_readers_clipboard_targets) {
