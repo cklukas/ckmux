@@ -48,6 +48,7 @@ inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";
+inline constexpr std::string_view kNewSession = "ckmux.session.new";
 inline constexpr std::string_view kRenameSession = "ckmux.session.rename";
 inline constexpr std::string_view kKillSession = "ckmux.session.kill";
 inline constexpr std::string_view kKeyReference = "ckmux.help.keys";

@@ -230,18 +230,23 @@ right end of the menu bar, where the calendar can hang from it.
 
 ## The session picker
 
-*As built (2026-08-18), which differs from the sketch below in two decided
+*As built (2026-08-18), which differs from the sketch below in three decided
 ways.* First, startup does not always ask: nothing running creates a session
 and attaches, and exactly one session with nobody watching it attaches
 outright — the picker appears only when there is a genuine choice (the only
 session is in use, or there are several). A reader who ran `ckmux` wants their
 terminal back, not a dialog about how to get it. Second, the picker's rows are
-a radio group and its actions are Attach / New session… / a dismiss that is
-"Cancel" when attached and "Without a session" when not — Rename and End
-Session live on the Session menu (gated on being attached) rather than in the
-picker, and the kill confirmation carries the one decision only a reader can
-make there: whether whatever ignores the asking is killed after
-`kill-grace-seconds`. A row somebody else holds says so inline: "(in use —
+a radio group and its actions are Attach and a dismiss that is "Cancel" when
+attached and "Without a session" when not — the picker CHOOSES among what
+exists, and everything that changes what exists lives on the Session menu:
+New Session… (`^B S`, straight to the name prompt), Rename Session…, End
+Session… (both gated on being attached). The kill confirmation carries the
+one decision only a reader can make there: whether whatever ignores the
+asking is killed after `kill-grace-seconds`. Third, the Session menu holds
+no New Terminal: a terminal is the Terminal menu's to make, and the same
+item under two titles is a reader wondering which one they used — the
+Session menu is New Session…, Sessions…, Rename Session…, End Session…,
+then Detach and Quit. A row somebody else holds says so inline: "(in use —
 attaching takes it over)"; the row this client holds says "(this client)".
 Created/last-used columns wait for the wall-clock question they raise.
 

@@ -158,9 +158,14 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     ckv::widgets::MenuBar* const bar = menu_bar(f.client);
     CK_CHECK(bar != nullptr);
 
-    CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kNewTerminal)));
+    // Session holds what happens to sessions; a terminal is the Terminal
+    // menu's to make. New Terminal used to sit under both titles, and the
+    // same item under two names is a reader wondering which one they used.
+    CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kNewSession)));
+    CK_CHECK(!menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kNewTerminal)));
     CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckm::client::commands::kDetach)));
     CK_CHECK(menu_has_command(bar->menus()[0], id_of(f.app, ckv::ui::std_command_keys::kQuit)));
+    CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckm::client::commands::kNewTerminal)));
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckm::client::commands::kCloseTerminal)));
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kNextWindow)));
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
@@ -347,12 +352,15 @@ CK_TEST(the_public_mouse_menu_path_opens_a_new_terminal) {
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 1U);
 
+    // The Terminal menu's title, then its first item — New Terminal moved
+    // there when the Session menu became about sessions. The bar draws
+    // "  Session  Terminal  …", so the second title starts at column 11.
     CK_CHECK(f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Left,
-                                            ckv::Point{1, 0}, std::nullopt, ckv::Modifier::None}));
+                                            ckv::Point{12, 0}, std::nullopt, ckv::Modifier::None}));
     CK_CHECK(f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Left,
-                                            ckv::Point{2, 2}, std::nullopt, ckv::Modifier::None}));
+                                            ckv::Point{13, 2}, std::nullopt, ckv::Modifier::None}));
     CK_CHECK(f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Up, ckv::MouseButton::Left,
-                                            ckv::Point{2, 2}, std::nullopt, ckv::Modifier::None}));
+                                            ckv::Point{13, 2}, std::nullopt, ckv::Modifier::None}));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows().size() == 2U);
 }

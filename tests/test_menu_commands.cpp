@@ -238,7 +238,9 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     CK_CHECK(reader.screen().find("(this client)") != std::string::npos);
     CK_CHECK(reader.screen().find("2 terminals") != std::string::npos);
     CK_CHECK(reader.screen().find("Attach") != std::string::npos);
-    CK_CHECK(reader.screen().find("New session") != std::string::npos);
+    // No create button here: the picker chooses among what exists, and New
+    // Session lives on the Session menu.
+    CK_CHECK(reader.screen().find("New session") == std::string::npos);
     reader.press("\x1b");
 
     // ^B t — tiled: both windows on screen at once, side by side, so the two
@@ -263,10 +265,12 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     // this milestone actually has.
     reader.press("\x02" "m");
     reader.press("\x1b[B");
-    CK_CHECK(reader.sees("New Terminal"));
+    CK_CHECK(reader.sees("New Session"));
     CK_CHECK(reader.screen().find("Detach") != std::string::npos);
     CK_CHECK(reader.screen().find("Sessions") != std::string::npos);
     CK_CHECK(reader.screen().find("Quit ckmux") != std::string::npos);
+    // And no New Terminal here: that item is the Terminal menu's, once.
+    CK_CHECK(reader.screen().find("New Terminal") == std::string::npos);
     reader.press("\x1b");
 
     reader.quit();
@@ -300,7 +304,9 @@ CK_TEST(ending_the_last_session_stops_the_server_and_the_client_offers_a_fresh_s
     // The session is gone, the server goes with it, and the client is still a
     // running ckmux: no session, so the picker offers what a reader can do.
     CK_CHECK(reader.sees("No sessions are running yet"));
-    CK_CHECK(reader.screen().find("New session") != std::string::npos);
+    // The empty picker says where to go, rather than growing a button the
+    // populated one does not have.
+    CK_CHECK(reader.screen().find("New Session") != std::string::npos);
 
     const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(4000);
     bool server_gone = false;
@@ -311,9 +317,10 @@ CK_TEST(ending_the_last_session_stops_the_server_and_the_client_offers_a_fresh_s
     }
     CK_CHECK(server_gone);
 
-    // Creating a session from that picker starts a fresh server: "end the last
-    // session, then start another" is one uninterrupted thing.
-    reader.press("\x1b" "n");
+    // Creating a session — Session menu, or ^B S — starts a fresh server:
+    // "end the last session, then start another" is one uninterrupted thing.
+    reader.press("\x1b");  // leave the picker; the menu is where New Session lives
+    reader.press("\x02" "S");
     CK_CHECK(reader.sees("New session"));
     reader.press("\r");
     CK_CHECK(reader.sees("Terminal 1"));

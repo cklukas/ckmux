@@ -233,6 +233,15 @@ void ClientApp::register_commands() {
             });
             registry.set_enabled_predicate(
                 detach, [this] { return static_cast<bool>(options_.detach_from_server); });
+        } else if (binding.key == commands::kNewSession) {
+            // Straight to the name prompt: creating a session is one question
+            // (what is it called?), and the picker is not part of asking it.
+            const u::CommandId new_session = declare(binding.key, binding.title, "Session", [this] {
+                show_new_session_dialog(suggested_session_name());
+            });
+            registry.set_enabled_predicate(new_session, [this] {
+                return static_cast<bool>(options_.create_session);
+            });
         } else if (binding.key == commands::kRenameSession) {
             const u::CommandId rename = declare(binding.key, binding.title, "Session", [this] {
                 show_rename_session_dialog(attached_session_name_);
@@ -342,9 +351,12 @@ void ClientApp::build_chrome() {
     };
     const w::MenuItem separator = w::MenuItem::separator();
 
+    // No New Terminal here: a terminal is the Terminal menu's to make, and the
+    // same item under two titles is a reader wondering which one they used.
+    // This menu holds what happens to SESSIONS.
     w::MenuBarItem session_menu{
         "&Session",
-        {item(commands::kNewTerminal), separator, item(commands::kSessions),
+        {item(commands::kNewSession), item(commands::kSessions),
          item(commands::kRenameSession), item(commands::kKillSession), separator,
          item(commands::kDetach), item(u::std_command_keys::kQuit)}};
     w::MenuBarItem terminal_menu{
@@ -599,7 +611,7 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         w::FieldDescriptor empty;
         empty.kind = w::FieldKind::Note;
         empty.label = "No sessions are running yet. ckmux keeps programs running after you "
-                      "leave — create a session to start one.";
+                      "leave — Session \u25b8 New Session\u2026 starts one.";
         descriptor.fields.push_back(std::move(empty));
     }
 
@@ -613,15 +625,6 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         descriptor.buttons.push_back(w::ButtonDescriptor{"&Attach", w::ButtonRole::Accept, {}});
         attach_choice_ = std::move(ids);
     }
-    // Dismiss rather than Neutral: this button LEAVES the picker — the name
-    // prompt is the next question, not a second one on top of the first. As a
-    // Neutral button it opened the prompt over a picker that stayed behind it,
-    // and the picker was still there afterwards, half-covered by the terminal
-    // the reader had just made. ckVision runs a Dismiss button's own on_press
-    // and then closes the dialog, which is exactly this.
-    descriptor.buttons.push_back(w::ButtonDescriptor{
-        "&New session…", w::ButtonRole::Dismiss,
-        [this] { app_.post([this] { show_new_session_dialog(suggested_session_name()); }); }});
     // What dismissing MEANS depends on where this client stands. Attached, it is
     // "leave things as they are". With no session — at startup, or after one was
     // taken away — it is a reader choosing to carry on without one, which is a
