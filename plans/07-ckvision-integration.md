@@ -266,6 +266,20 @@ and the cost stops depending on how long the session has been alive.
 | L-32 | **`Desktop` installs the default handler for `kWindowList`**, joining the seven window commands it already covered. The dialog had existed since M6 (`make_window_list_dialog`, over `Desktop::windows()` in the same cycling order `select_by_number` walks); only the wiring was missing, so every application referencing the command got a dead menu item. Presenting is a no-op while a list is open, and the open flag is shared state rather than a member read through `this`, because destroying a Desktop detaches its dialog and completes the presentation. The header where the standard ids live now also says outright that an unhandled command is still *available* — `is_available()` asks the enablement predicate and the focus context, and neither can know whether anyone is listening. | `Terminal ▸ Window List…` drew live, took its click, and did nothing, for all of M1, while [10-roadmap.md](10-roadmap.md) recorded "window list" as landed. Reported from the running client. ckmux now pins the class of defect with `tests/test_command_reachability.cpp`. |
 | L-56 | **The terminal report is the library's dialog** — cksetup's Terminal report moved into `ckv::widgets` as `make_/present_terminal_report_dialog` (`TerminalReportDialogOptions` carries the optional decoded-SGR-reports probe; the line is omitted probe-less), `Application::terminal_capability_report[_text]()` fronting the evidence so the widgets layer never includes `cvision/term`, and the standard command `ckv.app.terminal_report` with `Desktop` installing its default handler beside `kWindowList`. ckmux claims the handler to add the probe its POSIX host can supply. | Help ▸ Terminal Report has to show what the OUTER host really advertised — Sixel included, the evidence WP-16's advertisement decision reads — and it has to be the same dialog cksetup shows, or two suite applications on one terminal would give two accounts of the same host. |
 
+### Landed (every change the emulator makes is one a mirror can hear about)
+
+ckVision `8ddcd53` and the `request_kill` follow-up, driven by the 2026-08-18
+architecture review ([13](13-architecture-review.md) R7/R2c):
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-57 | **Five named damage flags** — `clipboard`, `bell`, `printer`, `diagnostics`, `lifecycle` — and the Kitty keyboard flags reporting through `damage_.modes`. Three state changes previously set no damage at all (keyboard flags, `clipboard_serial_`, `mark_exited`/`mark_failed`), the bell rode `modes`, and `finish_printer_job` announced a document with `damage_everything()`. | ckmux's server sends only what damage says changed, so an undamaged change was invisible to every attached client: a child that negotiated the Kitty protocol, wrote the clipboard, or exited on its own did so silently (review M-R2, M-R1, m-exit-msg). |
+| L-58 | **Mouse tracking is a level** (`core::TerminalMouseTracking`, D-054), not a bool — 1000/1002/1003 tracked apart, the view dropping motion the level does not cover; a status naming no level keeps the old coarse behaviour, so a mirror that carries one bit stays correct. | The reattach audit found the collapse; the compat rule exists so ckmux's wire can adopt the level on its own schedule (it now carries it in `ModesOp` bits 7–8). |
+| L-59 | **`TerminalView::send_key()`** — delivers a chord exactly as a real press does (kitty path, legacy fallback, return-to-live) without the parent-escape interception. | ckmux's Send Prefix must synthesize *any* configured prefix into the child; `encode_key` was private, and hand-rolling Ctrl-only bytes in ckmux was the patch-around AGENTS.md forbids. Any app with macros or key replay wants it. |
+| L-60 | **`PosixTerminalSubsession::request_kill()`** — process-group SIGKILL that returns at once, the symmetric half of `request_termination()`; `close()` stays the bounded last resort. | The server's session kill escalated through `close()`, which reaps synchronously — up to ~3 s per stubborn terminal inside the loop that serves every other terminal (review M-S3). |
+| L-61 | **The forkpty child resets signal dispositions before exec** (SIG_DFL over all, empty mask), with the POSIX asymmetry stated: exec restores *handled* signals, ignored ones stay ignored. | ckmux's server ignores SIGPIPE process-wide, so every shell in every terminal inherited it ignored and ordinary pipelines misbehaved (review M-F4's other half). |
+| L-62 | **The no-graphics sixel refusal actually fires** — the specific diagnostic was dead code behind `profile_.sixel && !graphics_available()`, two reads of the same bit. | Found while verifying the review's diagnostics-transport gap: a ckmux terminal with `sixel = false` told its child only the generic "DCS ignored", never the message written for exactly that case. |
+
 ### Open
 
 | # | Item | For |
@@ -286,12 +300,18 @@ around the library.
 
 ## Consuming ckVision
 
-- **Mechanism**: `find_package(ckvision CONFIG REQUIRED)` +
-  `target_link_libraries(ckmux PRIVATE ckvision::cvision)` against an
-  installed sibling build; `add_subdirectory` fallback via
-  `CKVISION_DIR` for one-tree hacking (ckVision's example/test builds
-  auto-quiet as a subproject). Pin by commit in a `ckvision.lock` note until
-  ckVision 0.1 tags exist.
+- **Mechanism**: the sibling checkout **outranks** an installed package —
+  `CKMUX_PREFER_CKVISION_SOURCE` defaults ON when
+  `${CKMUX_CKVISION_SOURCE_DIR}/CMakeLists.txt` exists (the definition of a
+  co-developer), and the tree is consumed via
+  `add_subdirectory(... EXCLUDE_FROM_ALL)` so `cmake --install` ships ckmux
+  alone. An adopter with no sibling checkout gets `find_package(ckvision
+  CONFIG)` exactly as before. This precedence is deliberate and is the
+  opposite of the original plan here: AGENTS.md's "fix ckVision, never work
+  around it" requires a library edit to be visible in the very next ckmux
+  build, and the old order silently built against yesterday's installed
+  library while the developer edited today's source. `CKMUX_SANITIZE`
+  forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: ckVision is pre-1.0 with *no* backward-compat
   guarantee (breaking changes land with all callers updated — but only
   callers inside its own tree). ckmux therefore builds against a pinned

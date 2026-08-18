@@ -1,6 +1,6 @@
 # 13 — Architecture Review Findings (2026-08-18)
 
-Status: remediation in progress · source: multi-agent code/architecture review
+Status: waves 1–2 complete — R1–R7, R9, R10 done, R8 open · source: multi-agent code/architecture review
 of 2026-08-18 (7 specialist reviewers over the whole tree, 65 claims
 adversarially verified by independent agents — several by probe programs
 compiled against the built library — 0 findings refuted). Reviewed at
@@ -33,7 +33,7 @@ verification evidence: the "ckmux Architecture Review" artifact of 2026-08-18.
 | R7 | ckVision upstream fixes | U1…U3 | **done** — ckVision `8ddcd53`: five named damage flags + keyboard-flags-as-modes (U1, widened to printer/diagnostics), DECPAM refusal D-053 (U2), mouse-tracking levels D-054 (U3), `TerminalView::send_key`, PTY signal reset, sixel refusal un-deadened; both suites green. ckmux-side adoption of the new flags is R2/R8's work |
 | R8 | Reattach feature gaps | M-R1…M-R3, m-replay | **open** — needs proto additions (R1) and R7's damage flags first |
 | R9 | Build & enforcement | m-build, layer lint, fuzz targets | **done** — layer rule mechanically enforced (`tools/check_layers.py`, ctest `layer_check` + self-test); install ships `bin/ckmux` alone; `CKMUX_SANITIZE` forwards; source checkout outranks an installed package; `ckmux_platform` is a real target; `-Wconversion` opt-in (`CKMUX_WCONVERSION`); honest label taxonomy (unit/e2e/pty/golden/script/architecture/fuzz-corpus); three libFuzzer targets with 21 checked-in seeds, corpus-gated in ctest |
-| R10 | Documentation truth | m-docs, plans/12 queue states | **open** — blocked: `plans/02`, `plans/12` carry uncommitted peer hunks |
+| R10 | Documentation truth | m-docs, plans/12 queue states | **done** — plans/12 queue re-derived (ten rows corrected, "a Blocked row whose prerequisites are all done is a bug in this file" now stated); plans/05 catalog carries per-row liveness; plans/10 status/risks current, three open questions resolved; plans/02 describes the mechanisms that exist; plans/07 records L-57…L-62 and the real consumption precedence; README done earlier (`a357512`) |
 
 ## Critical findings
 

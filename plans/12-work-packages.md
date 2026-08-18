@@ -1,6 +1,6 @@
 # ckmux — Work Packages
 
-Plan 12 · Status: current · 2026-08-17 · [Index](README.md)
+Plan 12 · Status: current · 2026-08-18 · [Index](README.md)
 
 This file answers one question: **what is open, and what do I do next?**
 
@@ -24,6 +24,13 @@ and ckmux inherits the discipline for the same reason it inherits the rest
    the [10-roadmap.md](10-roadmap.md) milestone text, and every plan whose
    behavior changed — in the same commit ([11-conventions.md](11-conventions.md):
    the plans are the spec).
+
+**Remediation outranks the queue while it is open.**
+[13-architecture-review.md](13-architecture-review.md) carries its own list —
+R1…R10, one state each, same discipline — and four of its findings are
+criticals in machinery that packages here already call `Done`. A `Ready` row
+below is genuinely startable; it is not necessarily the *next* thing to do.
+Take an open R-topic first, and come back here when 13's queue is clear.
 
 **Namespace.** `WP-n` in this file is a *ckmux* package. ckVision's queue has
 its own `WP-n` numbering that means something else entirely; the two never
@@ -82,21 +89,21 @@ take first.
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | **Done** (2026-08-18) | WP-7 ✓ |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |
-| 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | Blocked | WP-8 |
-| 17 | **WP-11** — CLI subcommands | ckmux | 3–4 d | Blocked | WP-2, WP-8 |
-| 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | Blocked | WP-8 |
-| 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | Blocked | WP-12 |
-| 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-9, WP-10, WP-13, WP-14 |
+| 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | **Done** (2026-08-18) | WP-8 ✓ |
+| 17 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
+| 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
+| 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
+| 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14 (WP-9 ✓, WP-10 ✓) |
 | 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
 | 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
 | 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
-| 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
-| 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
-| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | WP-6 |
-| 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | Blocked | WP-16 |
-| 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-16…WP-19, WP-20, PRINT-1…6, U1-a |
+| 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Ready** | WP-6 ✓ |
+| 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Ready** | WP-6 ✓, U0-c ✓ |
+| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Ready** | WP-6 ✓, U1-c ✓, U1-d ✓ |
+| 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Ready** | WP-16 ✓ |
+| 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 31 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
 | 32 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
 | 33 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
@@ -111,6 +118,20 @@ commits; its row stays `In progress` until every acceptance item is met.
 **New findings** discovered while implementing a package are added *to that
 package*, unless they need a new architectural decision — in which case add a
 new row with an explicit prerequisite rather than deferring the work silently.
+
+**The state column is re-derived, not inherited (2026-08-18).** Eight rows sat
+`Blocked` on prerequisites that had every one of them reached `Done` — a queue
+reporting one selectable package while eight were open, which is the first
+draft's failure in a slower form. A row goes `Blocked` when a prerequisite is
+unmet and comes back the moment it is met, and nothing performs that second
+half but somebody re-reading the column. So every row above was re-derived from
+this file's own definitions on the date in the header: WP-10 landed with the
+close-dialog rework and is `Done`; WP-11, WP-13, WP-14, WP-18, WP-19 and
+PRINT-1…6 all had their named prerequisites satisfied; WP-16's landing freed
+WP-20; and WP-15 and WP-21, which are genuinely still blocked, now name only
+what is actually missing. **A `Blocked` row whose prerequisite column shows
+nothing but ✓ marks is a bug in this file** — that is the check, and it takes a
+minute.
 
 ## Verification policy for every package
 
@@ -578,13 +599,17 @@ leaving, not a death), the target's watcher is healed by a fresh snapshot, and
 the flag creates the destination so "a new session" is always a workable
 answer. A close pending against the moved terminal is cancelled: a move is
 the reader deciding to keep it.
-**WP-11 — CLI subcommands.** `ls`, `new`, `attach`, `kill-session`,
-`kill-server`, `check-config`, over the same protocol with `client_kind = cli`.
-`--help` and `--version` landed ahead of the package (2026-08-18): both are
-answered in `main()` without touching a socket, the help page is the CLI's
-reference (typeset for 80 columns, measured by `test_cli.cpp`), and the
+**WP-11 — CLI subcommands.** *Ready.* `ls`, `new`, `attach`, `kill-session`,
+`check-config`, over the same protocol with `client_kind = cli`.
+`--help` and `--version` landed ahead of the package (2026-08-18, `a696435`):
+both are answered in `main()` without touching a socket, the help page is the
+CLI's reference (typeset for 80 columns, measured by `test_cli.cpp`), and the
 unknown-argument refusal points at `--help` instead of listing subcommands
-in a second place.
+in a second place. `kill-server` is WP-2's and has been real since then —
+deliberately over its own connect path, so running it twice does not start a
+server in order to kill it. Everything else in that list still arrives at the
+unknown-argument refusal, which is what `main()`'s dispatch says today
+(`src/main.cpp`): five subcommands to write, not six.
 **WP-12 — Config v1 remainder.** *Done, 2026-08-17.* Every key in
 [08-configuration.md](08-configuration.md)'s table is read, validated and
 defaulted; `bind`/`unbind` work and a rebinding reaches dispatch, the footer,
@@ -594,9 +619,20 @@ the which-key popup and the help pages together, because all four read one
 `keys_not_honoured_yet()` names it with the package it waits for. Only
 `check-config`'s CLI entry point still waits for WP-11, and both halves of
 its output already exist as return values.
-**WP-13 — Exit policy, banners, respawn.** `on-exit` = close/hold/
-hold-on-error, the exit banner, and respawn-in-window.
-**WP-14 — Notifications and help.** `NotificationCenter` toasts; help pages
+**WP-13 — Exit policy, banners, respawn.** *Ready.* `on-exit` = close/hold/
+hold-on-error, the exit banner, and respawn-in-window. The wire is shaped for
+all three and nothing on the server fills it in: `TermClosed.hold` is read by
+the client (`mirror.cpp`, `server_session.cpp`) and never set, `RespawnTerminal`
+has neither producer nor handler, and `[general] on-exit` is the first line
+`keys_not_honoured_yet()` prints. **Carried over from WP-8**: the per-session
+terminal limit ([03](03-session-model.md): "config, default 64"), which has no
+key in [08](08-configuration.md) yet and belongs with the policy that decides
+what an over-limit request is told. **Depends on R2**
+([13](13-architecture-review.md), m-exit-msg): a child that exits by itself
+produces no `TermClosed` at all today — the server observes the exit and says
+nothing — so there is no event for a banner to hang on until that lands.
+**WP-14 — Notifications and help.** *Ready* — WP-12 is `Done`, and nothing
+here needs a server. `NotificationCenter` toasts; help pages
 complete, with their key tables generated from the same registry that
 dispatches the keys. `[general] clock` no longer waits here: the menu-bar
 clock and its calendar landed on their own (2026-08-17), being one trailing
@@ -617,7 +653,9 @@ defaulting to deny, and **U1-d** the rest of the typed dialog fields —
 `Radio`, `Combo`, `Number`, beside the `Check` and `Note` that landed for
 `Settings ▸ General…`. They were emulator and widget work in files nothing in
 M2 touches, which is exactly why they could be taken while the server was not
-the thing to work on. PRINT-1…6 now waits only on the wire.
+the thing to work on. PRINT-1…6 waited only on the wire, and the wire has been
+real since WP-6: it is `Ready`, with PRINT-2's messages already encoding and
+decoding and nothing yet producing or handling one ([05](05-protocol.md)).
 
 **WP-17 copy mode** — *done, 2026-08-17.* Search (with smartcase and
 wrapping), vi keys beside the arrow keys, character, line and rectangular
@@ -636,13 +674,20 @@ configurable would mean an action name per motion. `[keys]`'s `copy-mode`
 context therefore still refuses bindings out loud, which is the honest state
 rather than a silent one.
 
-The rest of M4 does wait on the wire: **WP-16** Sixel over it (chunked image
-add, place, remove, and the DA1 advertisement end to end), **WP-18** the paste
+**WP-16 Sixel over the wire** — *done, 2026-08-18 (`5e930a6`)*: chunked image
+add, place and remove all have a producer in `diff_engine.cpp` and a handler in
+`server_session.cpp`, the client's outer-host capability travels on `Attach`
+(`host_sixel`) so the advertisement a child is given reflects the terminal the
+picture will actually be drawn on, and a mirror's rasters carry a scene
+identity of their own because a mirror is never adopted by the `Application`.
+
+The rest of M4 is `Ready` rather than waiting: **WP-18** the paste
 credit flow, **WP-19** bell and activity monitors, and **PRINT-1…6** the
 virtual printer, whose six pieces are
 already itemized in [10-roadmap.md](10-roadmap.md) and behave per
 [04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md).
-**WP-20** the performance budget gates under floods. **WP-21** M4 acceptance:
+**WP-20** the performance budget gates under floods, freed by WP-16.
+**WP-21** M4 acceptance:
 the matrix passes on WezTerm, iTerm2 and Terminal.app; `tmux` runs correctly
 *inside* ckmux; a program printing in a ckmux terminal produces a saved file
 without ckmux opening a device or running a command.

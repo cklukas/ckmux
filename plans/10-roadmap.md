@@ -1,6 +1,6 @@
 # ckmux — Roadmap, Risks & Open Questions
 
-Plan 10 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 10 · Status: draft · 2026-08-18 · [Index](README.md)
 
 Milestones are acceptance-based (ckVision's discipline): a milestone is done
 when its criteria hold with test evidence per [09-testing.md](09-testing.md),
@@ -12,9 +12,15 @@ tree under its gates, and a ckmux milestone is not done while its U-items
 are open. Expect the U-list to grow as ckmux exercises the library — that
 is the point of being its proving ground.
 
-**Status: M0 and M1 are implemented** (2026-08-16; M1's record corrected
-2026-08-17, below). What that means in practice, and what it deliberately does
-not yet mean, is recorded at the end of each section below.
+**Status: M0 and M1 are implemented; M2's two gates are green and M3 is well
+under way** (M0/M1 2026-08-16, M1's record corrected 2026-08-17; M2's gates
+2026-08-17; multi-session state, the picker and takeover, move-terminal and
+the close dialog 2026-08-18). What each of those means in practice, and what it
+deliberately does not yet mean, is recorded at the end of each section below.
+What is *selectable* is never read from here —
+[12-work-packages.md](12-work-packages.md) is the queue, and
+[13-architecture-review.md](13-architecture-review.md) is the remediation
+queue that currently outranks it.
 
 **This file is not the queue.** A milestone here is a paragraph of intent and a
 set of acceptance criteria — it cannot be selected from, and reading M2–M5 as
@@ -138,6 +144,19 @@ The flood gate: a `Ping` answered in 32 ms worst / 24 ms mean while a child runs
 detach, reattach, and the M1 interface unchanged above the seam. What remains of
 this milestone's "done when" is the half only its author can give — daily use.
 
+**And four criticals at M2's own seams, found by review on 2026-08-18.** A
+default-config attach snapshot can exceed the decoder's 16 MiB cap and leave a
+session permanently unattachable; the `needs_snapshot` scan broadcasts to every
+client with no session filter and latches; a shrinking terminal silently
+diverges the mirror because deltas carry no geometry; and a reattach with held
+mirrors opened no windows. They are C1…C4 in
+[13-architecture-review.md](13-architecture-review.md), which tracks them to
+closure. The gates above are still green and the criteria as written still
+hold — but D-034 says a later defect reopens the package that owns it, and
+three of these are defects in machinery M2 declared finished. So the milestone
+is not closed while they stand, for the same reason M1's record was corrected
+rather than quietly amended.
+
 ## M3 — Sessions & management (the multiplexer)
 
 Multiple sessions; startup session picker; new/rename/kill with
@@ -153,6 +172,19 @@ complete (registry-generated key tables); exit banners + respawn;
 table row has a green wire-level test; a newcomer can drive everything from
 menus alone (checklist walkthrough); author's tmux muscle-memory set covered.
 
+**Landed so far (2026-08-18)**: multiple sessions with `NewSession`/
+`RenameSession`/`KillSession` and the two lifecycle rules that come with them —
+the server exits with its last session, and the client outlives the server
+(WP-8); the startup picker and latest-client-wins takeover (WP-9);
+move-terminal between sessions as the in-process pointer move plans/02 promised
+(WP-10); and a close dialog that asks the program rather than killing it. **Not
+yet**: the CLI subcommands (WP-11 — `--help` and `--version` landed ahead of
+it), exit policy, banners and respawn (WP-13), notifications and the complete
+help pages (WP-14), and the acceptance walkthrough itself (WP-15). Window
+geometry is still not restored on reattach, which is honest to say out loud:
+the layout fields exist on the wire and nothing writes them
+([05](05-protocol.md)).
+
 ## M4 — Fidelity (any app)
 
 U1 emulator round (OSC 4/10/11 replies, child OSC 52 policy, tab stops,
@@ -163,6 +195,18 @@ budget gates green under floods; reference-app matrix
 ([04-terminal-emulation.md](04-terminal-emulation.md)) passes; vttest
 chapters recorded. Plus **WP-PRINT**, below.
 
+**Landed ahead of the milestone (2026-08-17/18)**, because none of it needed
+anything M3 owns: **U1-a** tab stops, **U1-c** Media Copy capture behind a
+deny-by-default policy and **U1-d** the typed dialog fields, all in ckVision;
+**WP-17** copy mode complete — search, vi keys, rectangular selection and the
+clipboard targets — which reads a snapshot and nothing else, so the same code
+serves M1's in-process terminals and M2's mirrors; and **WP-16** Sixel over the
+wire, chunked add/place/remove with the host's own capability travelling on
+`Attach` so a child's advertisement reflects the terminal its picture will be
+drawn on. **Still open**: the paste credit flow (WP-18), bell and activity
+monitors (WP-19), the performance budget gates (WP-20), PRINT-1…6 below, and
+the acceptance matrix (WP-21).
+
 ### WP-PRINT — the virtual printer
 
 Media Copy captured into a bounded spool instead of a device, surfaced on
@@ -172,8 +216,8 @@ the window frame, governed by a settings dialog
 
 | ID | Where | Item | Size |
 |---|---|---|---|
-| U1-c | ckVision | Emulator MC capture behind a profile policy defaulting to deny ([07](07-ckvision-integration.md)) | 1–2 d |
-| U1-d | ckVision | Typed dialog fields (radio/check/combo/number) — today descriptors materialize text inputs only | 2–3 d |
+| U1-c | ckVision | Emulator MC capture behind a profile policy defaulting to deny ([07](07-ckvision-integration.md)) — **done 2026-08-17**, L-40 | 1–2 d |
+| U1-d | ckVision | Typed dialog fields (radio/check/combo/number) — descriptors materialized text inputs only — **done 2026-08-17**, L-41/L-42 | 2–3 d |
 | PRINT-1 | server | `PrintSpool` as session state; job boundaries; three-scope policy resolution | 1 d |
 | PRINT-2 | protocol | `SetPrinterPolicy`, `PrintState`, `PrintJobAdded/Fetch/Data/Discard`, snapshot fields ([05](05-protocol.md)) | 0.5 d |
 | PRINT-3 | client | Frame button: four states, live counter, unit formatter | 1 d |
@@ -181,7 +225,10 @@ the window frame, governed by a settings dialog
 | PRINT-5 | client | Printer Settings dialog + key-targeted config write-back | 1 d |
 | PRINT-6 | client | Print Output window; `.txt` and `.ansi` writers; save via `FileDialog` | 1 d |
 
-≈ 8–9 days, 3–5 of them upstream. PDF export (PRINT-7) is parked below.
+≈ 8–9 days, 3–5 of them upstream — and the upstream 3–5 are spent: both U-items
+landed on 2026-08-17, so what is left is PRINT-1…6 in ckmux, which
+[12-work-packages.md](12-work-packages.md) has as `Ready`. PDF export (PRINT-7)
+is parked below.
 
 **Done when**: the matrix table in the release notes shows pass for every
 reference app on WezTerm + iTerm2 + Terminal.app (fallback), `tmux`
@@ -205,35 +252,53 @@ explicit flag — automatic takeover / latest-client-wins is the specified
 contract); tmux-style tiled pane mode inside a window; control mode /
 scripting API; resurrect (relaunch
 layout+commands after server death); Windows/ConPTY (after upstream WP-50);
-kitty keyboard passthrough (U2) and kitty graphics; hyperlink activation;
-scrollback reflow; per-terminal palette re-theming (needs upstream indexed
-color, U2); session groups; **PRINT-7** — PDF export of captured print
+kitty keyboard passthrough and kitty graphics; hyperlink activation;
+scrollback reflow; per-terminal palette re-theming; session groups;
+**PRINT-7** — PDF export of captured print
 output via a dependency-free base-14 `Courier` writer (~200 lines, no font
 embedding). Deliberately never an external converter: spawning a command
 over a child-controlled stream is the exact hazard WP-PRINT removes.
 
+Two of those no longer wait on anything upstream, which is worth saying so
+nobody re-schedules them behind a library item that is finished: indexed colour
+survives end to end (L-22) and [05](05-protocol.md)'s cell carries all three
+kinds, so **per-terminal re-theming** is ckmux UI work somebody has to want;
+and the kitty keyboard **child** side has landed, so what is parked there is
+the passthrough, not the protocol.
+
 ## Risks
+
+`R#` here is a risk in this table. The `R#` in
+[13-architecture-review.md](13-architecture-review.md) is a remediation topic
+and means something else; the two never appear in the same table, the same way
+`WP-n` is disambiguated in [12](12-work-packages.md).
 
 | # | Risk | Mitigation |
 |---|---|---|
 | ~~R1~~ | ~~**Snapshot deep-copy cost** (U0-b) makes tick-rate diffing expensive~~ — **closed 2026-08-17**: U0-b landed in ckVision (`c4f96d2`) before any ckmux hot path existed to work around it. Measured on the pinned machine: 574 µs/op for a full snapshot, 126 µs declining the history, 57 µs for damage plus borrowed cells. The last two do not grow with the history, which was the risk. | The mitigation was carried out as written — the fix went in the library first, and `scene_budget_gate` now pins the steady-state tick. |
 | R2 | **ckVision is pre-1.0 and in an acceptance-audit phase**; behavior may shift under us — and our U-items add churn of our own | Pin by commit; conformance-pin goldens ([09](09-testing.md) §2) catch drift at bump time; U-items are small, well-scoped, and land under ckVision's full gates — we develop both repos, so sequencing is ours to schedule |
+| R2a | **Upstream work ckmux is waiting on, named out loud** (AGENTS.md: a library change that is not done yet goes here rather than being patched around). Open in [07](07-ckvision-integration.md) today: **U3** — the `Presenter` has no scroll op, so a window whose text shifts up a row re-emits every row of that window, which is the case a multiplexer sees constantly; **U1-b** — `StatusLine`/`MenuBar` gaps, none known; **U2** — XTGETTCAP/DECRQSS/rectangles, `OSC 8` inner side, `SGR 53`, when an app demands them | U3 is scheduled behind WP-20's budget gates, which is what will say whether it costs anything a reader can see — the measurement first, then the library change, never a ckmux workaround. U1-b and U2 are demand-driven: an app that needs one is the trigger, and the reference matrix (WP-21) is what finds it. Nothing here is worked around in ckmux in the meantime; if something has to be, that is a design failure and gets a row of its own |
 | R3 | Emulator fidelity long tail (some app misbehaves) | Per-terminal diagnostics surfaced in UI (`Terminal → Info…` shows unknown-sequence log); reference matrix per milestone; upstream fix loop per adopter policy |
-| R4 | Protocol/perf under floods or huge scrollbacks | Scroll ops + RLE + coalescing designed in ([05](05-protocol.md)); budget gates from M2 on; backpressure self-healing tested |
+| R4 | Protocol/perf under floods or huge scrollbacks — **and it has materialised once**: a 10 000-line scrollback encodes a 16.29 MiB attach snapshot, past the decoder's own cap, and that session becomes permanently unattachable (C1) | Scroll ops + RLE + coalescing designed in ([05](05-protocol.md)); budget gates from M2 on; the flood half is measured and holds (`Ping` in 32 ms worst under `yes`). The scrollback half is R1's — the cap enforced where frames are *made*, and snapshots split or bounded — after which this row goes back to being about performance rather than about a session a reader cannot reach |
 | R5 | UX scope creep (menus and options multiply) | v1 non-goals ([01](01-vision.md)) + config minimalism ([08](08-configuration.md)) are binding; additions need a plan edit first |
 | R6 | Single server = single blast radius | Server stays small, UI-free, thread-free, sanitizer-clean, crash-only; the honest-failure table in [03](03-session-model.md) is user-visible truth |
 | R7 | No license upstream yet (D-OPEN-1) | Blocks *publishing*, not development; resolve jointly at ckVision 0.1 |
+| R8 | **Invariants asserted in a comment or a plan and enforced by nothing.** The 2026-08-18 review's central verdict: the design-level engineering holds, and the weaknesses cluster in this one pattern — a size cap that only the decoder applies, a high-water mark that stops nothing, a layer rule a comment claimed the build enforced, a queue whose `Blocked` rows had no unmet prerequisite | Remediation tracked topic by topic in [13-architecture-review.md](13-architecture-review.md), each with a state and a commit. The durable half is that an invariant now has to be *executable*: the layer rule became `tools/check_layers.py` and two CTest cases, and R1 turns the snapshot bound into code on the sending side. A plan row is a claim; the code is the evidence, and re-derivation is somebody's job on every landing |
 
 ## Open questions (answers wanted at M0 review)
 
-1. **Prefix default**: `C-b` (recommended; tmux muscle memory, avoids
-   readline `C-a`) — or `C-a`/F-key?
+1. **Prefix default**: **resolved** — `C-b`, shipped as the default in
+   `Settings::prefix` and rebindable through `[keys]`
+   ([08](08-configuration.md)).
 2. **F10 direct menu** while a terminal is focused: default off
    (recommended — mc conflict) — agree?
-3. **Startup**: always show the picker (recommended) vs auto-attach when
-   exactly one session exists?
-4. **Session auto-names**: numeric `1, 2, …` (tmux-like, recommended) or
-   generated word names?
+3. **Startup**: **resolved** by WP-9 — auto-attach when there is exactly one
+   session and nobody is watching it, because that is the reattach the whole
+   project is for and it needs no permission; the picker appears for every
+   other case, including a session already in use.
+4. **Session auto-names**: **resolved** — `session-N`, N one past the largest
+   occupied number, so renaming "session-2" to "build" does not produce a
+   second "session-2" tomorrow.
 5. **Terminal-window scrollbars**: **resolved** — on, frame-mounted on the
    window's right border (ckVision D-051, [06](06-ui-design.md) open
    question 3), so they cost neither a column nor a child reflow.
