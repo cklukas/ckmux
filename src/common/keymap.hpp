@@ -31,6 +31,7 @@ namespace ckm {
 enum class Action : unsigned char {
     NewTerminal,
     CloseTerminal,
+    MoveTerminal,
     NextTerminal,
     PreviousTerminal,
     WindowList,

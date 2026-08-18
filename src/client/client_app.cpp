@@ -211,6 +211,17 @@ void ClientApp::register_commands() {
             });
         } else if (binding.key == commands::kCloseTerminal) {
             declare(binding.key, binding.title, "Terminal", [this] { close_terminal(active_terminal()); });
+        } else if (binding.key == commands::kMoveTerminal) {
+            // Somewhere else for the program to keep running requires there
+            // to BE a somewhere else: a server with sessions, not M1's one
+            // process. Gated like every session command, because that is
+            // what it is — the terminal is only the passenger.
+            const u::CommandId move = declare(binding.key, binding.title, "Terminal", [this] {
+                show_move_terminal_dialog(terminal_shown_by(active_terminal()));
+            });
+            registry.set_enabled_predicate(move, [this] {
+                return options_.move_terminal && attached_session_ != 0;
+            });
         } else if (binding.key == commands::kMoveResize) {
             declare(binding.key, binding.title, "Window", [this] {
                 if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
@@ -382,7 +393,8 @@ void ClientApp::build_chrome() {
     // desktop around it.
     w::MenuBarItem terminal_menu{
         "&Terminal",
-        {item(commands::kNewTerminal), item(commands::kCloseTerminal), separator,
+        {item(commands::kNewTerminal), item(commands::kCloseTerminal),
+         item(commands::kMoveTerminal), separator,
          item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
          separator, item(commands::kCopyMode), item(commands::kPaste), separator,
          item(commands::kSendPrefix)}};
@@ -876,18 +888,175 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
 
 void ClientApp::confirm_then_close(w::Window* window) {
     if (window == nullptr || desktop_ == nullptr) return;
-    auto presentation = std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
-        app_, *desktop_, roles_,
-        w::MessageBoxDescriptor{w::MessageBoxKind::Confirm, "Close terminal",
-                                "\"" + window->title() +
-                                    "\" is still running a program.\nClose it anyway?",
-                                w::MessageBoxButtons::YesNo}));
-    presentation->set_completion_handler([this, window](w::MessageBoxResult result) {
-        if (result != w::MessageBoxResult::Yes) return;
-        confirmed_close_ = window;
-        window->close();
-    });
+    ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window);
+    if (terminal == nullptr) return;
+
+    // Not "close it anyway?": the reader is deciding what happens to the
+    // PROGRAM, and yes/no said nothing about that. The dialog names each
+    // outcome — asked to quit and optionally killed, or moved somewhere the
+    // program keeps running — and the End session dialog is its model.
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Close terminal";
+    w::FieldDescriptor what;
+    what.kind = w::FieldKind::Note;
+    what.label =
+        "\"" + window->title() + "\" is still running a program. Closing asks it to quit.";
+    descriptor.fields.push_back(std::move(what));
+
+    std::optional<std::size_t> force_field;
+    if (options_.close_terminal_in_session) {
+        force_field = descriptor.fields.size();
+        w::FieldDescriptor force;
+        force.kind = w::FieldKind::Check;
+        force.label = "&Kill it if it has not quit after " +
+                      std::to_string(options_.settings.kill_grace_seconds) + " seconds";
+        // Ticked by default, exactly as End session's is: a reader closing a
+        // terminal means it to close. Unticking is the deliberate choice, and
+        // the note says what that choice costs.
+        force.initial_checked = true;
+        descriptor.fields.push_back(std::move(force));
+        w::FieldDescriptor cost;
+        cost.kind = w::FieldKind::Note;
+        cost.label = "  Unticked, a program that declines keeps running — window and all.";
+        descriptor.fields.push_back(std::move(cost));
+        w::FieldDescriptor where;
+        where.kind = w::FieldKind::Note;
+        where.label = "  The wait is Settings ▸ \"Give programs this long to quit\".";
+        descriptor.fields.push_back(std::move(where));
+        if (terminal_windows_.size() == 1 && options_.settings.kill_empty_session) {
+            // The one consequence a reader cannot see from here: the session
+            // goes with its last terminal (kill-empty-session, plans/03).
+            w::FieldDescriptor last;
+            last.kind = w::FieldKind::Note;
+            const std::string& name = attached_session_name_;
+            last.label =
+                "  This is the last terminal: closing it ends " +
+                (name.empty() ? std::string("the session") : "session \"" + name + "\"") + ".";
+            descriptor.fields.push_back(std::move(last));
+        }
+    } else {
+        // M1: the terminal lives in this process and cannot outlive its
+        // window, so there is no unticked variant to offer — only the truth
+        // about what closing does.
+        w::FieldDescriptor cost;
+        cost.kind = w::FieldKind::Note;
+        cost.label = "  A program that has not quit by the time the window goes is killed.";
+        descriptor.fields.push_back(std::move(cost));
+    }
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Close terminal", w::ButtonRole::Accept, {}});
+    if (options_.move_terminal) {
+        // Dismiss-with-a-job: this dialog goes the way Cancel takes it, and
+        // the move picker opens in its place — one question on screen at a
+        // time, and no close happens that the reader did not choose.
+        descriptor.buttons.push_back(w::ButtonDescriptor{
+            "&Move instead…", w::ButtonRole::Dismiss, [this, terminal] {
+                app_.post([this, terminal] { show_move_terminal_dialog(terminal); });
+            }});
+    }
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, terminal, force_field](const w::DialogResult& result) {
+            if (!result.accepted) return;
+            // Looked up now, not captured: the terminal can end while the
+            // dialog is open, and a window that is already gone means there
+            // is nothing left to close.
+            w::Window* const answered = window_showing(terminal);
+            if (answered == nullptr) return;
+            if (options_.close_terminal_in_session) {
+                const bool force = force_field.has_value() &&
+                                   *force_field < result.checked.size() &&
+                                   result.checked[*force_field];
+                options_.close_terminal_in_session(*terminal, force,
+                                                   options_.settings.kill_grace_seconds);
+                // The window stays. It goes when the server says the terminal
+                // ended — or stays for good if the reader unticked the kill
+                // and the program declined, which is what the dialog said.
+            } else {
+                confirmed_close_ = answered;
+                answered->close();
+            }
+        });
     pending_dialogs_.push_back(std::move(presentation));
+}
+
+void ClientApp::show_move_terminal_dialog(ckv::term::TerminalSubsession* terminal) {
+    if (desktop_ == nullptr || !options_.move_terminal) return;
+    w::Window* const window = window_showing(terminal);
+    if (window == nullptr) return;  // ended while the question was being asked
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Move terminal";
+    w::FieldDescriptor what;
+    what.kind = w::FieldKind::Note;
+    what.label = "Where \"" + window->title() + "\" goes on running.";
+    descriptor.fields.push_back(std::move(what));
+    w::FieldDescriptor unmoved;
+    unmoved.kind = w::FieldKind::Note;
+    unmoved.label = "Its window closes here; the program never notices the move.";
+    descriptor.fields.push_back(std::move(unmoved));
+
+    // The real destinations: every session that is not this one, then a fresh
+    // one. The list of others can be empty and the dialog still works — "a
+    // new session" is always true, which is what keeps the close dialog's
+    // Move button from ever being the greyed kind of lie.
+    // The radio's own index in the result: `selected` is parallel to the
+    // FIELDS, and the notes above it answer -1 — reading front() here is the
+    // mistake the session picker cannot make, because its radio is first.
+    const std::size_t to_field = descriptor.fields.size();
+    w::FieldDescriptor to;
+    to.kind = w::FieldKind::Radio;
+    to.label = "To";
+    move_choice_.clear();
+    for (const SessionRow& row : last_sessions_) {
+        if (row.id == attached_session_) continue;
+        std::string line = row.name.empty() ? "session " + std::to_string(row.id) : row.name;
+        line += row.terminals == 1 ? " — 1 terminal"
+                                   : " — " + std::to_string(row.terminals) + " terminals";
+        to.options.push_back(std::move(line));
+        move_choice_.push_back(row.id);
+    }
+    to.options.push_back("a &new session");
+    to.initial_selection = 0;
+    descriptor.fields.push_back(std::move(to));
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Move", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, terminal, to_field](const w::DialogResult& result) {
+            if (!result.accepted || result.selected.size() <= to_field) return;
+            const int chosen = result.selected[to_field];
+            if (chosen < 0) return;
+            if (window_showing(terminal) == nullptr) return;  // ended meanwhile
+            const std::size_t index = static_cast<std::size_t>(chosen);
+            if (index < move_choice_.size())
+                options_.move_terminal(*terminal, move_choice_[index], false);
+            else
+                options_.move_terminal(*terminal, 0, true);
+            // The window leaves when the server says the terminal left; a
+            // window taken down here would vanish even when the move failed.
+        });
+    pending_dialogs_.push_back(std::move(presentation));
+}
+
+ckv::widgets::Window* ClientApp::window_showing(const ckv::term::TerminalSubsession* terminal) const {
+    if (terminal == nullptr) return nullptr;
+    const auto found = terminal_windows_.find(terminal);
+    return found != terminal_windows_.end() ? found->second : nullptr;
+}
+
+ckv::term::TerminalSubsession* ClientApp::terminal_shown_by(w::Window* window) const {
+    if (window == nullptr) return nullptr;
+    for (const auto& [subsession, shown] : terminal_windows_)
+        if (shown == window)
+            return const_cast<ckv::term::TerminalSubsession*>(subsession);
+    return nullptr;
 }
 
 void ClientApp::close_terminal(w::Window* window) {

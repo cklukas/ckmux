@@ -12,9 +12,10 @@ using ContextName = std::pair<std::string_view, KeyContext>;
 // Kebab-case, because that is what the rest of the file is written in
 // (`login-shell`, `kill-empty-session`) and a reader should not have to
 // remember which half of their configuration uses which style.
-constexpr std::array<ActionName, 22> kActions{{
+constexpr std::array<ActionName, 23> kActions{{
     {"new-terminal", Action::NewTerminal},
     {"close-terminal", Action::CloseTerminal},
+    {"move-terminal", Action::MoveTerminal},
     {"next-terminal", Action::NextTerminal},
     {"previous-terminal", Action::PreviousTerminal},
     {"window-list", Action::WindowList},

@@ -459,16 +459,15 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
-        (void)terminals_.close(close_it->term);
-        diffs_.forget(close_it->term);
-        for (Session& session : sessions_)
-            session.terminals.erase(
-                std::remove(session.terminals.begin(), session.terminals.end(), close_it->term),
-                session.terminals.end());
-        proto::TermClosed closed;
-        closed.term = close_it->term;
-        closed.exited = 1;
-        if (Client* const watcher = client_attached_to(client.session)) send(*watcher, closed);
+        // Asked, watched, and only then removed — the terminal keeps being
+        // served while its program decides, so a goodbye it prints lands on
+        // the reader's screen rather than in a closed PTY.
+        begin_close(close_it->term, close_it->force != 0,
+                    static_cast<int>(close_it->grace_seconds));
+        return;
+    }
+    if (const auto* move = std::get_if<proto::MoveTerminal>(&message)) {
+        move_terminal(client, *move);
         return;
     }
     if (std::holds_alternative<proto::KillServer>(message)) {
@@ -604,6 +603,156 @@ void Server::advance_kills() {
         kills_.erase(kills_.begin() + static_cast<std::ptrdiff_t>(index));
         forget_session(ended, proto::DetachReason::SessionKilled, "the session was ended");
     }
+}
+
+void Server::begin_close(TerminalId id, bool force, int grace_seconds) {
+    Terminal* const terminal = terminals_.find(id);
+    // Already gone is not an error: a client closing the window of a terminal
+    // that just ended races this message, and neither side is wrong.
+    if (terminal == nullptr) return;
+    // Asked, not killed — the same courtesy begin_kill extends, for the same
+    // reason: the programs that ignore SIGTERM are exactly the ones a reader
+    // wants to decide about rather than have decided for them.
+    terminal->request_termination();
+    const std::int64_t deadline =
+        clock_.now_nanos() + static_cast<std::int64_t>(std::max(0, grace_seconds)) * 1'000'000'000;
+    for (PendingClose& pending : closes_) {
+        if (pending.term != id) continue;
+        pending.force = force;
+        pending.deadline_nanos = deadline;
+        return;
+    }
+    closes_.push_back(PendingClose{id, deadline, force});
+    std::fprintf(stderr, "ckmux server: closing terminal %llu (%d s grace, %s)\n",
+                 static_cast<unsigned long long>(id), grace_seconds, force ? "then kill" : "no kill");
+}
+
+void Server::advance_closes() {
+    const std::int64_t now = clock_.now_nanos();
+    for (std::size_t index = 0; index < closes_.size();) {
+        const PendingClose pending = closes_[index];
+        Terminal* const terminal = terminals_.find(pending.term);
+        if (terminal == nullptr) {
+            // A session kill got there first; nothing left to watch.
+            closes_.erase(closes_.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+        if (terminal->live() && now < pending.deadline_nanos) {
+            ++index;
+            continue;
+        }
+        if (terminal->live() && !pending.force) {
+            // The reader said not to kill. The program keeps running, and its
+            // terminal with it — saying so beats pretending it closed.
+            std::fprintf(stderr,
+                         "ckmux server: terminal %llu kept: its program declined to quit and "
+                         "kill was not enabled\n",
+                         static_cast<unsigned long long>(pending.term));
+            closes_.erase(closes_.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+        // The child exited on the asking, or the time is up with the
+        // escalation enabled. Closing is what removes a terminal either way —
+        // ckVision's close escalates to SIGKILL for whatever is left.
+        closes_.erase(closes_.begin() + static_cast<std::ptrdiff_t>(index));
+        remove_terminal(pending.term, /*exited=*/true);
+    }
+}
+
+void Server::remove_terminal(TerminalId id, bool exited) {
+    Session* const home = session_holding(id);
+    std::optional<int> status;
+    if (Terminal* const terminal = terminals_.find(id)) status = terminal->exit_status();
+    (void)terminals_.close(id);
+    diffs_.forget(id);
+    proto::TermClosed closed;
+    closed.term = id;
+    closed.exited = exited ? 1 : 0;
+    closed.exit_status = status.value_or(0);
+    if (home == nullptr) return;
+    home->terminals.erase(std::remove(home->terminals.begin(), home->terminals.end(), id),
+                          home->terminals.end());
+    if (Client* const watcher = client_attached_to(home->id)) send(*watcher, closed);
+    // Every client's picker counts terminals, and the count just changed.
+    for (const std::unique_ptr<Client>& watcher : clients_)
+        if (watcher->greeted) send_session_list(*watcher);
+    // The reader's kill-empty-session (plans/03): a session emptied by an
+    // explicit close has served its purpose, and the watcher falls back to
+    // the picker rather than keeping an empty desktop nobody asked for.
+    if (home->terminals.empty() && options_.settings.kill_empty_session)
+        forget_session(home->id, proto::DetachReason::SessionKilled, "its last terminal closed");
+}
+
+Session* Server::session_holding(TerminalId id) {
+    for (Session& session : sessions_)
+        for (const TerminalId held : session.terminals)
+            if (held == id) return &session;
+    return nullptr;
+}
+
+void Server::move_terminal(Client& client, const proto::MoveTerminal& request) {
+    Session* source = session_holding(request.term);
+    if (terminals_.find(request.term) == nullptr || source == nullptr) {
+        proto::Error error;
+        error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+        error.context = "MoveTerminal";
+        error.human = "no such terminal";
+        send(client, error);
+        return;
+    }
+    const SessionId source_id = source->id;
+    Session* target = nullptr;
+    if (request.to_new_session != 0) {
+        // `create_session` can grow `sessions_`, which moves every Session in
+        // it — `source` is re-found rather than trusted across the call.
+        target = &create_session({});
+        source = session_for(source_id);
+    } else {
+        target = session_for(request.destination_session);
+        if (target == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+            error.context = "MoveTerminal";
+            error.human = "no such session";
+            send(client, error);
+            return;
+        }
+    }
+    if (target == source) return;  // plans/03: target = source is a no-op
+    // A move is the reader deciding to keep the program: a close that was
+    // pending against this terminal is off.
+    closes_.erase(std::remove_if(closes_.begin(), closes_.end(),
+                                 [&request](const PendingClose& pending) {
+                                     return pending.term == request.term;
+                                 }),
+                  closes_.end());
+    // Reparenting is editing the two id lists. The PTY, the emulator and the
+    // scrollback never lived anywhere else, so the child does not notice
+    // (plans/03).
+    source->terminals.erase(
+        std::remove(source->terminals.begin(), source->terminals.end(), request.term),
+        source->terminals.end());
+    target->terminals.push_back(request.term);
+    // The source's watcher sees the window leave without a death notice:
+    // exited = 0 says nothing exited, so no banner and no invented status.
+    proto::TermClosed left;
+    left.term = request.term;
+    left.exited = 0;
+    if (Client* const watcher = client_attached_to(source->id)) send(*watcher, left);
+    // The target's watcher learns from a fresh snapshot. A terminal it has
+    // never seen has no delta baseline — the same problem as a client that
+    // fell behind, healed the same way.
+    if (Client* const watcher = client_attached_to(target->id)) watcher->dirty_snapshot = true;
+    for (const std::unique_ptr<Client>& watcher : clients_)
+        if (watcher->greeted) send_session_list(*watcher);
+    std::fprintf(stderr, "ckmux server: terminal %llu moved from session %llu to session %llu\n",
+                 static_cast<unsigned long long>(request.term),
+                 static_cast<unsigned long long>(source_id),
+                 static_cast<unsigned long long>(target->id));
+    // An emptied source is subject to the same rule as any emptied session.
+    if (source->terminals.empty() && options_.settings.kill_empty_session)
+        forget_session(source->id, proto::DetachReason::SessionKilled,
+                       "its last terminal moved away");
 }
 
 void Server::forget_session(SessionId id, proto::DetachReason reason, std::string text) {
@@ -775,6 +924,8 @@ void Server::flush_tick() {
     // A session being ended is watched here rather than waited for: the loop
     // keeps serving every other terminal while its programs take their time.
     if (!kills_.empty()) advance_kills();
+    // And a terminal being closed, for the same reason.
+    if (!closes_.empty()) advance_closes();
 
     // A client that fell behind is healed before anything else is sent to it: a
     // fresh snapshot, once its queue has drained. The deltas it missed are gone
@@ -857,8 +1008,23 @@ void Server::run() {
     // What was already queued goes out before the sockets do. A client that is
     // told "the session ended" and then reads EOF knows what happened; one that
     // only reads EOF has to guess, and would guess "the server crashed".
-    for (const std::unique_ptr<Client>& client : clients_)
-        if (client->stream.wants_write()) (void)client->stream.flush();
+    //
+    // Drained with retries, briefly and bounded — not one attempt: a flush
+    // moves what the kernel will take at that instant, and the moment this
+    // matters most is exactly when the queue is fullest, because the final
+    // Detached and the emptied session list were just queued to everyone.
+    // One attempt lost the tail often enough for a test to see the picker
+    // starve of its list.
+    for (int attempt = 0; attempt < 250; ++attempt) {
+        bool still_writing = false;
+        for (const std::unique_ptr<Client>& client : clients_) {
+            if (!client->stream.wants_write()) continue;
+            (void)client->stream.flush();
+            still_writing = still_writing || client->stream.wants_write();
+        }
+        if (!still_writing) break;
+        ::usleep(2000);
+    }
     for (const std::unique_ptr<Client>& client : clients_) client->stream.close();
     clients_.clear();
 }

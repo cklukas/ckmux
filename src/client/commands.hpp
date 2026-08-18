@@ -45,6 +45,7 @@ namespace commands {
 // that assigned it.
 inline constexpr std::string_view kNewTerminal = "ckmux.terminal.new";
 inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
+inline constexpr std::string_view kMoveTerminal = "ckmux.terminal.move-session";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";

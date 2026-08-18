@@ -121,7 +121,15 @@ bool ServerSession::handle(const proto::Message& message) {
             // The window stays until a reader closes it, banner and all
             // (plans/03 on-exit), so the mirror is kept: what exited is the
             // child, not the terminal's last screen.
-            if (closed->hold == 0 && on_terminal_closed) on_terminal_closed(closed->term);
+            if (closed->hold == 0) {
+                if (on_terminal_closed) on_terminal_closed(closed->term);
+                // And the mirror goes with the window — the same erasure the
+                // Attached prune does. A terminal that merely LEFT (a move,
+                // exited=0) can come back under the same id on a later
+                // attach, and a stale entry here would swallow the
+                // on_terminal_opened that builds its window.
+                terminals_.erase(closed->term);
+            }
         }
         return true;
     }
@@ -214,6 +222,12 @@ void ServerSession::heal_if_needed() {
 RemoteTerminalSubsession* ServerSession::terminal(std::uint64_t id) {
     const auto found = terminals_.find(id);
     return found == terminals_.end() ? nullptr : found->second.get();
+}
+
+std::optional<std::uint64_t> ServerSession::id_of(const ckv::term::TerminalSubsession& terminal) const {
+    for (const auto& [id, remote] : terminals_)
+        if (remote.get() == &terminal) return id;
+    return std::nullopt;
 }
 
 std::vector<std::uint64_t> ServerSession::terminal_ids() const {

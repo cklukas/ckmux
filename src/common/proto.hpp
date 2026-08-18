@@ -456,7 +456,27 @@ struct MoveTerminal {
     static constexpr MessageType kType = MessageType::MoveTerminal;
     std::uint64_t term = 0;
     std::uint64_t destination_session = 0;
+    // Set when the reader chose "a new session" rather than one from the
+    // list, and it outranks `destination_session`: an explicit flag, not a
+    // magic id, because Attach already gave 0 a different meaning ("the
+    // default one") and a wire that reuses a number for a second meaning is
+    // a wire someone will eventually decode with the first.
+    std::uint8_t to_new_session = 0;
     friend bool operator==(const MoveTerminal&, const MoveTerminal&) = default;
+};
+
+struct CloseTerminal {
+    static constexpr MessageType kType = MessageType::CloseTerminal;
+    std::uint64_t term = 0;
+    // The same two answers KillSession carries, scoped to one terminal: the
+    // program is asked first — SIGHUP then SIGTERM, by the library that owns
+    // the child — and these say how long to wait and whether anything that
+    // ignores the asking is killed outright. `force = 0` means the program
+    // keeps running, and its terminal with it; a reader who unticks the box
+    // is choosing that.
+    std::uint8_t force = 1;
+    std::uint16_t grace_seconds = 5;
+    friend bool operator==(const CloseTerminal&, const CloseTerminal&) = default;
 };
 
 struct MoveResize {
@@ -720,7 +740,6 @@ using ListSessions = Empty<MessageType::ListSessions>;
 using Detach = Empty<MessageType::Detach>;
 using KillServer = Empty<MessageType::KillServer>;
 using SessionsChanged = Empty<MessageType::SessionsChanged>;
-using CloseTerminal = TerminalRef<MessageType::CloseTerminal>;
 using KillTerminal = TerminalRef<MessageType::KillTerminal>;
 using RespawnTerminal = TerminalRef<MessageType::RespawnTerminal>;
 using Raise = TerminalRef<MessageType::Raise>;

@@ -356,3 +356,286 @@ CK_TEST(a_second_starter_loses_the_lock_rather_than_replacing_the_first_server) 
     CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(answer));
     forget(socket);
 }
+
+namespace {
+
+// Steps the server — advancing the manual clock one tick per pass so the
+// flush tick, and with it advance_closes, actually runs — until a message of
+// the wanted alternative arrives. Child exits are real-world events, so this
+// waits on real time too: bounded, not slept blindly.
+template <typename Wanted>
+bool await_message(Server& server, ckv::ManualClock& clock, WireClient& client, Wanted& out,
+                   int wait_ms = 6000) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        clock.advance(34'000'000);
+        // Drained AFTER the step even when the step stopped the server: the
+        // stopping pass can be the very one that flushed the wanted frame.
+        const bool alive = server.step();
+        ckm::proto::Message message;
+        while (client.take(message)) {
+            if (const Wanted* wanted = std::get_if<Wanted>(&message)) {
+                out = *wanted;
+                return true;
+            }
+        }
+        if (!alive) return false;
+        ::usleep(5'000);
+    }
+    return false;
+}
+
+// Greets and attaches one client to the default session, swallowing the
+// handshake so a test starts at the part it is about.
+bool greet_and_attach(Server& server, WireClient& client) {
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    client.say(hello);
+    ckm::proto::Message greeting;
+    if (!pump(server, client, greeting)) return false;
+    if (!std::holds_alternative<ckm::proto::HelloAck>(greeting)) return false;
+    ckm::proto::Attach attach;
+    attach.columns = 40;
+    attach.rows = 8;
+    client.say(attach);
+    ckm::proto::Message attached;
+    if (!pump(server, client, attached)) return false;
+    return std::holds_alternative<ckm::proto::Attached>(attached);
+}
+
+// Waits until the child has drawn `marker` — the only way a test can know a
+// real child's trap is installed before it starts sending it signals.
+bool await_marker(Server& server, ckv::ManualClock& clock, ckm::server::Terminal& terminal,
+                  std::string_view marker, int wait_ms = 6000) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        clock.advance(34'000'000);
+        if (!server.step()) return false;
+        const ckv::core::TerminalSnapshot snapshot = terminal.session().snapshot();
+        std::string text;
+        for (const ckv::Cell& cell : snapshot.cell_buffer) text += cell.grapheme();
+        if (text.find(marker) != std::string::npos) return true;
+        ::usleep(5'000);
+    }
+    return false;
+}
+
+}  // namespace
+
+CK_TEST(closing_asks_first_and_the_window_falls_when_the_child_exits) {
+    // The close dialog's first promise: the program is ASKED — SIGHUP, then
+    // SIGTERM — and the terminal goes when the child does, not when a timer
+    // says so. The grace here is an hour, so a TermClosed can only mean the
+    // exit was observed.
+    const std::filesystem::path socket = private_socket("graceclose");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    ckm::proto::CloseTerminal close_it;
+    close_it.term = id;
+    close_it.force = 1;
+    close_it.grace_seconds = 3600;
+    client.say(close_it);
+
+    ckm::proto::TermClosed closed;
+    CK_CHECK(await_message(server, clock, client, closed));
+    CK_CHECK(closed.term == id);
+    CK_CHECK(closed.exited == 1);
+    CK_CHECK(server.terminals().find(id) == nullptr);
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(unticked_kill_keeps_a_program_that_declines_to_quit) {
+    // The dialog's unticked promise: a program that ignores the asking keeps
+    // running, and its terminal with it. Then the ticked variant ends it, so
+    // the same child proves both halves.
+    const std::filesystem::path socket = private_socket("keptclose");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    // Isolated from the empty-session rule: this test is about the grace.
+    settings.kill_empty_session = false;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(
+        0, spec_running("trap '' HUP TERM; printf T-READY; while :; do sleep 1; done"));
+    const ckm::server::TerminalId id = terminal.id();
+    CK_CHECK(await_marker(server, clock, terminal, "T-READY"));
+
+    ckm::proto::CloseTerminal close_it;
+    close_it.term = id;
+    close_it.force = 0;
+    close_it.grace_seconds = 1;
+    client.say(close_it);
+
+    // Well past the grace in manual time, with real time for the ignored
+    // signals to land. No TermClosed may arrive: the reader said not to kill.
+    for (int pass = 0; pass < 40; ++pass) {
+        clock.advance(100'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message message;
+        while (client.take(message))
+            CK_CHECK(!std::holds_alternative<ckm::proto::TermClosed>(message));
+        ::usleep(5'000);
+    }
+    ckm::server::Terminal* const kept = server.terminals().find(id);
+    CK_CHECK(kept != nullptr);
+    CK_CHECK(kept != nullptr && kept->live());
+
+    // The reader changes their mind: the same close with the kill ticked and
+    // no grace ends even a program that ignores every polite signal.
+    close_it.force = 1;
+    close_it.grace_seconds = 0;
+    client.say(close_it);
+    ckm::proto::TermClosed closed;
+    CK_CHECK(await_message(server, clock, client, closed));
+    CK_CHECK(closed.term == id);
+    CK_CHECK(server.terminals().find(id) == nullptr);
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_session_emptied_by_a_close_ends_and_takes_the_server_with_it) {
+    // kill-empty-session, on the explicit-close path: the last terminal's
+    // close ends the session, the watcher is detached to the picker, and a
+    // server with no sessions left stops (plans/03).
+    const std::filesystem::path socket = private_socket("emptyclose");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+
+    ckm::proto::CloseTerminal close_it;
+    close_it.term = terminal.id();
+    client.say(close_it);
+
+    ckm::proto::Detached detached;
+    CK_CHECK(await_message(server, clock, client, detached));
+    CK_CHECK(detached.reason == ckm::proto::DetachReason::SessionKilled);
+    // A server with nothing to serve is a process holding a socket for
+    // nobody: the next step says it stopped.
+    clock.advance(34'000'000);
+    CK_CHECK(!server.step());
+    forget(socket);
+}
+
+CK_TEST(a_move_reparents_the_terminal_and_the_child_never_notices) {
+    // plans/03's move-terminal row: membership changes, the PTY does not. The
+    // source's watcher sees the window leave WITHOUT an exit; the counts move
+    // one session to the other; the child is still alive afterwards.
+    const std::filesystem::path socket = private_socket("moveterm");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.kill_empty_session = false;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    // A destination that does not exist is an error, said out loud.
+    ckm::proto::MoveTerminal wrong;
+    wrong.term = id;
+    wrong.destination_session = 77;
+    client.say(wrong);
+    ckm::proto::Error refusal;
+    CK_CHECK(await_message(server, clock, client, refusal));
+    CK_CHECK(refusal.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NoSuchSession));
+
+    ckm::proto::NewSession second;
+    second.name = "two";
+    client.say(second);
+    ckm::proto::SessionList with_two;
+    CK_CHECK(await_message(server, clock, client, with_two));
+    CK_CHECK(with_two.sessions.size() == 2U);
+    const std::uint64_t destination = with_two.sessions.back().id;
+
+    ckm::proto::MoveTerminal move;
+    move.term = id;
+    move.destination_session = destination;
+    client.say(move);
+
+    // The window leaves without a death notice: exited says nothing exited.
+    ckm::proto::TermClosed left;
+    CK_CHECK(await_message(server, clock, client, left));
+    CK_CHECK(left.term == id);
+    CK_CHECK(left.exited == 0);
+
+    ckm::proto::ListSessions ask;
+    client.say(ask);
+    ckm::proto::SessionList after;
+    CK_CHECK(await_message(server, clock, client, after));
+    CK_CHECK(after.sessions.size() == 2U);
+    for (const ckm::proto::SessionInfo& info : after.sessions) {
+        if (info.id == destination) CK_CHECK(info.terminals == 1U);
+        else CK_CHECK(info.terminals == 0U);
+    }
+    ckm::server::Terminal* const moved = server.terminals().find(id);
+    CK_CHECK(moved != nullptr);
+    CK_CHECK(moved != nullptr && moved->live());
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_move_to_a_new_session_creates_one_around_the_terminal) {
+    // The close dialog's "a new session" answer, at the wire: the flag —
+    // not a magic id — creates the destination and the terminal arrives in
+    // it. With kill-empty-session on (the default), the emptied source ends
+    // and its watcher lands in the picker, which is exactly what the reader
+    // who moved their last terminal away should see.
+    const std::filesystem::path socket = private_socket("movenew");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    ckm::proto::MoveTerminal move;
+    move.term = id;
+    move.to_new_session = 1;
+    client.say(move);
+
+    ckm::proto::Detached detached;
+    CK_CHECK(await_message(server, clock, client, detached));
+    CK_CHECK(detached.reason == ckm::proto::DetachReason::SessionKilled);
+    // The program survived its session: it lives in the created one.
+    ckm::server::Terminal* const moved = server.terminals().find(id);
+    CK_CHECK(moved != nullptr);
+    CK_CHECK(moved != nullptr && moved->live());
+    server.terminals().close_all();
+    forget(socket);
+}

@@ -128,7 +128,7 @@ the chord state machine from there (details in
 | `^B t` | Tile windows · `^B T` cascade |
 | `^B [` | Copy mode (scrollback) |
 | `^B ]` | Paste internal clipboard |
-| `^B x` | Close terminal (confirm if child alive) |
+| `^B x` | Close terminal (dialog while the child is alive: quit + optional kill, or move) |
 | `^B .` | Move terminal to session… (picker) |
 | `^B P` | Print output… (captured printer output for this terminal) |
 | `^B m` | Open menu bar |
@@ -143,6 +143,60 @@ nothing for a binding to point at; and a row of this table that ckmux has not
 built yet has no action name, because a name that parses and then does
 nothing is the defect the reachability rule exists for. The names appear as
 their packages do.
+
+### Closing a terminal (the dialog tells the whole truth)
+
+`^B x`, the window's close box, and Terminal ▸ Close Terminal all ask the
+same question when the child is still alive — and only then; a dead child's
+window just closes, and `confirm-kill = false` skips the asking entirely.
+The question is about the PROGRAM, so yes/no was the wrong shape; the dialog
+names each outcome:
+
+```
+┌ Close terminal ─────────────────────────────────────┐
+│ "htop" is still running a program. Closing asks it  │
+│ to quit.                                            │
+│ [x] Kill it if it has not quit after 5 seconds      │
+│   Unticked, a program that declines keeps running — │
+│   window and all.                                   │
+│   The wait is Settings ▸ "Give programs this long   │
+│   to quit".                                         │
+│   This is the last terminal: closing it ends        │
+│   session "work".          ← only when it is true   │
+│                                                     │
+│  [ Close terminal ]  [ Move instead… ]  [ Cancel ]  │
+└─────────────────────────────────────────────────────┘
+```
+
+Enter is the fast path a tmux hand expects — asked, then killed after the
+grace — and every claim is backed: the checkbox is the End session dialog's,
+sharing `kill-grace-seconds`; the last-terminal note appears exactly when
+`kill-empty-session` makes it true; and the window falls when the server says
+the terminal ended (`TermClosed`), never before — which is also what lets an
+unticked decline keep the window honestly alive. A serverless (M1) client
+shows the same dialog without the checkbox or the Move button: its terminal
+cannot outlive the window, and the note says what closing does instead.
+
+"Move instead…" dismisses the close question and opens the move picker in
+its place — one question on screen at a time. The same picker is `^B .`:
+
+```
+┌ Move terminal ──────────────────────────────┐
+│ Where "htop" goes on running.               │
+│ Its window closes here; the program never   │
+│ notices the move.                           │
+│ To (•) build — 3 terminals                  │
+│    ( ) a new session                        │
+│                                             │
+│           [ Move ]  [ Cancel ]              │
+└─────────────────────────────────────────────┘
+```
+
+The rows are every session that is not this one, then "a new session" — a
+row that is always true, which is what keeps the Move button from ever being
+the greyed kind of lie. Moving the last terminal away ends the emptied
+session (`kill-empty-session`); the reader lands on the picker, where the
+destination is one Enter away.
 
 ### Keymap registry (single source of truth)
 

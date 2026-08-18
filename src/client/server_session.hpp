@@ -24,6 +24,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,11 @@ public:
     void connection_lost();
 
     RemoteTerminalSubsession* terminal(std::uint64_t id);
+    // The wire id of one of this session's mirrors, or nothing when the
+    // subsession is not one of them. The client's dialogs hold a
+    // `TerminalSubsession&` — the same handle a local terminal answers to —
+    // so the id is recovered here rather than widening that type.
+    std::optional<std::uint64_t> id_of(const ckv::term::TerminalSubsession& terminal) const;
     std::vector<std::uint64_t> terminal_ids() const;
     bool attached() const noexcept { return attached_; }
     std::uint64_t session() const noexcept { return session_; }

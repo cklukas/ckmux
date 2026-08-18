@@ -866,3 +866,125 @@ CK_TEST(leaving_a_session_takes_its_windows_down_and_leaves_the_programs_alone) 
     CK_CHECK(f.client.desktop().windows().size() == 1U);
     CK_CHECK(f.client.desktop().windows().front()->title() == "Terminal 1");
 }
+
+CK_TEST(an_attached_close_asks_the_server_and_the_window_waits_for_it) {
+    // The reworked close dialog's accept does not close the window: it asks
+    // the server — force from the checkbox, the wait from the reader's
+    // setting — and the window falls when the TermClosed comes back. The
+    // hooks stand in for the server on both halves of that round trip.
+    ClientOptions options = test_options();
+    options.settings.kill_grace_seconds = 7;
+    bool asked = false;
+    bool asked_force = false;
+    int asked_grace = 0;
+    ckv::term::TerminalSubsession* asked_terminal = nullptr;
+    options.close_terminal_in_session = [&](ckv::term::TerminalSubsession& terminal, bool force,
+                                            int grace) {
+        asked = true;
+        asked_force = force;
+        asked_grace = grace;
+        asked_terminal = &terminal;
+    };
+    options.move_terminal = [](ckv::term::TerminalSubsession&, std::uint64_t, bool) {};
+    ConfiguredFixture f(std::move(options));
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kCloseTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(asked);
+    CK_CHECK(asked_force);       // the kill checkbox starts ticked
+    CK_CHECK(asked_grace == 7);  // and the wait is the reader's setting, not a constant
+    // The window is still here: only the server knows when the program ends.
+    CK_CHECK(!f.app.is_modal());
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+    // The server answers that the terminal ended; now the window goes.
+    CK_CHECK(asked_terminal != nullptr);
+    if (asked_terminal != nullptr) f.client.close_window_for_terminal(*asked_terminal);
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 0U);
+}
+
+CK_TEST(the_move_picker_offers_the_others_and_always_a_new_session) {
+    ClientOptions options = test_options();
+    std::uint64_t moved_to = 99;
+    bool moved_new = false;
+    int moves = 0;
+    options.move_terminal = [&](ckv::term::TerminalSubsession&, std::uint64_t destination,
+                                bool to_new_session) {
+        ++moves;
+        moved_to = destination;
+        moved_new = to_new_session;
+    };
+    ConfiguredFixture f(std::move(options));
+    f.app.step(0);
+    f.client.set_attached_session(1, "one");
+    f.client.remember_sessions({{1, "one", 1, true}, {7, "build", 2, false}});
+    f.app.step(0);
+
+    // ^B . — the same dialog the close dialog's Move button reaches. The
+    // first row is the one OTHER session; the watched one is not a
+    // destination.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kMoveTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(moves == 1);
+    CK_CHECK(moved_to == 7U);
+    CK_CHECK(!moved_new);
+
+    // Asked again, the reader arrows past it to "a new session" — the row
+    // that is always there, which is what keeps the picker workable when
+    // nothing else is running at all.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kMoveTerminal)));
+    f.app.step(0);
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Down, ckv::Modifier::None, ""}});
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(moves == 2);
+    CK_CHECK(moved_new);
+}
+
+CK_TEST(the_close_dialogs_move_button_swaps_to_the_move_picker) {
+    ClientOptions options = test_options();
+    int closes = 0;
+    options.close_terminal_in_session = [&](ckv::term::TerminalSubsession&, bool, int) {
+        ++closes;
+    };
+    bool move_offered = false;
+    options.move_terminal = [&](ckv::term::TerminalSubsession&, std::uint64_t destination,
+                                bool to_new_session) {
+        move_offered = true;
+        CK_CHECK(destination == 0U);
+        CK_CHECK(to_new_session);
+    };
+    ConfiguredFixture f(std::move(options));
+    f.app.step(0);
+    f.client.set_attached_session(1, "one");
+    f.client.remember_sessions({{1, "one", 1, true}});
+    f.app.step(0);
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kCloseTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+    // Alt+M: the Move button dismisses the close question and opens the
+    // picker in its place. With no other session running, its one row is "a
+    // new session" — the button never leads anywhere dead.
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Alt, "m"}});
+    f.app.step(0);
+    f.app.step(0);  // the picker opens from a posted callback
+    CK_CHECK(f.app.is_modal());
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(move_offered);
+    CK_CHECK(closes == 0);  // nothing was closed that the reader did not choose
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+}

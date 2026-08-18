@@ -120,10 +120,13 @@ std::vector<Message> every_message() {
     messages.emplace_back(TermClosed{11, 1, -9, 1});
     messages.emplace_back(TermMeta{11, 2, "make", static_cast<std::uint8_t>(TermMetaFlag::Activity)});
     messages.emplace_back(NewTerminal{4, "htop", Rect{0, 0, 60, 20}});
-    messages.emplace_back(CloseTerminal{11});
+    // Non-default force and grace, so a codec that silently drops either
+    // field fails here rather than in a dialog whose checkbox stopped
+    // meaning anything.
+    messages.emplace_back(CloseTerminal{11, 0, 30});
     messages.emplace_back(KillTerminal{11});
     messages.emplace_back(RespawnTerminal{11});
-    messages.emplace_back(MoveTerminal{11, 5});
+    messages.emplace_back(MoveTerminal{11, 5, 1});
     messages.emplace_back(MoveResize{11, Rect{-1, -2, 33, 11}});
     messages.emplace_back(Raise{11});
     messages.emplace_back(FocusTerm{11});

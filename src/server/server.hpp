@@ -190,6 +190,28 @@ private:
     };
     void begin_kill(Session& session, bool force, int grace_seconds);
     void advance_kills();
+    // Ending one terminal, the same shape as ending a session: asked first,
+    // watched on the tick, killed at the deadline only when the reader said
+    // so. A second ask for the same terminal replaces the first one's terms
+    // rather than stacking — the reader changed their mind, not their count.
+    struct PendingClose {
+        TerminalId term = 0;
+        std::int64_t deadline_nanos = 0;
+        bool force = true;
+    };
+    void begin_close(TerminalId term, bool force, int grace_seconds);
+    void advance_closes();
+    // Actually removes one terminal: the PTY, the diffs, the session row, and
+    // the watcher's window. `exited` distinguishes a child that ended from a
+    // terminal that merely left for another session — the client keeps a
+    // banner only for the former. Ending a session's last terminal ends the
+    // session too, when the reader's kill-empty-session says so.
+    void remove_terminal(TerminalId term, bool exited);
+    // The session whose terminal list holds this id, or nullptr.
+    Session* session_holding(TerminalId term);
+    // Reparents one terminal into another session — or into a fresh one, when
+    // the request says so. The child never notices; the watchers do.
+    void move_terminal(Client& client, const proto::MoveTerminal& request);
     void forget_session(SessionId id, proto::DetachReason reason, std::string text);
     // Everything a client needs to hold every terminal: the full grid, the
     // history, the cursor and the modes, per terminal. Also what heals a client
@@ -212,6 +234,7 @@ private:
     // detach and takeover can be real before the thing they attach TO is.
     std::vector<Session> sessions_;
     std::vector<PendingKill> kills_;
+    std::vector<PendingClose> closes_;
     SessionId next_session_ = 1;
     // Whether this server has ever had a session. A server that has just
     // started has none and must not read that as "the work is done" — it is

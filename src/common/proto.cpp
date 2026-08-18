@@ -419,10 +419,23 @@ void read(Reader& r, NewTerminal& m) {
 void write(Writer& w, const MoveTerminal& m) {
     w.u64(m.term);
     w.u64(m.destination_session);
+    w.u8(m.to_new_session);
 }
 void read(Reader& r, MoveTerminal& m) {
     m.term = r.u64();
     m.destination_session = r.u64();
+    m.to_new_session = r.u8();
+}
+
+void write(Writer& w, const CloseTerminal& m) {
+    w.u64(m.term);
+    w.u8(m.force);
+    w.u16(m.grace_seconds);
+}
+void read(Reader& r, CloseTerminal& m) {
+    m.term = r.u64();
+    m.force = r.u8();
+    m.grace_seconds = r.u16();
 }
 
 void write(Writer& w, const MoveResize& m) {

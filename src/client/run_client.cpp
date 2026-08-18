@@ -168,6 +168,30 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         ask.grace_seconds = static_cast<std::uint16_t>(std::max(0, grace_seconds));
         session.request(ask);
     };
+    // The close dialog's promise, carried to the server: asked first, killed
+    // after the grace only when the reader ticked it. The window stays up —
+    // it goes when the TermClosed comes back, because only the server knows
+    // when (or whether) the program actually ended.
+    options.client.close_terminal_in_session = [&session](ckv::term::TerminalSubsession& terminal,
+                                                          bool force, int grace_seconds) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::CloseTerminal ask;
+        ask.term = *id;
+        ask.force = force ? 1 : 0;
+        ask.grace_seconds = static_cast<std::uint16_t>(std::max(0, grace_seconds));
+        session.request(ask);
+    };
+    options.client.move_terminal = [&session](ckv::term::TerminalSubsession& terminal,
+                                              std::uint64_t destination, bool to_new_session) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::MoveTerminal ask;
+        ask.term = *id;
+        ask.destination_session = destination;
+        ask.to_new_session = to_new_session ? 1 : 0;
+        session.request(ask);
+    };
     // The session usually has terminals already — that is what attaching to one
     // MEANS. One is asked for only if it turns out to be empty, once the
     // snapshot has said so.
@@ -341,7 +365,22 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         (void)wait_for_work(app, connection.stream.fd(), connection.stream.wants_write(),
                             std::max(1, timeout_ms));
 
-        if (connection.stream.wants_write() && !connection.stream.flush()) break;
+        if (connection.stream.wants_write() && !connection.stream.flush()) {
+            // A flush that fails is the server going away mid-write, and the
+            // promise is the same as reading EOF three lines down: this client
+            // keeps running (WP-8). Quitting here was the pre-WP-8 answer, and
+            // it is why a reader who ended their last session could sometimes
+            // watch their whole ckmux vanish instead of getting the picker —
+            // whether the doomed request's flush beat the server's close was a
+            // coin toss. The bytes were for nobody; the reconnect throttle
+            // below decides what happens next.
+            connection.stream.close();
+            session.connection_lost();
+            if (client != nullptr) {
+                client->forget_terminals();
+                client->set_attached_session(0, {});
+            }
+        }
         std::string arrived;
         const bool alive = !connection.stream.open() || connection.stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) break;

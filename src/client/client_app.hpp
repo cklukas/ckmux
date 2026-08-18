@@ -162,6 +162,21 @@ struct ClientOptions {
     // quit, and — only if the reader says so — anything still running when the
     // grace period runs out is killed.
     std::function<void(bool force, int grace_seconds)> kill_session;
+    // Ends one terminal the way the close dialog promises: its program is
+    // asked to quit, and killed after `grace_seconds` only when `force` says
+    // so. The window stays until the server says the terminal ended — a
+    // window that closed itself early would be claiming something it cannot
+    // know yet. Unset (M1: the terminal lives in this process), closing the
+    // window closes the terminal directly and ckVision escalates for
+    // whatever ignored the asking.
+    std::function<void(ckv::term::TerminalSubsession& terminal, bool force, int grace_seconds)>
+        close_terminal_in_session;
+    // Moves one terminal to another session, so its program keeps running
+    // somewhere this desktop is not showing. `to_new_session` outranks
+    // `destination`: the reader asked for a fresh one.
+    std::function<void(ckv::term::TerminalSubsession& terminal, std::uint64_t destination,
+                       bool to_new_session)>
+        move_terminal;
     // Whether to open a terminal at startup.
     //
     // True is M1: a client with no server has nothing to attach to, so an empty
@@ -279,6 +294,19 @@ private:
     void refresh_footer();
     void close_terminal(ckv::widgets::Window* window);
     void confirm_then_close(ckv::widgets::Window* window);
+    // The move picker: where one terminal's program goes on running. Reached
+    // from the close dialog's "Move instead…" and from ^B . — the same
+    // question either way, so the same dialog.
+    void show_move_terminal_dialog(ckv::term::TerminalSubsession* terminal);
+    // The window currently showing this terminal, or nullptr once it is gone.
+    // Dialogs hold the terminal rather than the window, because a terminal
+    // can end while its dialog is open — the lookup failing IS the answer.
+    ckv::widgets::Window* window_showing(const ckv::term::TerminalSubsession* terminal) const;
+    // And the reverse: the subsession behind one window, or nullptr for a
+    // window that is not a terminal's. The result is non-const on purpose —
+    // the map's keys are const only because a lookup never mutates, and the
+    // caller gets back exactly the pointer open_terminal stored.
+    ckv::term::TerminalSubsession* terminal_shown_by(ckv::widgets::Window* window) const;
     void focus_active_terminal();
     ckv::widgets::Window* active_terminal() const;
     // Applies whatever titles the child programs have asked for since the
@@ -301,6 +329,9 @@ private:
     // The ids behind the picker's rows, in the order it lists them, so a
     // selection index means a session.
     std::vector<std::uint64_t> attach_choice_;
+    // The move picker's rows, parallel to its radio options; the entry past
+    // the last id is "a new session".
+    std::vector<std::uint64_t> move_choice_;
     void show_about();
     // The ckVision terminal report over the OUTER host's capabilities, with
     // ckmux's decoded-SGR-reports probe added (options.mouse_reports_probe).

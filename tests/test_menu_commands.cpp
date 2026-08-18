@@ -436,3 +436,99 @@ CK_TEST(restarting_ckmux_restores_the_session_without_gaining_a_terminal) {
     end_process(server);
     forget(socket);
 }
+
+CK_TEST(closing_the_last_terminal_tells_the_whole_truth_and_ends_the_session) {
+    // The reworked ^B x, end to end: the dialog explains what closing does,
+    // offers the kill checkbox and the move alternative, and — because this
+    // is the session's last terminal — says the session ends with it. Enter
+    // takes the default: asked to quit, killed after the grace only if it
+    // lingers. The shell obliges the asking, kill-empty-session ends the
+    // emptied session, the server goes with its last session, and the client
+    // lands on the picker. Every claim in the dialog, watched coming true.
+    const std::filesystem::path socket = private_socket("closedialog");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    reader.press("\x02" "x");
+    CK_CHECK(reader.sees("Close terminal"));
+    CK_CHECK(reader.screen().find("asks it to quit") != std::string::npos);
+    CK_CHECK(reader.screen().find("Kill it if it has not quit") != std::string::npos);
+    CK_CHECK(reader.screen().find("Move instead") != std::string::npos);
+    CK_CHECK(reader.screen().find("This is the last terminal") != std::string::npos);
+    reader.press("\r");
+
+    // The shell dies on the asking, its session dies empty, and the client is
+    // still a running ckmux: the picker, saying what a reader can do next.
+    CK_CHECK(reader.sees("No sessions are running yet"));
+
+    const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(4000);
+    bool server_gone = false;
+    while (!server_gone && clock_type::now() < deadline) {
+        int status = 0;
+        server_gone = ::waitpid(server, &status, WNOHANG) == server;
+        if (!server_gone) ::usleep(20000);
+    }
+    CK_CHECK(server_gone);
+    reader.quit();
+    forget(socket);
+}
+
+CK_TEST(moving_the_last_terminal_rescues_the_program_into_a_new_session) {
+    // The dialog's other answer, end to end: ^B x, Alt+M instead of Enter,
+    // "a new session" in the picker — and the SAME shell is still running
+    // afterwards, reachable through the session picker, with the emptied
+    // session gone. The shell variable is the proof of identity: a fresh
+    // shell would not know it.
+    const std::filesystem::path socket = private_socket("movedialog");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+    reader.press("export SURVIVOR=yes\n");
+    CK_CHECK(reader.sees("SURVIVOR=yes"));
+
+    reader.press("\x02" "x");
+    CK_CHECK(reader.sees("Close terminal"));
+    reader.press("\x1bm");  // Alt+M: the Move instead… button
+    CK_CHECK(reader.sees("Move terminal"));
+    CK_CHECK(reader.screen().find("a new session") != std::string::npos);
+    reader.press("\r");
+
+    // The old session emptied and ended, so the picker appears — offering
+    // the created session, which holds the moved terminal.
+    CK_CHECK(reader.sees("1 terminal"));
+    reader.press("\r");  // attach to it
+
+    // The window comes back with the screen it had before the move — the
+    // export is still on it. Not a prompt-shape assert: whose shell runs the
+    // test is not this test's business.
+    CK_CHECK(reader.sees("export SURVIVOR=yes"));
+    reader.press("echo RESCUED-$SURVIVOR\n");
+    CK_CHECK(reader.sees("RESCUED-yes"));
+
+    // End the rescued session so nothing outlives the test.
+    reader.press("\x02" "K");
+    CK_CHECK(reader.sees("End session"));
+    reader.press("\r");
+    reader.settle(800);
+    reader.quit();
+    const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(4000);
+    bool server_gone = false;
+    while (!server_gone && clock_type::now() < deadline) {
+        int status = 0;
+        server_gone = ::waitpid(server, &status, WNOHANG) == server;
+        if (!server_gone) ::usleep(20000);
+    }
+    CK_CHECK(server_gone);
+    forget(socket);
+}

@@ -533,8 +533,10 @@ server** — a lost connection empties its desktop, greys every session-needing
 command, and the next request that needs a server starts one. That required
 suppressing SIGPIPE at the one `Stream::flush` that can raise it: a client
 writing to a server that just exited died mid-frame with nothing on screen to
-say why. Still open here: `kill-empty-session` and the terminal limit, which
-wait on WP-13's exit policy.
+say why. Still open here: the terminal limit, which
+waits on WP-13's exit policy. `kill-empty-session` landed 2026-08-18 for the
+explicit paths — a session emptied by a close or a move ends, and the server
+with its last session; the child-exits-by-itself path still waits on WP-13.
 **WP-9 — Session picker and takeover.** *Done, 2026-08-18.* The startup rule:
 nothing running → create and attach; exactly one session and nobody watching →
 attach, no questions; anything else — the only session in use, or several to
@@ -553,9 +555,29 @@ selected" wrapped from row 0 and re-selected the row being left; and an
 Accept-role button ignored the mouse entirely — the accept path lived only on
 Enter's `accept_request` — which shipped as "clicking Create session does
 nothing".
-**WP-10 — Move-terminal between sessions.** The pointer move D-02 exists for:
-PTY, emulator, scrollback, and id all unchanged; both sessions' clients see the
-layout update; the child never notices.
+**The close dialog now tells the whole truth (2026-08-18, reader-directed).**
+`^B x` asked "Close it anyway?" — yes or no, about a program it then always
+killed. It is now the dialog plans/06 sketches: closing ASKS the program to
+quit (SIGHUP then SIGTERM, ckVision's `request_termination`, PTY still
+draining), kills after `kill-grace-seconds` only when the ticked-by-default
+box says so, and offers "Move instead…" — the `^B .` picker — so the program
+can keep running in another or a new session. `CloseTerminal` grew
+`{force, grace_seconds}`; the server watches a `PendingClose` per terminal on
+the tick, exactly as sessions are ended, and the client's window falls only
+when `TermClosed` reports the terminal gone — `exited=0` being a move, not a
+death. A serverless client shows the same dialog without the untickable
+choices and says what closing really does there. Wire, loop, dialog and both
+end-to-end walks are pinned in `test_proto`, `test_server_loop`,
+`test_client_smoke` and `test_menu_commands`.
+**WP-10 — Move-terminal between sessions.** *Done, 2026-08-18.* The pointer
+move D-02 exists for: PTY, emulator, scrollback, and id all unchanged; both
+sessions' clients see the layout update; the child never notices. Landed with
+the close-dialog rework: `MoveTerminal{term, destination, to_new_session}`
+reparents on the server — the source's watcher gets `TermClosed{exited=0}` (a
+leaving, not a death), the target's watcher is healed by a fresh snapshot, and
+the flag creates the destination so "a new session" is always a workable
+answer. A close pending against the moved terminal is cancelled: a move is
+the reader deciding to keep it.
 **WP-11 — CLI subcommands.** `ls`, `new`, `attach`, `kill-session`,
 `kill-server`, `check-config`, over the same protocol with `client_kind = cli`.
 `--help` and `--version` landed ahead of the package (2026-08-18): both are
