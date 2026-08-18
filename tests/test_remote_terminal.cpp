@@ -56,6 +56,11 @@ struct FakeServer {
 
     ckm::proto::TerminalState snapshot() {
         ckm::proto::TerminalState state = engine.snapshot(id, terminal);
+        // The history is a second call, exactly as it is on the real path: how
+        // much of it fits is not known until every terminal's screen has been
+        // measured, so the screen goes first and the histories share what is
+        // left (R1's snapshot budget). One terminal here, so it gets all of it.
+        (void)engine.fill_history(id, state, terminal, ckm::proto::kSnapshotPayloadBudget);
         terminal.clear_damage();
         return state;
     }

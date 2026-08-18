@@ -10,12 +10,22 @@ namespace {
 
 // --- Writing --------------------------------------------------------------
 //
-// A writer cannot fail: everything it is asked to write is a value that
-// already exists. What it must not do is disagree with the reader about byte
-// order or field width, which is why both live in this one file.
+// What a writer must not do is disagree with the reader about byte order or
+// field width, which is why both live in this one file.
+//
+// It is sticky-failing, symmetric with `Reader`: a value that cannot be SAID
+// in this format — a string longer than the length field that precedes it — is
+// refused, and the writer stays failed, so one check after the whole message
+// has been written is enough. The alternative was what this did before:
+// truncate the length and append every byte anyway, which manufactures the one
+// thing the layer exists to prevent — the two ends disagreeing about where a
+// field ends (AGENTS.md: assert what cannot be).
 class Writer {
 public:
     explicit Writer(std::string& out) : out_(out) {}
+
+    bool ok() const noexcept { return ok_; }
+    void fail() noexcept { ok_ = false; }
 
     void u8(std::uint8_t value) { out_.push_back(static_cast<char>(value)); }
     void u16(std::uint16_t value) {
@@ -39,10 +49,23 @@ public:
     void i64(std::int64_t value) { u64(static_cast<std::uint64_t>(value)); }
 
     void str(std::string_view text) {
+        // The length field is two bytes wide. A longer string writes a length
+        // that has wrapped and then appends every byte anyway, so a decoder
+        // reads a prefix and then reads the remainder as whatever field comes
+        // next — a desync manufactured by the sender, at the one layer whose
+        // whole job is that the two ends agree.
+        if (text.size() > 0xFFFFu) {
+            fail();
+            return;
+        }
         u16(static_cast<std::uint16_t>(text.size()));
         out_.append(text);
     }
     void blob(std::string_view bytes) {
+        if (bytes.size() > 0xFFFFFFFFull) {
+            fail();
+            return;
+        }
         u32(static_cast<std::uint32_t>(bytes.size()));
         out_.append(bytes);
     }
@@ -113,6 +136,7 @@ public:
 
 private:
     std::string& out_;
+    bool ok_ = true;
 };
 
 // --- Reading --------------------------------------------------------------
@@ -168,13 +192,20 @@ public:
     }
 
     // A count that is about to size a container. Checked against what is
-    // actually left in the payload before anything is reserved: a peer
-    // claiming four billion entries must not be able to make this allocate,
-    // and the smallest possible entry is one byte, so the payload's own length
-    // is the honest bound.
-    std::uint32_t count() {
+    // actually LEFT in the payload, divided by the smallest an entry can
+    // possibly occupy — because "one byte per entry" is not the honest bound
+    // when an entry is sixty-two bytes: a four-megabyte frame could claim four
+    // million terminal states and cost a reserve of some hundreds of megabytes
+    // out of a decode that promises never to throw.
+    //
+    // With the real minimum the expansion is bounded and small: the worst case
+    // is `payload / 16` `CellRun`s, about three times the frame in vector
+    // storage, where it used to be a hundred and eighty times it. `entry_bytes`
+    // has no default so that a new call site cannot forget to say what its
+    // entries cost.
+    std::uint32_t count(std::size_t entry_bytes) {
         const std::uint32_t value = u32();
-        if (!ok_ || value > remaining()) {
+        if (!ok_ || entry_bytes == 0 || value > remaining() / entry_bytes) {
             fail();
             return 0;
         }
@@ -231,7 +262,10 @@ public:
     }
 
     std::vector<CellRun> runs() {
-        const std::uint32_t entries = count();
+        // 2 run_length + 2 text length + 1 width + 4 fg + 4 bg + 1 attrs +
+        // 2 reserved: sixteen bytes for a continuation cell, which is the
+        // shortest a run can be.
+        const std::uint32_t entries = count(16);
         std::vector<CellRun> result;
         result.reserve(entries);
         for (std::uint32_t i = 0; i < entries && ok_; ++i) {
@@ -248,7 +282,8 @@ public:
     }
 
     std::vector<std::vector<CellRun>> lines() {
-        const std::uint32_t entries = count();
+        // A line is at least its own run count.
+        const std::uint32_t entries = count(4);
         std::vector<std::vector<CellRun>> result;
         result.reserve(entries);
         for (std::uint32_t i = 0; i < entries && ok_; ++i) result.push_back(runs());
@@ -522,7 +557,9 @@ void write(Writer& w, const SessionList& m) {
     }
 }
 void read(Reader& r, SessionList& m) {
-    const std::uint32_t entries = r.count();
+    // 8 id + 2 name length + 2 terminals + 1 attached + 8 created +
+    // 8 last_attached.
+    const std::uint32_t entries = r.count(29);
     m.sessions.reserve(entries);
     for (std::uint32_t i = 0; i < entries && r.ok(); ++i) {
         SessionInfo session;
@@ -573,14 +610,15 @@ void read(Reader& r, TerminalState& s) {
     s.modes = r.u32();
     s.grid = r.runs();
     s.scrollback = r.lines();
-    const std::uint32_t images = r.count();
+    const std::uint32_t images = r.count(8);  // one id
     s.images.reserve(images);
     for (std::uint32_t i = 0; i < images && r.ok(); ++i) s.images.push_back(r.u64());
     s.printer_mode = r.enum_of<PrinterMode>(r.u8(), 2);
     s.printer_scope = r.enum_of<PrinterScope>(r.u8(), 2);
     s.printer_state = r.enum_of<PrinterState>(r.u8(), 3);
     s.printer_bytes = r.u32();
-    const std::uint32_t jobs = r.count();
+    // 8 job + 1 kind + 4 bytes + 4 lines + 8 at.
+    const std::uint32_t jobs = r.count(25);
     s.print_jobs.reserve(jobs);
     for (std::uint32_t i = 0; i < jobs && r.ok(); ++i) s.print_jobs.push_back(r.job());
 }
@@ -598,7 +636,10 @@ void read(Reader& r, Attached& m) {
     m.snapshot.desktop_columns = r.u16();
     m.snapshot.desktop_rows = r.u16();
     m.snapshot.focused_term = r.u64();
-    const std::uint32_t terminals = r.count();
+    // Sixty-two bytes is a terminal state with no title, no grid, no history,
+    // no images and no print jobs — every fixed field and the four counts that
+    // say the variable ones are empty.
+    const std::uint32_t terminals = r.count(62);
     m.snapshot.terminals.reserve(terminals);
     for (std::uint32_t i = 0; i < terminals && r.ok(); ++i) {
         TerminalState state;
@@ -631,7 +672,8 @@ void write(Writer& w, const LayoutDelta& m) {
 }
 void read(Reader& r, LayoutDelta& m) {
     m.session = r.u64();
-    const std::uint32_t entries = r.count();
+    // 8 term + 8 rect + 2 z_order + 1 zoomed.
+    const std::uint32_t entries = r.count(19);
     m.entries.reserve(entries);
     for (std::uint32_t i = 0; i < entries && r.ok(); ++i) {
         LayoutEntry entry;
@@ -694,7 +736,15 @@ void read(Reader& r, TermMeta& m) {
 // The op tags. Their own byte, so a GridDelta reads as a sequence of tagged
 // operations rather than as a struct whose shape depends on a mode set
 // somewhere else.
-enum class GridOpTag : std::uint8_t { Scroll = 0, Cells = 1, Cursor = 2, Modes = 3, Title = 4, ScrollbackPush = 5 };
+enum class GridOpTag : std::uint8_t {
+    Scroll = 0,
+    Cells = 1,
+    Cursor = 2,
+    Modes = 3,
+    Title = 4,
+    ScrollbackPush = 5,
+    Resize = 6,
+};
 
 void write(Writer& w, const GridDelta& m) {
     w.u64(m.term);
@@ -724,9 +774,20 @@ void write(Writer& w, const GridDelta& m) {
                 } else if constexpr (std::is_same_v<Op, TitleOp>) {
                     w.u8(static_cast<std::uint8_t>(GridOpTag::Title));
                     w.str(value.title);
-                } else {
+                } else if constexpr (std::is_same_v<Op, ScrollbackPushOp>) {
+                    // Named rather than caught by a trailing `else`. The `else`
+                    // that used to sit here assumed it was the last
+                    // alternative, so the next op added to the variant would
+                    // have been written down as a scrollback push — a bug that
+                    // compiles cleanly and only shows up on the wire.
                     w.u8(static_cast<std::uint8_t>(GridOpTag::ScrollbackPush));
                     w.lines(value.lines);
+                } else {
+                    static_assert(std::is_same_v<Op, ResizeOp>,
+                                  "every GridOp alternative needs its own tag here");
+                    w.u8(static_cast<std::uint8_t>(GridOpTag::Resize));
+                    w.u16(value.columns);
+                    w.u16(value.rows);
                 }
             },
             op);
@@ -735,10 +796,12 @@ void write(Writer& w, const GridDelta& m) {
 void read(Reader& r, GridDelta& m) {
     m.term = r.u64();
     m.seq = r.u32();
-    const std::uint32_t ops = r.count();
+    // The smallest op there is: a `Title` with an empty string — its tag byte
+    // and the two-byte length that says so.
+    const std::uint32_t ops = r.count(3);
     m.ops.reserve(ops);
     for (std::uint32_t i = 0; i < ops && r.ok(); ++i) {
-        switch (r.enum_of<GridOpTag>(r.u8(), 5)) {
+        switch (r.enum_of<GridOpTag>(r.u8(), 6)) {
             case GridOpTag::Scroll: {
                 ScrollOp op;
                 op.top = r.u16();
@@ -777,6 +840,13 @@ void read(Reader& r, GridDelta& m) {
                 ScrollbackPushOp op;
                 op.lines = r.lines();
                 if (r.ok()) m.ops.emplace_back(std::move(op));
+                break;
+            }
+            case GridOpTag::Resize: {
+                ResizeOp op;
+                op.columns = r.u16();
+                op.rows = r.u16();
+                if (r.ok()) m.ops.emplace_back(op);
                 break;
             }
         }
@@ -998,6 +1068,12 @@ std::vector<CellRun> to_runs(const std::vector<ckv::Cell>& cells) {
 std::vector<ckv::Cell> from_runs(const std::vector<CellRun>& runs) {
     std::size_t total = 0;
     for (const CellRun& run : runs) total += run.run_length;
+    // A run claims up to 65535 cells in sixteen bytes, so a payload that
+    // passed every length check can still ask for a grid nobody has memory
+    // for. Callers check the total against a width they know; this is the
+    // floor under them, because a `reserve` that throws comes out of a decode
+    // path that promises it never will.
+    if (total > kMaxGridCells) return {};
     std::vector<ckv::Cell> cells;
     cells.reserve(total);
     for (const CellRun& run : runs)
@@ -1005,20 +1081,81 @@ std::vector<ckv::Cell> from_runs(const std::vector<CellRun>& runs) {
     return cells;
 }
 
+// --- What a value will cost, before it is written -------------------------
+//
+// A second encoder that drifts from the first is worse than none, so each of
+// these is the matching `Writer` method above read as arithmetic, field for
+// field, and `the_size_a_snapshot_will_take_is_known_before_it_is_written`
+// asserts they agree with what `encode` actually produces. Nothing here may
+// be an estimate: the caller uses it to decide what fits, and a number that
+// was close would decide wrongly and say nothing about it.
+
+std::size_t encoded_size(const CellRun& run) {
+    // `Writer::runs` per entry: 2 run_length, then `Writer::cell` — 2 text
+    // length + N text + 1 width + 4 fg + 4 bg + 1 attrs + 2 reserved.
+    return 16 + run.cell.grapheme().size();
+}
+
+std::size_t encoded_size(const std::vector<CellRun>& runs) {
+    std::size_t total = 4;  // the run count `Writer::runs` writes first
+    for (const CellRun& run : runs) total += encoded_size(run);
+    return total;
+}
+
+std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines) {
+    std::size_t total = 4;  // the line count `Writer::lines` writes first
+    for (const std::vector<CellRun>& line : lines) total += encoded_size(line);
+    return total;
+}
+
+std::size_t encoded_size(const TerminalState& state) {
+    // Everything `write(Writer&, const TerminalState&)` puts down that is not
+    // the grid or the history: 8 term + 2 index + 2 title length + 1 flags +
+    // 2 columns + 2 rows + 8 rect + 2 z_order + 1 zoomed + 7 cursor +
+    // 4 modes + 4 image count + 1 printer mode + 1 scope + 1 state +
+    // 4 printer bytes + 4 job count.
+    constexpr std::size_t kFixed = 54;
+    // 8 per image id; 8 job + 1 kind + 4 bytes + 4 lines + 8 at per job.
+    return kFixed + state.title.size() + encoded_size(state.grid) +
+           encoded_size(state.scrollback) + 8 * state.images.size() +
+           25 * state.print_jobs.size();
+}
+
+std::size_t encoded_size(const Snapshot& snapshot) {
+    // 2 desktop columns + 2 desktop rows + 8 focused + 4 terminal count. The
+    // `Attached` that carries it adds the eight bytes of its session id, which
+    // belong to the message rather than to the snapshot.
+    std::size_t total = 16;
+    for (const TerminalState& state : snapshot.terminals) total += encoded_size(state);
+    return total;
+}
+
 MessageType type_of(const Message& message) {
     return std::visit([](const auto& value) { return std::decay_t<decltype(value)>::kType; }, message);
 }
 
-std::string encode(const Message& message) {
+std::string encode(const Message& message, bool* oversize) {
+    if (oversize != nullptr) *oversize = false;
     std::string payload;
     Writer writer(payload);
     std::visit([&writer](const auto& value) { write(writer, value); }, message);
+
+    const MessageType type = type_of(message);
+    // Checked after the bytes exist rather than as a limit inside the writer:
+    // a per-field test on the hot path buys nothing, because what the check
+    // rejects is bounded by state the server legitimately holds, and the
+    // sender decides what to put in a snapshot before it builds one
+    // (`kSnapshotPayloadBudget`).
+    if (!writer.ok() || payload.size() > payload_cap(type)) {
+        if (oversize != nullptr) *oversize = true;
+        return {};
+    }
 
     std::string frame;
     frame.reserve(kHeaderBytes + payload.size());
     Writer header(frame);
     header.u32(static_cast<std::uint32_t>(payload.size()));
-    header.u16(static_cast<std::uint16_t>(type_of(message)));
+    header.u16(static_cast<std::uint16_t>(type));
     header.u16(0);  // flags, reserved
     frame.append(payload);
     return frame;

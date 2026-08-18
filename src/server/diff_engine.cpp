@@ -4,12 +4,32 @@
 #include <algorithm>
 #include <cstddef>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace ckm::server {
 namespace {
 
 using ckv::term::TerminalStatus;
+
+// A title cut to a length the wire can say, on a character boundary.
+//
+// A child writes its title with OSC 2 and may write a megabyte of it. The
+// field's length is two bytes, so past 65535 the codec refuses the whole
+// message — a delta or a snapshot lost to a program's choice of caption. Cut
+// here instead, at the producer, far below the field's own limit: the cost is
+// a long title shown short, which is what a reader would see anyway.
+//
+// The back-off is to a leading byte (`(b & 0xC0) != 0x80`), because a cut
+// through the middle of a UTF-8 sequence produces bytes no decoder can read as
+// text — and the string_view makes this a substring rather than a copy.
+std::string_view clamp_utf8(std::string_view text, std::size_t limit) {
+    if (text.size() <= limit) return text;
+    std::size_t cut = limit;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) --cut;
+    return text.substr(0, cut);
+}
 
 // The view a live terminal is diffed through: borrowed cells, and the scalars
 // beside them. Nothing here copies a grid, which is the whole of U0-b arriving
@@ -20,7 +40,7 @@ GridView view_of(const ckv::core::TerminalSubsession& source, const TerminalStat
     view.grid = source.cells();
     view.cursor = cursor_of(status);
     view.modes = modes_of(status);
-    view.title = status.title;
+    view.title = clamp_utf8(status.title, proto::kMaxTitleBytes);
     return view;
 }
 
@@ -64,6 +84,13 @@ std::uint32_t modes_of(const TerminalStatus& status) {
     set(proto::ModeBit::FocusReporting, status.focus_reporting_enabled);
     set(proto::ModeBit::AlternateBuffer, status.alternate_buffer);
     set(proto::ModeBit::AlternateScroll, status.alternate_scroll_enabled);
+    // The tracking level, above the flags. Not the same question as
+    // `MouseReporting`, which is only whether the child is listening at all: a
+    // program that asked for DEC 1000 and is sent 1003's motion reports reads
+    // the surplus as something else entirely, so the level travels rather than
+    // being inferred at the far end (ckVision's TerminalMouseTracking).
+    modes |= (static_cast<std::uint32_t>(status.mouse_tracking) << proto::kMouseTrackingShift) &
+             proto::kMouseTrackingMask;
     return modes;
 }
 
@@ -137,6 +164,10 @@ std::optional<proto::GridDelta> TerminalDiffer::flush(TerminalId id,
     // still has its full flag set from construction, and re-sending everything
     // on the first tick after every attach would undo the snapshot's whole
     // purpose.
+    //
+    // This is also the whole of the server's side of C3: `full_repaint` states
+    // the new size as its first op, so the client's mirror resizes from the
+    // same delta that repaints it rather than from a message nobody sends.
     if (believed_.cells != status.cells) {
         delta.ops = full_repaint(view, pushed);
         believed_ = state_of(view);
@@ -172,21 +203,20 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
 
     proto::TerminalState state;
     state.term = id;
-    state.title = status.title;
+    // The view's title rather than the status's: it has been cut to something
+    // the wire can say, and a snapshot that could not be encoded is a session
+    // nobody can attach to.
+    state.title = std::string(view.title);
     state.columns = static_cast<std::uint16_t>(std::max(0, status.cells.width));
     state.rows = static_cast<std::uint16_t>(std::max(0, status.cells.height));
     state.cursor = proto::CursorOp{view.cursor.column, view.cursor.row, view.cursor.style,
                                    view.cursor.visible, view.cursor.blink};
     state.modes = view.modes;
     state.grid = proto::to_runs(std::vector<ckv::Cell>(view.grid.begin(), view.grid.end()));
-    // The history in full, in lines: a reattached client pages back through
-    // everything the server still holds without a round trip (plans/05).
-    const std::span<const ckv::Cell> history = source.scrollback();
-    const std::size_t width = static_cast<std::size_t>(std::max(1, status.cells.width));
-    for (std::size_t line = 0; line + width <= history.size(); line += width) {
-        const std::span<const ckv::Cell> row = history.subspan(line, width);
-        state.scrollback.push_back(proto::to_runs(std::vector<ckv::Cell>(row.begin(), row.end())));
-    }
+    // No history here: `fill_history` puts it in, once the caller knows what
+    // is left of the budget after every terminal's screen (C1). A grid has to
+    // go whole — it is what the terminal IS — and the history is what it
+    // remembers, which may be short without being wrong.
     state.printer_state = status.printer_controller_active ? proto::PrinterState::Capturing
                                                            : proto::PrinterState::Idle;
     state.printer_bytes = static_cast<std::uint32_t>(
@@ -202,6 +232,39 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
     needs_snapshot_ = false;
     history_diverged_ = false;
     return state;
+}
+
+std::size_t TerminalDiffer::fill_history(proto::TerminalState& state,
+                                         const ckv::core::TerminalSubsession& source,
+                                         std::size_t budget) const {
+    state.scrollback.clear();
+    const std::span<const ckv::Cell> history = source.scrollback();
+    const std::size_t width = static_cast<std::size_t>(std::max(1, static_cast<int>(state.columns)));
+    const std::size_t lines = history.size() / width;
+
+    // Newest first, because that is the half a reader pages into: a history
+    // that has to be cut is cut at its oldest end, exactly where the emulator
+    // and the client's own capacity cut it. The walk stops at the first line
+    // that will not fit rather than skipping it and trying the next — the
+    // lines have to stay contiguous, or a client's scrollback would have a
+    // hole in it that nothing on the wire could describe.
+    std::size_t spent = 0;
+    std::vector<std::vector<proto::CellRun>> newest_first;
+    for (std::size_t index = lines; index > 0; --index) {
+        const std::span<const ckv::Cell> row = history.subspan((index - 1) * width, width);
+        std::vector<proto::CellRun> runs =
+            proto::to_runs(std::vector<ckv::Cell>(row.begin(), row.end()));
+        const std::size_t cost = proto::encoded_size(runs);
+        if (spent + cost > budget) break;
+        spent += cost;
+        newest_first.push_back(std::move(runs));
+    }
+
+    // Reversed back to oldest-first, which is the order the wire states and
+    // `TerminalMirror::adopt` pushes them in.
+    std::reverse(newest_first.begin(), newest_first.end());
+    state.scrollback = std::move(newest_first);
+    return spent;
 }
 
 namespace {
@@ -354,6 +417,15 @@ std::vector<proto::Message> DiffEngine::attach_images(TerminalId id) const {
 proto::TerminalState DiffEngine::snapshot(TerminalId id,
                                           const ckv::core::TerminalSubsession& source) {
     return differs_[id].snapshot(id, source);
+}
+
+std::size_t DiffEngine::fill_history(TerminalId id, proto::TerminalState& state,
+                                     const ckv::core::TerminalSubsession& source,
+                                     std::size_t budget) const {
+    const TerminalDiffer* const differ = differ_for(id);
+    // A terminal with no differ has never been snapshotted, so there is no
+    // state of the caller's for a history to belong to.
+    return differ == nullptr ? 0 : differ->fill_history(state, source, budget);
 }
 
 void DiffEngine::forget(TerminalId id) { differs_.erase(id); }

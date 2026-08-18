@@ -47,7 +47,13 @@ public:
     // `TermClosed` it was already sent, and a reattach that forgot it showed a
     // dead shell as a live terminal (mirror.cpp says the rest). `open()` is
     // the seam that clears it, for a terminal that really is a new one.
-    void adopt(const proto::TerminalState& state);
+    //
+    // False means the snapshot was refused and the mirror is untouched: its
+    // geometry is past what the protocol will carry, which is a peer trying to
+    // size an allocation here rather than a terminal anybody has. The mirror's
+    // own answer is the protocol's — `needs_snapshot()` goes true and another
+    // is asked for — and a caller that owns the connection may end it instead.
+    bool adopt(const proto::TerminalState& state);
 
     // Applies one delta. Returns false when it was refused, which happens for
     // exactly two reasons: the sequence did not follow (something was lost), or

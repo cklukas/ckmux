@@ -47,7 +47,16 @@ namespace ckm::proto {
 //
 // v2: `Attach.host_sixel` — the client's outer terminal reported Sixel, so
 // the server may advertise it to the children this client opens (WP-16).
-inline constexpr std::uint32_t kProtocolVersion = 2;
+//
+// v3, four changes in one bump because none of them shipped under a version of
+// their own: `GridDelta`'s `Resize` op, which is what stops a shrinking
+// terminal from leaving stale rows on a mirror (13-architecture-review C3);
+// two mouse-tracking bits in `ModesOp`'s word, so a client encodes DEC 1000,
+// 1002 and 1003 as the three levels they are rather than as one switch; and
+// `CloseTerminal`'s `force`/`grace_seconds` with `MoveTerminal`'s
+// `to_new_session`, which changed the wire when close-with-grace landed and
+// were still riding on v2.
+inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
 // `kProtocolVersion` is the only thing that decides whether two ends can talk —
@@ -64,6 +73,19 @@ inline constexpr std::size_t kHeaderBytes = 8;
 inline constexpr std::uint32_t kMaxPayloadBytes = 1024u * 1024u;             // everything...
 inline constexpr std::uint32_t kMaxChunkPayloadBytes = 256u * 1024u;        // ...except image/job chunks
 inline constexpr std::uint32_t kMaxSnapshotPayloadBytes = 16u * 1024u * 1024u;  // ...and a full snapshot
+// What a SENDER holds a snapshot to, as against `kMaxSnapshotPayloadBytes`,
+// which is what a DECODER will still accept. They are different numbers on
+// purpose: a decoder must take whatever a legitimate build of this program
+// produced, while a sender must leave itself room to be wrong. Measured before
+// this existed: 100 columns and the default ten-thousand-line history made a
+// 16.29 MiB `Attached`, past the decoder's own limit — the client exited with
+// "the server sent something this build cannot read" and the session was
+// permanently unattachable (13-architecture-review, C1).
+//
+// Four megabytes is thousands of lines of real text once it is run-length
+// encoded, and it is also what keeps an attach quick: a reader waiting for a
+// desktop is waiting for the screens, not for history they may never page to.
+inline constexpr std::uint32_t kSnapshotPayloadBudget = 4u * 1024u * 1024u;
 // The largest a single string or blob field may claim. Bounded separately
 // from the frame so that a decoder rejects an absurd length before it
 // reserves anything, rather than after.
@@ -72,6 +94,24 @@ inline constexpr std::uint32_t kMaxStringBytes = 64u * 1024u;
 // combining marks past the base — more than any real cluster and less than a
 // blob a peer could use to make a grid enormous one cell at a time.
 inline constexpr std::size_t kMaxCellTextBytes = 15;
+// A window title is a line of text. Four kilobytes is far past any real one
+// and far under the field's own two-byte length, so a child that writes a
+// megabyte through OSC 2 costs a truncated title rather than a delta that
+// cannot be put on the wire at all.
+inline constexpr std::size_t kMaxTitleBytes = 4096;
+
+// The largest grid this protocol will carry, and therefore the largest a
+// terminal on it may become. One definition, both ends: a decoder will not
+// rehydrate more cells than this out of a run set however the run lengths sum,
+// and a mirror refuses a geometry past it rather than sizing itself by it — so
+// neither end can be talked into an allocation by the other's arithmetic. The
+// sizes on the wire are two `u16`s, so without a ceiling somewhere a peer asks
+// for 65535 by 65535 — four billion cells out of a kilobyte of frame — and is
+// granted it.
+inline constexpr std::uint16_t kMaxGridColumns = 1000;
+inline constexpr std::uint16_t kMaxGridRows = 1000;
+inline constexpr std::size_t kMaxGridCells =
+    static_cast<std::size_t>(kMaxGridColumns) * static_cast<std::size_t>(kMaxGridRows);
 
 // 0x00xx control · 0x01xx session ops · 0x02xx terminal I/O · 0x03xx state
 // sync · 0x04xx events and errors. The range says at a glance which half of
@@ -242,6 +282,20 @@ enum class ModeBit : std::uint32_t {
     AlternateScroll = 1u << 6,
 };
 
+// The tracking LEVEL, as two bits above the flags, because DEC 1000, 1002 and
+// 1003 are three levels of one facility and not three switches: a host that
+// collapses them sends a program written for 1000 a stream of motion reports
+// it never asked for, and a program that parses only what it asked for reads
+// the surplus as something else entirely (ckVision's TerminalMouseTracking
+// says the same thing from the other side). `MouseReporting` stays as the
+// coarse answer most callers want, exactly as ckVision keeps
+// `mouse_reporting_enabled` beside `mouse_tracking`.
+//
+// Two bits hold all four values the level has, so nothing read out of this
+// mask can be a level that does not exist.
+inline constexpr std::uint32_t kMouseTrackingShift = 7;
+inline constexpr std::uint32_t kMouseTrackingMask = 0b11u << kMouseTrackingShift;
+
 struct TitleOp {
     std::string title;
 
@@ -259,7 +313,27 @@ struct ScrollbackPushOp {
     friend bool operator==(const ScrollbackPushOp&, const ScrollbackPushOp&) = default;
 };
 
-using GridOp = std::variant<ScrollOp, CellsOp, CursorOp, ModesOp, TitleOp, ScrollbackPushOp>;
+// The size of the grid the ops after it describe.
+//
+// A `GridDelta` carried no geometry, and a repaint of a SMALLER terminal
+// passed every bounds check against a larger mirror: the rows and columns past
+// the new edge kept whatever the last program had put there, and nothing
+// anywhere fired (13-architecture-review C3, reproduced). Carrying it as an op
+// rather than as a header field says the right thing — the size is stated
+// exactly when it changed, and the ops that follow are validated against the
+// size the mirror is about to be, not the one it was.
+struct ResizeOp {
+    std::uint16_t columns = 0;
+    std::uint16_t rows = 0;
+
+    friend bool operator==(const ResizeOp&, const ResizeOp&) = default;
+};
+
+// Appended, never inserted: the alternatives are matched by index in more than
+// one place, so a new op at the end costs nothing and a new op in the middle
+// would renumber every one after it.
+using GridOp =
+    std::variant<ScrollOp, CellsOp, CursorOp, ModesOp, TitleOp, ScrollbackPushOp, ResizeOp>;
 
 // --- The attach snapshot --------------------------------------------------
 
@@ -320,6 +394,20 @@ struct Snapshot {
 
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
+
+// What these will occupy inside a payload, without producing the bytes.
+//
+// Exact, and pinned against `encode` by a test — the whole point is deciding
+// what to send BEFORE the bytes exist, and a size that had drifted from the
+// writer would decide wrongly and silently. Each one counts its own length
+// prefix, so a caller adds them up without having to know which fields carry a
+// count: the `Snapshot` overload is the `Attached` payload less the eight
+// bytes of its session id.
+std::size_t encoded_size(const CellRun& run);
+std::size_t encoded_size(const std::vector<CellRun>& runs);
+std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines);
+std::size_t encoded_size(const TerminalState& state);
+std::size_t encoded_size(const Snapshot& snapshot);
 
 struct SessionInfo {
     std::uint64_t id = 0;
@@ -765,9 +853,18 @@ MessageType type_of(const Message& message);
 
 // --- Encoding and decoding ------------------------------------------------
 
-// The whole frame: header and payload. Encoding cannot fail — a struct that
-// exists is encodable — so this returns bytes rather than an outcome.
-std::string encode(const Message& message);
+// The bytes of a message, or nothing at all when the payload would be past the
+// cap its type is held to — because a frame over the cap is not a large frame,
+// it is one the peer's decoder refuses, and a sender that learns so at the
+// socket has already lost both the message and the connection.
+//
+// Encoding still cannot fail for any message built out of state a program
+// legitimately holds, which is why the ordinary call is unchanged. `oversize`
+// is how the one caller that CAN produce one — a server encoding a session's
+// whole state — finds out, instead of handing a socket a frame that lies about
+// its own length. An empty result is unambiguous: a real frame is never
+// shorter than its eight-byte header.
+std::string encode(const Message& message, bool* oversize = nullptr);
 
 enum class DecodeError : std::uint8_t {
     None = 0,

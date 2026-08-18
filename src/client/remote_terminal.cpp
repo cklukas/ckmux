@@ -40,6 +40,13 @@ ckv::core::TerminalStatus RemoteTerminalSubsession::status() const {
     status.bracketed_paste_enabled = has(state.modes, proto::ModeBit::BracketedPaste);
     status.mouse_reporting_enabled = has(state.modes, proto::ModeBit::MouseReporting);
     status.mouse_encoding = encoding_of(state.modes);
+    // The level the child asked for, not merely that it asked. Two bits hold
+    // all four values `TerminalMouseTracking` has, so nothing that comes out of
+    // this mask can be a level that does not exist — and a view deciding
+    // whether to forward a motion reads this rather than guessing from
+    // `mouse_reporting_enabled` (ckVision D-054).
+    status.mouse_tracking = static_cast<ckv::core::TerminalMouseTracking>(
+        (state.modes & proto::kMouseTrackingMask) >> proto::kMouseTrackingShift);
     status.application_cursor_keys = has(state.modes, proto::ModeBit::ApplicationCursorKeys);
     status.focus_reporting_enabled = has(state.modes, proto::ModeBit::FocusReporting);
     status.alternate_scroll_enabled = has(state.modes, proto::ModeBit::AlternateScroll);
@@ -69,6 +76,7 @@ ckv::core::TerminalSnapshot RemoteTerminalSubsession::snapshot() const {
     snapshot.bracketed_paste_enabled = scalars.bracketed_paste_enabled;
     snapshot.mouse_reporting_enabled = scalars.mouse_reporting_enabled;
     snapshot.mouse_encoding = scalars.mouse_encoding;
+    snapshot.mouse_tracking = scalars.mouse_tracking;
     snapshot.application_cursor_keys = scalars.application_cursor_keys;
     snapshot.focus_reporting_enabled = scalars.focus_reporting_enabled;
     snapshot.alternate_scroll_enabled = scalars.alternate_scroll_enabled;

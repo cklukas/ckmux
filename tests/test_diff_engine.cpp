@@ -4,9 +4,11 @@
 // mirror built only out of the deltas the server produced — because the claim
 // is not "the server thinks it sent the right thing", it is "a client that saw
 // only these bytes holds what the terminal holds".
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <cstdio>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -105,6 +107,56 @@ std::string text_of(const GridState& state) {
     for (const ckv::Cell& cell : state.grid)
         if (!cell.is_continuation()) text += cell.grapheme();
     return text;
+}
+
+ckv::Cell cell_of(std::string_view text) {
+    return ckv::Cell::from_grapheme(text, ckv::Style{});
+}
+
+// An emulator whose history holds `lines` rows of `columns` cells, no two
+// neighbours alike. Varied on purpose: a screenful of blanks run-length
+// encodes to almost nothing, so a history built out of them would make every
+// size claim below pass without saying anything about a real session.
+ckv::term::TerminalEmulator crowded_emulator(int columns, int rows, std::size_t lines) {
+    ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
+    profile.cells = ckv::Size{columns, rows};
+    profile.cell_pixels = ckv::Size{9, 18};
+    ckv::term::TerminalSubsessionOptions options;
+    options.max_scrollback_lines = lines;
+    options.max_output_bytes = 1U << 20U;
+    options.max_parser_work_per_step = 128U << 10U;
+    ckv::term::TerminalEmulator emulator(profile, options);
+
+    std::string chunk;
+    // The screen's own rows on top of the history's, so the history really
+    // fills rather than stopping a screenful short. One column short of the
+    // width, so that no line depends on how the emulator treats a write that
+    // lands exactly on the last column — a deferred wrap and an immediate one
+    // differ by a blank row per line, and this measures bytes.
+    for (std::size_t line = 0; line < lines + static_cast<std::size_t>(rows); ++line) {
+        for (int column = 0; column + 1 < columns; ++column)
+            chunk.push_back(static_cast<char>('a' + ((line * 7 + static_cast<std::size_t>(column)) % 26)));
+        chunk += "\r\n";
+        if (chunk.size() < (32U << 10U)) continue;
+        emulator.feed_output(chunk);
+        chunk.clear();
+    }
+    if (!chunk.empty()) emulator.feed_output(chunk);
+    return emulator;
+}
+
+// What the whole of a terminal's history would cost on the wire, measured a
+// row at a time so that measuring it never costs what sending it would.
+std::size_t whole_history_bytes(const ckv::core::TerminalSubsession& source, int columns) {
+    const std::span<const ckv::Cell> history = source.scrollback();
+    const std::size_t width = static_cast<std::size_t>(std::max(1, columns));
+    std::size_t total = 4;  // the line count
+    for (std::size_t line = 0; line + width <= history.size(); line += width) {
+        const std::span<const ckv::Cell> row = history.subspan(line, width);
+        total += ckm::proto::encoded_size(
+            ckm::proto::to_runs(std::vector<ckv::Cell>(row.begin(), row.end())));
+    }
+    return total;
 }
 
 }  // namespace
@@ -272,12 +324,41 @@ CK_TEST(a_resize_costs_the_whole_grid_and_the_mirror_still_matches) {
         if (std::holds_alternative<ckm::proto::CellsOp>(op)) ++cell_ops;
     CK_CHECK(cell_ops == 12);
 
-    // The client resizes on TermMeta (WP-6); here that is the mirror being
-    // rebuilt at the new size before the delta lands.
-    client.mirror = ckm::blank_state(ckv::Size{60, 12}, 200);
+    // And the size itself, stated first, before anything measured against it.
+    // This test used to rebuild the mirror by hand here, with a comment saying
+    // the client resizes on `TermMeta` — which was false twice over: nothing
+    // sends a `TermMeta` on resize and `TermMeta` has no size field. What
+    // really happened is C3: a repaint of a smaller terminal fitted inside the
+    // larger mirror, so the rows and columns past the new edge kept the old
+    // program's output and nothing anywhere noticed.
+    const auto* resize = std::get_if<ckm::proto::ResizeOp>(&deltas.front().ops.front());
+    CK_CHECK(resize != nullptr);
+    if (resize != nullptr) {
+        CK_CHECK(resize->columns == 60);
+        CK_CHECK(resize->rows == 12);
+    }
+
+    // No hand-rebuilt mirror: the delta is applied to the mirror as it stands,
+    // at the OLD size, and it comes out the new one.
+    CK_CHECK((client.mirror.cells == ckv::Size{40, 8}));
     client.receive(deltas.front());
     CK_CHECK(client.refusals == 0);
+    CK_CHECK((client.mirror.cells == ckv::Size{60, 12}));
+    CK_CHECK(client.mirror.grid.size() == 720U);
     CK_CHECK(text_of(client.mirror).find("before the resize") != std::string::npos);
+
+    // And the server's belief and the client's mirror still agree, cell for
+    // cell — the check that says the resize was carried rather than guessed at
+    // by both ends independently.
+    const ckm::server::TerminalDiffer* differ = engine.differ_for(terminal.id());
+    CK_CHECK(differ != nullptr);
+    if (differ != nullptr) {
+        GridState held = client.mirror;
+        held.scrollback.clear();
+        held.scrollback_start = 0;
+        held.max_scrollback_lines = 0;
+        CK_CHECK(same_state(differ->believed(), held));
+    }
 }
 
 CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
@@ -456,6 +537,151 @@ CK_TEST(a_scrolling_child_costs_a_scroll_op_on_the_live_path_too) {
     }
     CK_CHECK(scrolls == 1);
     CK_CHECK(cell_ops <= 2);
+}
+
+// --- R1: a snapshot that always fits ---------------------------------------
+
+CK_TEST(the_size_a_snapshot_will_take_is_known_before_it_is_written) {
+    // The whole point of `encoded_size` is deciding what to send BEFORE the
+    // bytes exist. A second encoder that had drifted from the first would
+    // decide wrongly and silently, so it is pinned against what `encode`
+    // actually produces, over a snapshot with something in every field that
+    // varies: a title with a multi-byte character in it, a grid with a wide
+    // character and its continuation half, history, images and a print job.
+    ckm::proto::Attached attached;
+    attached.session = 7;
+    attached.snapshot.desktop_columns = 100;
+    attached.snapshot.desktop_rows = 30;
+    attached.snapshot.focused_term = 11;
+
+    ckm::proto::TerminalState busy;
+    busy.term = 11;
+    busy.index = 2;
+    busy.title = "vim plans/05-protocol.md ✓";
+    busy.columns = 4;
+    busy.rows = 2;
+    busy.grid = ckm::proto::to_runs({cell_of("a"), cell_of("a"), cell_of("漢"),
+                                     ckv::Cell::continuation(ckv::Style{}), cell_of("b"),
+                                     cell_of("c"), cell_of(" "), cell_of(" ")});
+    busy.scrollback = {ckm::proto::to_runs({cell_of("o"), cell_of("l"), cell_of("d")}),
+                       ckm::proto::to_runs({cell_of("e"), cell_of("r")})};
+    busy.images = {77, 78};
+    busy.print_jobs.push_back(
+        ckm::proto::PrintJobInfo{5, ckm::proto::PrintJobKind::Autoprint, 900, 30, -7});
+    attached.snapshot.terminals.push_back(std::move(busy));
+
+    // And one with nothing at all in it, so the fixed part is checked on its
+    // own rather than inside a sum where an error of a few bytes hides.
+    ckm::proto::TerminalState bare;
+    bare.term = 12;
+    attached.snapshot.terminals.push_back(std::move(bare));
+
+    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 62U);
+    const std::string frame = ckm::proto::encode(attached);
+    CK_CHECK(!frame.empty());
+    CK_CHECK(frame.size() ==
+             ckm::proto::kHeaderBytes + 8 + ckm::proto::encoded_size(attached.snapshot));
+}
+
+CK_TEST(a_default_configuration_attach_fits_under_the_cap) {
+    // C1's reproduction, and the regression test for it: a hundred columns and
+    // the default ten-thousand-line history made a 16.29 MiB `Attached`, past
+    // the DECODER's own limit — so the client exited with "the server sent
+    // something this build cannot read" and the session was permanently
+    // unattachable. Not a slow attach: no attach at all, for good.
+    constexpr int kColumns = 100;
+    constexpr std::size_t kDefaultScrollback = 10000;  // [general] scrollback's default
+    ckv::term::TerminalEmulator emulator = crowded_emulator(kColumns, 24, kDefaultScrollback);
+    DiffEngine engine;
+
+    // The history really is the default's worth, said here so that a shortfall
+    // diagnoses itself instead of quietly weakening the measurement below.
+    const std::span<const ckv::Cell> held = emulator.scrollback();
+    const std::size_t held_lines = held.size() / static_cast<std::size_t>(kColumns);
+    CK_CHECK(held_lines >= kDefaultScrollback - 8);
+
+    // What the old snapshot carried, measured rather than asserted: this is
+    // the number that made the frame unreadable, and if it ever stops being
+    // over the cap this test has stopped testing anything.
+    const std::size_t whole = whole_history_bytes(emulator, kColumns);
+    std::printf("  [snapshot] %d columns x %zu lines of history: %.2f MiB of scrollback alone\n",
+                kColumns, kDefaultScrollback, static_cast<double>(whole) / (1024.0 * 1024.0));
+    CK_CHECK(whole > ckm::proto::kMaxSnapshotPayloadBytes);
+
+    ckm::proto::Attached attached;
+    attached.session = 1;
+    attached.snapshot.desktop_columns = kColumns;
+    attached.snapshot.desktop_rows = 24;
+    attached.snapshot.terminals.push_back(engine.snapshot(1, emulator));
+    // A screen goes whole — it is what the terminal IS — and what is left of
+    // the budget after the screens is what the histories share.
+    const std::size_t screens = 8 + ckm::proto::encoded_size(attached.snapshot);
+    CK_CHECK(screens < ckm::proto::kSnapshotPayloadBudget);
+    const std::size_t spent = engine.fill_history(1, attached.snapshot.terminals.front(), emulator,
+                                                  ckm::proto::kSnapshotPayloadBudget - screens);
+    CK_CHECK(spent > 0U);
+
+    const std::string frame = ckm::proto::encode(attached);
+    CK_CHECK(!frame.empty());
+    CK_CHECK(frame.size() <= ckm::proto::kHeaderBytes + ckm::proto::kSnapshotPayloadBudget);
+    CK_CHECK(frame.size() <= ckm::proto::kHeaderBytes + ckm::proto::kMaxSnapshotPayloadBytes);
+
+    // And it is a bound, not a discard: the reader still gets thousands of
+    // lines to page back through, and they are the NEWEST ones — the half a
+    // reader actually pages into.
+    const std::vector<std::vector<ckm::proto::CellRun>>& history =
+        attached.snapshot.terminals.front().scrollback;
+    CK_CHECK(history.size() > 1000U);
+    CK_CHECK(history.size() < kDefaultScrollback);
+    const std::span<const ckv::Cell> newest =
+        held.subspan((held_lines - 1) * static_cast<std::size_t>(kColumns),
+                     static_cast<std::size_t>(kColumns));
+    const std::vector<ckv::Cell> restored = ckm::proto::from_runs(history.back());
+    CK_CHECK(restored.size() == static_cast<std::size_t>(kColumns));
+    CK_CHECK(restored.front().grapheme() == newest.front().grapheme());
+}
+
+CK_TEST(a_terminal_with_a_long_history_does_not_starve_its_neighbours) {
+    // The fair share, which is the whole reason the history is filled in a
+    // second pass: one terminal that has been running `find /` all week must
+    // not spend the session's entire budget before the terminals beside it are
+    // asked. Each takes what it can from an equal share, and what it does not
+    // use passes to the next — so terminals with no history waste nothing.
+    constexpr int kColumns = 80;
+    ckv::term::TerminalEmulator hoarder = crowded_emulator(kColumns, 8, 2000);
+    ckv::term::TerminalEmulator modest = crowded_emulator(kColumns, 8, 12);
+    ckv::term::TerminalEmulator quiet = crowded_emulator(kColumns, 8, 4);
+
+    DiffEngine engine;
+    std::vector<ckm::proto::TerminalState> states;
+    states.push_back(engine.snapshot(1, hoarder));
+    states.push_back(engine.snapshot(2, modest));
+    states.push_back(engine.snapshot(3, quiet));
+
+    // A budget the first terminal alone would eat several times over, so the
+    // sharing is what decides the outcome rather than there being room for
+    // everyone.
+    const std::size_t budget = 64u * 1024u;
+    CK_CHECK(whole_history_bytes(hoarder, kColumns) > budget * 4);
+
+    std::size_t remaining = budget;
+    std::size_t left = states.size();
+    const ckv::core::TerminalSubsession* sources[3] = {&hoarder, &modest, &quiet};
+    for (std::size_t index = 0; index < states.size(); ++index) {
+        const std::size_t share = remaining / std::max<std::size_t>(1, left);
+        remaining -= engine.fill_history(static_cast<TerminalId>(index + 1), states[index],
+                                         *sources[index], share);
+        --left;
+    }
+
+    for (const ckm::proto::TerminalState& state : states) CK_CHECK(!state.scrollback.empty());
+    // The two small ones fit whole; the greedy one took a share and no more.
+    CK_CHECK(states[1].scrollback.size() == 12U);
+    CK_CHECK(states[2].scrollback.size() == 4U);
+    std::size_t total = 0;
+    for (const ckm::proto::TerminalState& state : states)
+        total += ckm::proto::encoded_size(state.scrollback);
+    CK_CHECK(total <= budget + 3 * 4);  // each line count is the caller's, not the share's
 }
 
 // --- WP-16: pictures on the wire -------------------------------------------

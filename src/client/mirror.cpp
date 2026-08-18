@@ -24,15 +24,36 @@ ckv::core::TerminalDamage everything(ckv::Size cells) {
 
 }  // namespace
 
-void TerminalMirror::adopt(const proto::TerminalState& state) {
+bool TerminalMirror::adopt(const proto::TerminalState& state) {
+    // The geometry is refused before anything is sized by it. `blank_state`
+    // below allocates columns × rows cells on the strength of two `u16`s the
+    // peer chose, so a snapshot claiming 65535 by 65535 — four billion cells
+    // out of a kilobyte on the wire — has to be stopped here rather than
+    // discovered by the allocator (plans/05, invariant 2). Refused rather than
+    // clamped: a mirror of a size nobody sent would draw a terminal that does
+    // not exist, and the protocol's answer to a snapshot it cannot take is the
+    // one it already has — ask for another.
+    if (state.columns > proto::kMaxGridColumns || state.rows > proto::kMaxGridRows) {
+        needs_snapshot_ = true;
+        return false;
+    }
     const std::size_t limit = state_.max_scrollback_lines;
     state_ = blank_state(ckv::Size{state.columns, state.rows}, limit);
     (void)decode_grid(state.grid, state_.cells, state_);
     // Through the same gate a delta's push uses, so the reader's capacity —
     // not the server's — bounds what is kept: a client that kept more than it
     // was configured to would hold text its reader asked it to forget.
-    for (const std::vector<proto::CellRun>& line : state.scrollback)
+    for (const std::vector<proto::CellRun>& line : state.scrollback) {
+        // The same rule a delta's push is held to, on the path that does not
+        // go through `apply_delta`: a snapshot line wider than the terminal it
+        // claims to belong to is refused rather than materialised (M-P1's
+        // other half — 62.9 MB out of 449 bytes, reached through attach).
+        std::size_t length = 0;
+        for (const proto::CellRun& run : line) length += run.run_length;
+        if (length == 0 || length > static_cast<std::size_t>(std::max(0, state_.cells.width)))
+            continue;
         push_scrollback_line(state_, proto::from_runs(line));
+    }
     state_.cursor = GridCursor{state.cursor.column, state.cursor.row, state.cursor.style,
                                state.cursor.visible, state.cursor.blink};
     state_.modes = state.modes;
@@ -67,6 +88,7 @@ void TerminalMirror::adopt(const proto::TerminalState& state) {
     // (`ServerSession::connection_lost` drops them all). When the snapshot
     // grows an exit field, `adopt` takes the state from `state` and this
     // becomes the fallback for a server that did not send one.
+    return true;
 }
 
 bool TerminalMirror::apply(const proto::GridDelta& delta) {
@@ -79,8 +101,11 @@ bool TerminalMirror::apply(const proto::GridDelta& delta) {
         return false;
     }
     if (!apply_delta(delta.ops, state_)) {
-        // The ops do not fit — the two ends disagree about the size, which a
-        // TermMeta was supposed to have settled first. Same cure.
+        // The ops do not fit. A delta that changes the size says so itself
+        // now, so this is either a peer asking for a geometry no grid may have
+        // or a mirror that has genuinely lost track — and the cure for both is
+        // the one the protocol already defines. `adopt` sizes itself from the
+        // snapshot, so the recovery needs nothing else.
         needs_snapshot_ = true;
         return false;
     }
@@ -90,6 +115,22 @@ bool TerminalMirror::apply(const proto::GridDelta& delta) {
     // grids: the ops ARE the statement of what changed, and a mirror that
     // compared would be doing the diff engine's work a second time.
     for (const proto::GridOp& op : delta.ops) {
+        if (std::holds_alternative<proto::ResizeOp>(op)) {
+            // Everything, at the new size — read off `state_`, which
+            // `apply_delta` has already resized. Not `everything()` wholesale,
+            // because that would discard the pushed-line count this same walk
+            // may go on to accumulate: a delta states its size and then pushes
+            // the history that scrolled away at it, and a view told about only
+            // half of that draws half a frame.
+            damage_.full = true;
+            damage_.cursor = true;
+            damage_.modes = true;
+            damage_.title = true;
+            damage_.rasters = true;
+            damage_.rows.assign(static_cast<std::size_t>(std::max(0, state_.cells.height)),
+                                ckv::core::TerminalDamage::RowSpan{0, std::max(0, state_.cells.width)});
+            continue;
+        }
         if (const auto* cells = std::get_if<proto::CellsOp>(&op)) {
             std::size_t length = 0;
             for (const proto::CellRun& run : cells->runs) length += run.run_length;

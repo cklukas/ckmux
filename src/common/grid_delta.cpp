@@ -178,6 +178,56 @@ void enforce_scrollback_capacity(GridState& state) {
     }
 }
 
+void resize_state(GridState& state, ckv::Size cells) {
+    if (state.cells == cells) return;
+    const bool same_width = state.cells.width == cells.width;
+
+    // Taken out before the width changes, because the buffer is flat and the
+    // width is the only thing that says where its rows begin: reinterpreting it
+    // at the new width would slice every line in the wrong place.
+    std::vector<ckv::Cell> history;
+    std::size_t old_width = 0;
+    if (!same_width) {
+        old_width = scrollback_width(state);
+        const std::span<const ckv::Cell> live = scrollback_cells(state);
+        history.assign(live.begin(), live.end());
+        state.scrollback.clear();
+        state.scrollback_start = 0;
+    }
+
+    state.cells = cells;
+    state.grid.assign(static_cast<std::size_t>(std::max(0, cells.width)) *
+                          static_cast<std::size_t>(std::max(0, cells.height)),
+                      blank_cell());
+
+    // The cursor comes with it. Each op in a delta is checked against the
+    // geometry as it stood when that op was reached, so "move the cursor to
+    // row 20, then become five rows tall" is a well-formed sequence — and a
+    // state that kept row 20 would be holding a position outside its own grid
+    // for a view to index by. Clamped here rather than left to the renderer:
+    // ckVision tolerates it at draw time, but a mirror that relies on its
+    // consumer's tolerance is a mirror whose invariant is somebody else's.
+    // One past the last COLUMN survives, because that is where a terminal
+    // leaves the cursor on a row it has filled and not yet wrapped.
+    const int last_column = std::max(0, state.cells.width);
+    const int last_row = std::max(0, state.cells.height - 1);
+    if (state.cursor.column > last_column)
+        state.cursor.column = static_cast<std::uint16_t>(last_column);
+    if (state.cursor.row > last_row) state.cursor.row = static_cast<std::uint16_t>(last_row);
+
+    if (same_width) {
+        enforce_scrollback_capacity(state);
+        return;
+    }
+
+    // Through the one gate history enters a state by, so the padding and the
+    // capacity rule are the same ones a push obeys — and so a re-lay cannot
+    // grow the history past what the reader asked to keep.
+    for (std::size_t line = 0; old_width > 0 && line + old_width <= history.size();
+         line += old_width)
+        push_scrollback_line(state, std::span<const ckv::Cell>(history.data() + line, old_width));
+}
+
 void push_scrollback_line(GridState& state, std::span<const ckv::Cell> line) {
     if (state.max_scrollback_lines == 0) return;
     const std::size_t width = scrollback_width(state);
@@ -194,19 +244,27 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridView& curre
                                 std::span<const RowDamage> damaged) {
     std::vector<GridOp> ops;
 
-    if (!pushed.empty()) {
-        ScrollbackPushOp push;
-        push.lines.reserve(pushed.size());
-        for (const std::vector<ckv::Cell>& line : pushed) push.lines.push_back(runs_of(line));
-        ops.push_back(std::move(push));
-    }
-
     const int width = current.cells.width;
     const int height = current.cells.height;
     const std::size_t expected = static_cast<std::size_t>(std::max(0, width)) *
                                  static_cast<std::size_t>(std::max(0, height));
     const bool same_geometry = previous.cells == current.cells &&
                                previous.grid.size() == expected && current.grid.size() == expected;
+
+    // One rule, stated once: an op sequence that repaints every row states the
+    // size first. It has to come before the history push below, because the
+    // pushed lines are rows of the new width and the mirror files them against
+    // its own.
+    if (!same_geometry)
+        ops.push_back(proto::ResizeOp{static_cast<std::uint16_t>(std::max(0, width)),
+                                      static_cast<std::uint16_t>(std::max(0, height))});
+
+    if (!pushed.empty()) {
+        ScrollbackPushOp push;
+        push.lines.reserve(pushed.size());
+        for (const std::vector<ckv::Cell>& line : pushed) push.lines.push_back(runs_of(line));
+        ops.push_back(std::move(push));
+    }
 
     if (!same_geometry) {
         emit_every_row(current, ops);
@@ -332,6 +390,13 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridView& curre
 std::vector<proto::GridOp> full_repaint(const GridView& current,
                                         std::span<const std::vector<ckv::Cell>> pushed) {
     std::vector<GridOp> ops;
+    // The size, before anything that depends on it. A repaint that assumes
+    // nothing cannot assume the geometry either — and the pushed lines below
+    // are rows of the NEW width, which `push_scrollback_line` pads and cuts
+    // against the state's own, so a mirror that had not resized yet would file
+    // them at the wrong width.
+    ops.push_back(proto::ResizeOp{static_cast<std::uint16_t>(std::max(0, current.cells.width)),
+                                  static_cast<std::uint16_t>(std::max(0, current.cells.height))});
     if (!pushed.empty()) {
         ScrollbackPushOp push;
         push.lines.reserve(pushed.size());
@@ -359,26 +424,43 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridState& curr
 }
 
 bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror) {
-    const int width = mirror.cells.width;
+    int width = mirror.cells.width;
     const int height = mirror.cells.height;
     if (mirror.grid.size() != static_cast<std::size_t>(std::max(0, width)) *
                                   static_cast<std::size_t>(std::max(0, height)))
         return false;
 
-    // Checked in full before anything is performed. All-or-nothing is the
-    // whole contract: a mirror holding half a delta shows a program's screen
-    // with a stripe of some other moment in it, and nothing downstream can
-    // tell that it happened.
+    // Checked in full before anything is performed, and against the geometry as
+    // it will be WHEN EACH OP IS REACHED. All-or-nothing is the whole contract:
+    // a mirror holding half a delta shows a program's screen with a stripe of
+    // some other moment in it, and nothing downstream can tell that it
+    // happened. The running geometry is the other half — a repaint of a
+    // SMALLER terminal used to pass every bounds check against a larger mirror,
+    // so the rows and columns past the new edge kept whatever the last program
+    // had drawn there and no counter anywhere fired (13-architecture-review C3).
+    int check_width = width;
+    int check_height = height;
     for (const GridOp& op : ops) {
+        if (const auto* resize = std::get_if<proto::ResizeOp>(&op)) {
+            // A size of nothing is not a size, and one past what a grid may
+            // ever be is a mirror asked to allocate on a peer's say-so. The
+            // bound is the protocol's own, so both ends refuse the same number.
+            if (resize->columns == 0 || resize->rows == 0) return false;
+            if (resize->columns > proto::kMaxGridColumns) return false;
+            if (resize->rows > proto::kMaxGridRows) return false;
+            check_width = resize->columns;
+            check_height = resize->rows;
+            continue;
+        }
         if (const auto* scroll = std::get_if<ScrollOp>(&op)) {
-            if (scroll->top > scroll->bottom || scroll->bottom > height) return false;
+            if (scroll->top > scroll->bottom || scroll->bottom > check_height) return false;
             const int region = scroll->bottom - scroll->top;
             if (std::abs(static_cast<int>(scroll->lines)) > region) return false;
             continue;
         }
         if (const auto* cells = std::get_if<CellsOp>(&op)) {
-            if (cells->row >= height || cells->column > width) return false;
-            if (total_length(cells->runs) > static_cast<std::size_t>(width - cells->column))
+            if (cells->row >= check_height || cells->column > check_width) return false;
+            if (total_length(cells->runs) > static_cast<std::size_t>(check_width - cells->column))
                 return false;
             continue;
         }
@@ -387,17 +469,36 @@ bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror) {
             // leaves the cursor after filling a row it has not wrapped yet,
             // and refusing it would make a mirror resnapshot over a state its
             // own emulator produces routinely.
-            if (cursor->row >= height || cursor->column > width) return false;
+            if (cursor->row >= check_height || cursor->column > check_width) return false;
             continue;
         }
         if (const auto* push = std::get_if<ScrollbackPushOp>(&op)) {
-            for (const std::vector<CellRun>& line : push->lines)
-                if (total_length(line) == 0) return false;
+            for (const std::vector<CellRun>& line : push->lines) {
+                const std::size_t length = total_length(line);
+                // A history line is a row of the grid. Shorter is padded by
+                // `push_scrollback_line`; longer is a peer claiming a row
+                // wider than the terminal it belongs to, which is a mirror
+                // asked to allocate on somebody else's say-so — measured at
+                // 62.9 MB out of 449 bytes on the wire
+                // (13-architecture-review, M-P1). The width is the RUNNING
+                // one, so a push that follows a resize is measured against the
+                // terminal it is about to belong to.
+                if (length == 0 || length > static_cast<std::size_t>(std::max(0, check_width)))
+                    return false;
+            }
             continue;
         }
     }
 
     for (const GridOp& op : ops) {
+        if (const auto* resize = std::get_if<proto::ResizeOp>(&op)) {
+            resize_state(mirror, ckv::Size{resize->columns, resize->rows});
+            // The ops after this one index by the NEW width — the shift and
+            // the cell copies below both take it as an argument, and taking
+            // the old one would write every row at the wrong offset.
+            width = mirror.cells.width;
+            continue;
+        }
         if (const auto* push = std::get_if<ScrollbackPushOp>(&op)) {
             // A holder that keeps no history does not decode the lines at all.
             // That is the server's own belief about a client: it never diffs
@@ -464,6 +565,16 @@ bool same_state(const GridState& a, const GridState& b) {
 std::vector<proto::CellRun> encode_grid(const GridState& state) { return proto::to_runs(state.grid); }
 
 bool decode_grid(std::span<const proto::CellRun> runs, ckv::Size cells, GridState& state) {
+    // A geometry past what this protocol will carry is refused, not clamped.
+    // The size is the peer's, and it is what sizes the allocation: a snapshot
+    // declaring 65535 by 65535, with run lengths that sum to match, is a
+    // kilobyte of frame asking a client to materialise four billion cells —
+    // which is a hostile peer costing the process rather than the connection
+    // (plans/05, invariant 2; found by the fuzz lane).
+    if (cells.width < 0 || cells.height < 0) return false;
+    if (cells.width > static_cast<int>(proto::kMaxGridColumns) ||
+        cells.height > static_cast<int>(proto::kMaxGridRows))
+        return false;
     const std::size_t expected = static_cast<std::size_t>(std::max(0, cells.width)) *
                                  static_cast<std::size_t>(std::max(0, cells.height));
     std::size_t total = 0;

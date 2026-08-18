@@ -24,9 +24,9 @@ verification evidence: the "ckmux Architecture Review" artifact of 2026-08-18.
 
 | # | Topic | Findings | State |
 |---|-------|----------|-------|
-| R1 | Protocol size bounds | C1, M-P1, M-P2, m-str | **open** — blocked: `src/common/proto.*` carries another session's uncommitted hunks |
-| R2 | Server fairness & loop health | C2, M-S1…M-S5, m-exit-msg | **open** — blocked: `src/server/*` uncommitted peer hunks; consider ckVision `request_termination()` (landed `1664403`) for M-S3 |
-| R3 | Mirror geometry & resize | C3 | **open** — needs a proto geometry op; sequence after R1 |
+| R1 | Protocol size bounds | C1, M-P1, M-P2, m-str | **done** — encode refuses past-cap frames; snapshots budget-bounded at 4 MiB with fair-shared history; count() takes per-entry minimums; `ScrollbackPush`/`decode_grid`/`from_runs` geometry-guarded; protocol v3 (`ResizeOp`, tracking level, the close/move fields) |
+| R2 | Server fairness & loop health | C2, M-S1…M-S5, m-exit-msg | **ongoing** — applier working from the reviewed design: session-filtered snapshot scan, three-mark queue policy with a 32 MiB drop, accept-pause on exhaustion, two-stage kill via new ckVision `request_kill()`, self-exit `TermClosed` off the lifecycle damage flag, stated working directory replacing the `HOME` read, geometry ceiling |
+| R3 | Mirror geometry & resize | C3 | **done** — `ResizeOp` leads every geometry-changing delta, validation runs against the geometry each op will see, history re-laid at the new width, cursor clamped in; pinned end-to-end over a real socket both directions |
 | R4 | Platform fd & signal hygiene | M-F1…M-F5, m-plat | **done** — Debug + ASan suites green; the server-side adoption of `AcceptResult`/`Poller::outcome` is R2's row; the PTY half of the SIGPIPE fix is R7's |
 | R5 | Client lifetimes & reattach windows | C4, M-L1…M-L3, M-R4, m-client | **ongoing** — M-R4, copy-mode, prefix-overlay and connection fixes committed (Debug + ASan green); C4/M-L1/M-L2/M-L3 fully specified in the R5 report, waiting on the peer landing to apply; Send Prefix unblocked by ckVision `TerminalView::send_key`, applies with the freed files |
 | R6 | Config & keymap truthfulness | M-T1, m-conf | **ongoing** — config half committed (Debug + ASan green): M-T1 in `[general]`, honoured-list corrected both directions, durable saves, escape rule, full-path warnings; keymap `^B` spelling (item 9) fully designed, lands with the freed `commands.cpp`/`test_menu_commands.cpp`. The silent write-failure client exit is fixed inside the peer's landing (connection-lost path), not here |

@@ -4,8 +4,10 @@
 // mirror, and the mirror compared against what the server holds — which is the
 // only property that matters, because everything a reader sees downstream of
 // M2 is that mirror rather than the terminal itself.
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,8 @@ using ckm::proto::CursorOp;
 using ckm::proto::GridOp;
 using ckm::proto::ModeBit;
 using ckm::proto::ModesOp;
+using ckm::proto::ResizeOp;
+using ckm::proto::ScrollbackPushOp;
 using ckm::proto::ScrollOp;
 
 // A deterministic generator. Not std::mt19937 seeded from a clock: a property
@@ -277,11 +281,67 @@ CK_TEST(a_delta_that_does_not_fit_the_mirror_is_refused_rather_than_half_applied
     CK_CHECK(same_state(mirror, before));
 }
 
-CK_TEST(a_size_change_is_not_a_delta_and_the_mirror_says_so) {
-    // GridDelta carries no geometry, deliberately: a mirror that resized itself
-    // from a delta would be guessing at a size nobody sent it. The server sends
-    // TermMeta first; until the mirror has taken it, the delta does not fit and
-    // is refused rather than applied to the wrong shape.
+CK_TEST(a_history_line_wider_than_the_terminal_is_refused) {
+    // A history line is a row of the grid, so a line wider than the grid is a
+    // peer sizing an allocation on this side of the socket: one run claims up
+    // to 65535 cells in sixteen bytes, and a push of 449 bytes was measured
+    // expanding to 62.9 MB in the mirror (13-architecture-review, M-P1).
+    GridState mirror = blank_state(ckv::Size{20, 5}, 10);
+    write_text(mirror, 0, 0, "untouched", ckv::Style{});
+    const GridState before = mirror;
+
+    std::vector<GridOp> too_wide;
+    ScrollbackPushOp wide;
+    wide.lines.push_back(ckm::proto::to_runs(std::vector<ckv::Cell>(21, blank_cell())));
+    too_wide.emplace_back(std::move(wide));
+    CK_CHECK(!ckm::apply_delta(too_wide, mirror));
+    CK_CHECK(same_state(mirror, before));
+    CK_CHECK(scrollback_lines(mirror) == 0U);
+
+    // Exactly the width is a row, and shorter is a row the push helper pads:
+    // the rule refuses what cannot be a row of THIS terminal, not everything
+    // that is not perfectly shaped.
+    std::vector<GridOp> ordinary;
+    ScrollbackPushOp fits;
+    fits.lines.push_back(ckm::proto::to_runs(std::vector<ckv::Cell>(20, blank_cell())));
+    fits.lines.push_back(ckm::proto::to_runs(std::vector<ckv::Cell>(3, blank_cell())));
+    ordinary.emplace_back(std::move(fits));
+    CK_CHECK(ckm::apply_delta(ordinary, mirror));
+    CK_CHECK(scrollback_lines(mirror) == 2U);
+}
+
+CK_TEST(a_snapshot_geometry_past_what_the_protocol_carries_is_refused) {
+    // The size in an attach snapshot is the peer's, and it is what sizes the
+    // grid: a frame declaring 65535 by 65535 with run lengths to match is a
+    // kilobyte on the wire asking a client to materialise four billion cells.
+    // Refused on the declaration, before anything is allocated by it — a
+    // hostile peer costs a connection and nothing else (plans/05, invariant 2).
+    GridState state = blank_state(ckv::Size{0, 0}, 0);
+    const std::vector<ckm::proto::CellRun> runs{ckm::proto::CellRun{1, blank_cell()}};
+    CK_CHECK(!ckm::decode_grid(runs, ckv::Size{65535, 65535}, state));
+    CK_CHECK(!ckm::decode_grid(runs, ckv::Size{ckm::proto::kMaxGridColumns + 1, 1}, state));
+    CK_CHECK(!ckm::decode_grid(runs, ckv::Size{1, ckm::proto::kMaxGridRows + 1}, state));
+    CK_CHECK(!ckm::decode_grid(runs, ckv::Size{-1, -1}, state));
+    // Untouched, not half-sized: a refusal that had already assigned the
+    // geometry would leave a state whose grid and size disagree.
+    CK_CHECK(state.cells.width == 0);
+    CK_CHECK(state.grid.empty());
+
+    // And an ordinary snapshot still decodes, so the ceiling is a ceiling
+    // rather than a blanket refusal.
+    CK_CHECK(ckm::decode_grid(ckm::proto::to_runs(std::vector<ckv::Cell>(4, blank_cell())),
+                              ckv::Size{2, 2}, state));
+    CK_CHECK(state.grid.size() == 4U);
+}
+
+CK_TEST(a_size_change_is_stated_by_the_delta_that_carries_it) {
+    // This used to say the opposite — that a GridDelta carries no geometry,
+    // that the server sends a TermMeta first, and that the mirror is resized by
+    // its caller before the delta lands. All three were false: nothing sends a
+    // TermMeta on resize, TermMeta has no size field, and what actually
+    // happened is that a repaint of a SMALLER terminal passed every bounds
+    // check against a larger mirror (13-architecture-review C3). The delta says
+    // the size itself now, first, before anything measured against it.
     GridState small = blank_state(ckv::Size{10, 3}, 5);
     write_text(small, 0, 0, "before", ckv::Style{});
     GridState large = blank_state(ckv::Size{16, 4}, 5);
@@ -289,14 +349,149 @@ CK_TEST(a_size_change_is_not_a_delta_and_the_mirror_says_so) {
 
     const std::vector<GridOp> ops = ckm::diff(small, large);
     CK_CHECK(count_ops_of(ops, 1) == 4);  // every row of the new size
+    CK_CHECK(count_ops_of(ops, 6) == 1);  // ResizeOp, and exactly one
+    const auto* resize = std::get_if<ResizeOp>(&ops.front());
+    CK_CHECK(resize != nullptr);
+    if (resize != nullptr) {
+        CK_CHECK(resize->columns == 16);
+        CK_CHECK(resize->rows == 4);
+    }
 
+    // A mirror still holding the old size takes it, because the delta says what
+    // to become. Nothing else had to happen first.
     GridState stale = small;
-    CK_CHECK(!ckm::apply_delta(ops, stale));
-    CK_CHECK(same_state(stale, small));
+    CK_CHECK(ckm::apply_delta(ops, stale));
+    CK_CHECK(same_state(stale, large));
 
+    // And one already at the new size is unmoved by being told so.
     GridState resized = blank_state(large.cells, 5);
     CK_CHECK(ckm::apply_delta(ops, resized));
     CK_CHECK(same_state(resized, large));
+}
+
+CK_TEST(a_delta_that_shrinks_the_grid_shrinks_the_mirror) {
+    // C3's reproduction. A terminal that got smaller repainted every row of its
+    // new size, and every one of those ops fitted inside the larger mirror — so
+    // the rows and the columns past the new edge kept whatever the last program
+    // had drawn there, forever, and no counter anywhere fired. A reader saw a
+    // window with somebody else's output down its right-hand side.
+    GridState mirror = blank_state(ckv::Size{100, 30}, 40);
+    write_text(mirror, 25, 0, "a row past the new bottom edge", ckv::Style{});
+    write_text(mirror, 3, 90, "past the new right edge", ckv::Style{});
+
+    GridState smaller = blank_state(ckv::Size{60, 20}, 40);
+    write_text(smaller, 0, 0, "what the terminal holds now", ckv::Style{});
+    smaller.cursor = GridCursor{5, 1, 0, 1, 0};
+    smaller.title = "after";
+
+    const std::vector<GridOp> ops = ckm::full_repaint(
+        ckm::GridView{smaller.cells, std::span<const ckv::Cell>(smaller.grid), smaller.cursor,
+                      smaller.modes, smaller.title});
+    CK_CHECK(ckm::apply_delta(ops, mirror));
+    CK_CHECK((mirror.cells == ckv::Size{60, 20}));
+    CK_CHECK(mirror.grid.size() == 1200U);
+    CK_CHECK(same_state(mirror, smaller));
+}
+
+CK_TEST(a_resize_keeps_the_history_and_re_lays_it) {
+    // The history is the one thing a resize must NOT throw away: it is what
+    // keeping it on the client's side of the socket was for, and a reader who
+    // narrowed a window would otherwise lose everything they had scrolled past.
+    // Re-laid at the new width, by the same rule a push obeys, which is the
+    // rule the emulator itself keeps when a resize re-lays its own history.
+    GridState state = blank_state(ckv::Size{100, 5}, 40);
+    for (int line = 0; line < 10; ++line) {
+        std::vector<ckv::Cell> row(100, blank_cell());
+        const std::string text = "history line " + std::to_string(line);
+        for (std::size_t index = 0; index < text.size(); ++index)
+            row[index] = ckv::Cell::from_grapheme(text.substr(index, 1), ckv::Style{});
+        push_scrollback_line(state, row);
+    }
+    CK_CHECK(scrollback_lines(state) == 10U);
+
+    ckm::resize_state(state, ckv::Size{60, 20});
+    CK_CHECK((state.cells == ckv::Size{60, 20}));
+    CK_CHECK(state.grid.size() == 1200U);
+    // Same lines, same order, each cut to the new width — and the rows still
+    // line up, which is what a reader paging back actually sees.
+    CK_CHECK(scrollback_lines(state) == 10U);
+    const std::span<const ckv::Cell> history = scrollback_cells(state);
+    CK_CHECK(history.size() == 10U * 60U);
+    for (std::size_t line = 0; line < 10; ++line) {
+        std::string text;
+        for (std::size_t column = 0; column < 13; ++column)
+            text += history[line * 60 + column].grapheme();
+        CK_CHECK(text == "history line ");
+    }
+
+    // A height-only change re-lays nothing at all, which is the common case:
+    // the width is what the history is indexed by.
+    ckm::resize_state(state, ckv::Size{60, 8});
+    CK_CHECK(scrollback_lines(state) == 10U);
+    CK_CHECK(state.grid.size() == 480U);
+}
+
+CK_TEST(a_resize_brings_the_cursor_inside_the_grid_with_it) {
+    // Each op is checked against the geometry as it stood when THAT op was
+    // reached, which is right — so "put the cursor on row 20, then become five
+    // rows tall" is a well-formed delta and is applied whole. What must not
+    // survive it is a mirror holding a cursor outside its own grid: a view
+    // indexes by that position, and a state that left it to the renderer to
+    // cope with has made its invariant somebody else's problem.
+    GridState mirror = blank_state(ckv::Size{80, 24}, 10);
+    std::vector<GridOp> ops;
+    ops.push_back(CursorOp{79, 20, 0, 1, 0});
+    ops.emplace_back(ResizeOp{80, 5});
+    CK_CHECK(ckm::apply_delta(ops, mirror));
+    CK_CHECK((mirror.cells == ckv::Size{80, 5}));
+    CK_CHECK(mirror.cursor.row == 4);
+    CK_CHECK(mirror.cursor.column == 79);
+
+    // Narrower clamps the column too — to one PAST the last, which is where a
+    // terminal leaves the cursor on a row it has filled and not yet wrapped,
+    // and the one position `apply_delta` allows outside the grid proper.
+    ckm::resize_state(mirror, ckv::Size{40, 5});
+    CK_CHECK(mirror.cursor.column == 40);
+    CK_CHECK(mirror.cursor.row == 4);
+
+    // And a resize that does not need to move it does not move it.
+    mirror.cursor = GridCursor{3, 1, 0, 1, 0};
+    ckm::resize_state(mirror, ckv::Size{60, 12});
+    CK_CHECK(mirror.cursor.column == 3);
+    CK_CHECK(mirror.cursor.row == 1);
+}
+
+CK_TEST(a_resize_a_mirror_cannot_hold_is_refused_rather_than_attempted) {
+    // The bound is the protocol's own, so both ends refuse the same number: a
+    // size of nothing is not a size, and one past what any grid may be is a
+    // mirror asked to allocate on a peer's say-so. Refused whole, like every
+    // other delta that does not fit.
+    GridState mirror = blank_state(ckv::Size{20, 5}, 10);
+    write_text(mirror, 0, 0, "untouched", ckv::Style{});
+    const GridState before = mirror;
+
+    const ckm::proto::ResizeOp impossible[] = {
+        ckm::proto::ResizeOp{0, 24},
+        ckm::proto::ResizeOp{80, 0},
+        ckm::proto::ResizeOp{5000, 5000},
+        ckm::proto::ResizeOp{static_cast<std::uint16_t>(ckm::proto::kMaxGridColumns + 1), 24},
+        ckm::proto::ResizeOp{80, static_cast<std::uint16_t>(ckm::proto::kMaxGridRows + 1)},
+    };
+    for (const ckm::proto::ResizeOp& op : impossible) {
+        std::vector<GridOp> ops;
+        ops.emplace_back(op);
+        ops.push_back(CellsOp{0, 0, ckm::proto::to_runs(std::vector<ckv::Cell>(
+                                        3, ckv::Cell::from_grapheme("X", ckv::Style{})))});
+        CK_CHECK(!ckm::apply_delta(ops, mirror));
+        CK_CHECK(same_state(mirror, before));
+    }
+
+    // The largest one the protocol does carry is not refused — the ceiling is a
+    // ceiling and not a blanket.
+    std::vector<GridOp> allowed;
+    allowed.emplace_back(ckm::proto::ResizeOp{ckm::proto::kMaxGridColumns, 2});
+    CK_CHECK(ckm::apply_delta(allowed, mirror));
+    CK_CHECK(mirror.cells.width == static_cast<int>(ckm::proto::kMaxGridColumns));
 }
 
 CK_TEST(a_mode_op_speaks_only_for_the_bits_it_names) {
@@ -397,7 +592,17 @@ CK_TEST(a_corrupted_delta_is_refused_rather_than_turned_into_a_different_screen)
             if (const auto* delta = std::get_if<ckm::proto::GridDelta>(&decoded)) {
                 GridState mirror = before;
                 (void)ckm::apply_delta(delta->ops, mirror);  // must refuse or fit; never crash
-                CK_CHECK(mirror.grid.size() == static_cast<std::size_t>(16 * 4));
+                // Still a mirror, whatever it took: its grid is exactly the
+                // size it says it is. Not "still 16 by 4" — a corruption that
+                // lands on an op tag can now decode as a Resize, and a mirror
+                // that took one is a mirror of a different size rather than a
+                // broken one. What must never happen is a grid and a geometry
+                // that disagree, because everything downstream indexes by the
+                // geometry.
+                CK_CHECK(mirror.grid.size() ==
+                         static_cast<std::size_t>(std::max(0, mirror.cells.width)) *
+                             static_cast<std::size_t>(std::max(0, mirror.cells.height)));
+                CK_CHECK(mirror.cells.width <= static_cast<int>(ckm::proto::kMaxGridColumns));
                 CK_CHECK(scrollback_lines(mirror) <= mirror.max_scrollback_lines);
             }
         }

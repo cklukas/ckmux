@@ -103,6 +103,23 @@ void push_scrollback_line(GridState& state, std::span<const ckv::Cell> line);
 // under the same once-it-outweighs-the-kept rule a push uses.
 void enforce_scrollback_capacity(GridState& state);
 
+// Changes a state's size.
+//
+// The grid becomes blanks: the only delta that carries a resize repaints every
+// row of the new size immediately afterwards, so keeping anything would be a
+// guess that the repaint overwrites. The HISTORY is kept and re-laid — padded
+// or cut per row to the new width, the width every reader of it indexes by and
+// the rule `push_scrollback_line` already enforces. Discarding it instead would
+// throw away a reader's scrollback every time they made a window narrower,
+// which is the one thing keeping the history on this side of the socket was
+// for. A height-only change re-lays nothing.
+//
+// The CURSOR is brought inside the new grid, since a delta may legally move it
+// and then resize — each op is checked against the geometry as it stood when
+// that op was reached — and a state whose cursor is outside its own grid is one
+// its readers have to be tolerant of rather than one that is right.
+void resize_state(GridState& state, ckv::Size cells);
+
 // The current side of a diff, borrowed rather than copied.
 //
 // This is the shape a live terminal can be read in without paying for a copy
@@ -145,14 +162,20 @@ struct RowDamage {
 // already says exactly this — `TerminalDamage::scrollback_pushed` with the
 // lines themselves — so the caller has it (WP-4b).
 //
-// If the sizes differ, every row of `current` is emitted: a `GridDelta`
-// carries no geometry, because a mirror that resized itself from a delta would
-// be guessing. The server sends `TermMeta` first and the caller resizes its
-// mirror; `apply` refuses the delta if it did not.
+// If the sizes differ, the delta STATES the new one and then emits every row
+// of `current`. It used to say the size was somebody else's to send — that the
+// server sent a `TermMeta` first and the caller resized its mirror — and that
+// was false twice over: nothing sends a `TermMeta` on resize, and `TermMeta`
+// has no size field. What actually happened is that a repaint of a smaller
+// terminal passed every bounds check against a larger mirror, so the rows and
+// columns past the new edge kept whatever the last program had drawn there and
+// no counter anywhere fired (13-architecture-review C3, reproduced).
 //
-// The op order is fixed and is the apply order: the history push, then the
-// scroll, then the cells, then cursor, modes and title. A reader's history
-// grows before the screen moves off it.
+// The op order is fixed and is the apply order: the size, then the history
+// push, then the scroll, then the cells, then cursor, modes and title. The size
+// comes first because everything after it is measured against the grid it
+// names — including the pushed lines, which are rows of the new width. A
+// reader's history grows before the screen moves off it.
 // `damaged` is what the caller already knows changed, one entry per row. Rows
 // it does not name are not examined at all, which is the difference between a
 // tick that costs the changed rows and one that costs the screen. An empty span
@@ -170,8 +193,9 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridView& curre
 std::vector<proto::GridOp> diff(const GridState& previous, const GridState& current,
                                 std::span<const std::vector<ckv::Cell>> pushed = {});
 
-// Every row of a view, whatever it holds, plus the cursor, modes and title —
-// the one delta that assumes nothing at all about what the other end has.
+// The size, then every row of a view, whatever it holds, plus the cursor,
+// modes and title — the one delta that assumes nothing at all about what the
+// other end has, its own geometry included.
 //
 // What an attach and a resize cost. A diff against a blank state would be
 // cheaper and would be wrong: it would emit only the rows that are not blank,
@@ -190,8 +214,10 @@ std::vector<proto::GridOp> full_repaint(const GridView& current,
 // All-or-nothing on purpose. A mirror that has taken half a delta is a mirror
 // that lies about what a program has on screen, and the protocol's answer to
 // an impossible delta is already written down: the client resnapshots
-// (plans/05, the gap rule). So the ops are checked against the mirror's own
-// geometry before any of them are performed.
+// (plans/05, the gap rule). So the ops are checked before any of them are
+// performed — against the geometry as it will be when each one is reached,
+// since a `Resize` earlier in the same delta changes what "fits" means for
+// every op after it.
 bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror);
 
 // The grid as the wire carries it — run-length encoded, whole rows in order —

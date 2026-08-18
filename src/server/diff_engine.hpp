@@ -121,10 +121,24 @@ public:
     std::vector<proto::Message> attach_images(TerminalId id) const;
 
     // Everything a client attaching now has to be told about this terminal,
-    // and the reset of the sequence that goes with it: the deltas that follow
-    // start again at 1, so a client's continuity check works from its first
-    // delta rather than from its second.
+    // EXCEPT its history, and the reset of the sequence that goes with it: the
+    // deltas that follow start again at 1, so a client's continuity check
+    // works from its first delta rather than from its second.
     proto::TerminalState snapshot(TerminalId id, const ckv::core::TerminalSubsession& source);
+
+    // Fills `state.scrollback` with the newest history lines that fit `budget`
+    // bytes of payload, oldest of those first, and returns what it spent.
+    //
+    // Separate from `snapshot` because the budget is not known until every
+    // terminal's mandatory part has been measured — and because the history is
+    // the one part of a snapshot that may be SHORT without the snapshot being
+    // WRONG. The screen is what a terminal is; the history is what it
+    // remembers. A client given less of it than the server holds can page back
+    // less far; a client given a frame past the codec's cap gets no screen at
+    // all, which is what this exists to prevent (C1).
+    std::size_t fill_history(proto::TerminalState& state,
+                             const ckv::core::TerminalSubsession& source,
+                             std::size_t budget) const;
 
     std::uint32_t sequence() const noexcept { return sequence_; }
     // Whether the last flush gave up on saying it incrementally. The server
@@ -199,8 +213,13 @@ public:
     // measurement was forty times slower than it should have been).
     TerminalTick flush(TerminalId id, ckv::core::TerminalSubsession& source);
 
-    // The attach path, per terminal.
+    // The attach path, per terminal — the screen, and then as much of the
+    // history as the caller says it can afford. Two calls because the second
+    // number is not known until the first has been made for every terminal in
+    // the session (`TerminalDiffer::fill_history`).
     proto::TerminalState snapshot(TerminalId id, const ckv::core::TerminalSubsession& source);
+    std::size_t fill_history(TerminalId id, proto::TerminalState& state,
+                             const ckv::core::TerminalSubsession& source, std::size_t budget) const;
     // The believed pictures for the same path, sent right after the snapshot.
     std::vector<proto::Message> attach_images(TerminalId id) const;
 

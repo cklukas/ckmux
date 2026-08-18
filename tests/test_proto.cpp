@@ -92,7 +92,11 @@ std::vector<Message> every_message() {
     state.cursor = CursorOp{7, 9, 2, 1, 1};
     state.modes = static_cast<std::uint32_t>(ModeBit::MouseReporting) |
                   static_cast<std::uint32_t>(ModeBit::MouseEncodingSgr) |
-                  static_cast<std::uint32_t>(ModeBit::AlternateBuffer);
+                  static_cast<std::uint32_t>(ModeBit::AlternateBuffer) |
+                  // The tracking level as well as the flag, since a codec that
+                  // carried only the flag would leave a program that asked for
+                  // DEC 1000 reading 1003's motion reports as something else.
+                  (3u << kMouseTrackingShift);
     state.grid = to_runs({cell("a"), cell("a"), cell("b", ckv::Color::indexed(31)),
                           ckv::Cell::continuation(ckv::Style{})});
     state.scrollback = {to_runs({cell("o"), cell("l"), cell("d")}), to_runs({cell("e"), cell("r")})};
@@ -143,9 +147,15 @@ std::vector<Message> every_message() {
     delta.ops.emplace_back(ScrollOp{2, 20, -1});
     delta.ops.emplace_back(CellsOp{5, 6, to_runs({cell("x"), cell("x"), cell("y")})});
     delta.ops.emplace_back(CursorOp{1, 2, 1, 0, 1});
-    delta.ops.emplace_back(ModesOp{0xFFu, 0x0Fu});
+    delta.ops.emplace_back(ModesOp{0xFFu | kMouseTrackingMask,
+                                   0x0Fu | (2u << kMouseTrackingShift)});
     delta.ops.emplace_back(TitleOp{"a new title"});
     delta.ops.emplace_back(ScrollbackPushOp{{to_runs({cell("s"), cell("b")})}});
+    // The geometry op, whose absence let a repaint of a smaller terminal be
+    // applied to a larger mirror with nothing anywhere noticing (C3). It sits
+    // last in the variant and is written under its own tag, which is the bug
+    // the trailing `else` in the writer would have reintroduced.
+    delta.ops.emplace_back(ResizeOp{80, 24});
     messages.emplace_back(std::move(delta));
 
     messages.emplace_back(ImageAddBegin{77, 640, 480});
@@ -265,6 +275,17 @@ CK_TEST(runs_and_cells_are_inverses_and_a_run_is_shorter_than_what_it_stands_for
     const std::vector<CellRun> huge_runs = to_runs(huge);
     CK_CHECK(huge_runs.size() == 2U);
     CK_CHECK(from_runs(huge_runs).size() == huge.size());
+
+    // And going the other way, a run set that sums past the largest grid this
+    // protocol carries rebuilds nothing at all. Each of these claims 65535
+    // cells in sixteen bytes, so a payload that passed every length check can
+    // still ask for a grid nobody has the memory for — and `from_runs` sits
+    // under a decode that promises never to throw, so the floor is here.
+    std::vector<CellRun> past_any_grid(64, CellRun{0xFFFFu, cell("x")});
+    CK_CHECK(from_runs(past_any_grid).empty());
+    // The ceiling is not a blanket refusal: a run set that fits still rebuilds.
+    past_any_grid.resize(4);
+    CK_CHECK(from_runs(past_any_grid).size() == 4U * 0xFFFFu);
 }
 
 // --- Properties -----------------------------------------------------------
@@ -282,7 +303,7 @@ CK_TEST(random_valid_messages_survive_the_wire) {
         delta.seq = random();
         const int ops = static_cast<int>(random() % 6);
         for (int op = 0; op < ops; ++op) {
-            switch (random() % 6) {
+            switch (random() % 7) {
                 case 0:
                     delta.ops.emplace_back(ScrollOp{static_cast<std::uint16_t>(random()),
                                                     static_cast<std::uint16_t>(random()),
@@ -324,6 +345,10 @@ CK_TEST(random_valid_messages_survive_the_wire) {
                     delta.ops.emplace_back(TitleOp{std::move(title)});
                     break;
                 }
+                case 5:
+                    delta.ops.emplace_back(ResizeOp{static_cast<std::uint16_t>(random()),
+                                                    static_cast<std::uint16_t>(random())});
+                    break;
                 default: {
                     ScrollbackPushOp push;
                     const int lines = static_cast<int>(random() % 4);
@@ -579,4 +604,78 @@ CK_TEST(a_count_larger_than_the_payload_is_refused_before_anything_is_reserved) 
     bytes[kHeaderBytes + 3] = static_cast<char>(0x0F);
     Message message;
     CK_CHECK(decode(bytes, message).error == DecodeError::Malformed);
+}
+
+CK_TEST(a_count_is_bounded_by_what_an_entry_actually_costs_not_by_one_byte_each) {
+    // The other half of the same guard, and the one a "count <= bytes left"
+    // check lets through: a terminal state is sixty-two bytes at its very
+    // smallest, so a payload with a hundred bytes left in it cannot honestly
+    // announce a hundred of them. It could, and the reserve that followed was
+    // some hundreds of megabytes out of a four-megabyte frame — a bad_alloc
+    // from a decode that promises never to throw (13-architecture-review,
+    // M-P2).
+    Attached attached;
+    attached.session = 4;
+    TerminalState state;
+    state.term = 11;
+    state.columns = 2;
+    state.rows = 1;
+    state.grid = to_runs({cell("a"), cell("b")});
+    attached.snapshot.terminals.push_back(std::move(state));
+    std::string bytes = encode(attached);
+    CK_CHECK(!bytes.empty());
+
+    // session u64, desktop cols u16, desktop rows u16, focused u64 — then the
+    // terminal count, and after it everything that is left.
+    const std::size_t count_at = kHeaderBytes + 8 + 2 + 2 + 8;
+    const std::uint32_t left = static_cast<std::uint32_t>(bytes.size() - count_at - 4);
+    // Exactly the number of bytes remaining: legal under "one byte per entry",
+    // and an announcement of `left` terminal states in `left` bytes.
+    CK_CHECK(left > 1U);
+    bytes[count_at] = static_cast<char>(left & 0xFFu);
+    bytes[count_at + 1] = static_cast<char>((left >> 8) & 0xFFu);
+    bytes[count_at + 2] = static_cast<char>((left >> 16) & 0xFFu);
+    bytes[count_at + 3] = static_cast<char>((left >> 24) & 0xFFu);
+    Message message;
+    CK_CHECK(decode(bytes, message).error == DecodeError::Malformed);
+
+    // And a count of one still decodes, so the refusal above is the arithmetic
+    // firing rather than the offset having landed on some other field.
+    bytes[count_at] = static_cast<char>(1);
+    bytes[count_at + 1] = static_cast<char>(0);
+    bytes[count_at + 2] = static_cast<char>(0);
+    bytes[count_at + 3] = static_cast<char>(0);
+    CK_CHECK(decode(bytes, message).ok());
+}
+
+CK_TEST(a_string_longer_than_its_length_field_is_refused_rather_than_truncated) {
+    // What this replaces: the length wrapped to its low sixteen bits and every
+    // byte was appended anyway, so the peer read a prefix as the title and the
+    // remainder as whatever field came next — a desync manufactured by the
+    // sender, at the one layer whose whole job is that the two ends agree
+    // (13-architecture-review, m-str).
+    GridDelta delta;
+    delta.term = 11;
+    delta.seq = 1;
+    delta.ops.emplace_back(TitleOp{std::string(70000, 't')});
+    bool oversize = false;
+    const std::string refused = encode(delta, &oversize);
+    CK_CHECK(refused.empty());
+    CK_CHECK(oversize);
+
+    // A payload past the cap its own type is held to is refused the same way,
+    // because a frame over the cap is not a large frame — it is one the peer's
+    // decoder will not read, and a sender that finds that out at the socket
+    // has already lost the message and the connection with it (C1).
+    oversize = false;
+    CK_CHECK(encode(Input{11, std::string(2u * 1024u * 1024u, 'x')}, &oversize).empty());
+    CK_CHECK(oversize);
+
+    // And an ordinary message still encodes, with the flag left alone: this is
+    // an out-parameter for the one caller that can produce an oversize frame,
+    // not a new outcome every call site has to think about.
+    oversize = true;
+    const std::string good = encode(Ping{1}, &oversize);
+    CK_CHECK(good.size() == kHeaderBytes + 8);
+    CK_CHECK(!oversize);
 }
