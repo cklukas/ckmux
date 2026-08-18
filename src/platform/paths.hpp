@@ -8,12 +8,34 @@
 
 namespace ckm::platform {
 
+// The value of an environment variable, or nullptr when it is unset OR set to
+// the empty string.
+//
+// Set-but-empty is how a shell says nothing — `XDG_CONFIG_HOME= ckmux` — and
+// reading it as a value is how a program comes to look for its configuration
+// in "/ckmux/ckmux.conf" and to listen on "/ckmux-501/default.sock". It is one
+// function rather than one per file that needs it because the places that turn
+// the environment into a path have to agree, and two copies of a rule are a
+// rule that will one day differ between them.
+const char* environment_value(const char* name);
+
+// The same, for a variable naming a directory to build a path under: nullptr
+// as well when the value is not an absolute path.
+//
+// The XDG base-directory specification requires those variables to be absolute
+// and says a relative one must be ignored. The consequence of honouring one is
+// a configuration file — or a socket — resolved against whatever directory
+// ckmux happened to be started in, which is a different file every time and a
+// server nobody can find twice.
+const char* environment_directory(const char* name);
+
 // The configuration file, following plans/08-configuration.md's precedence:
 //
 //   1. $CKMUX_CONFIG, used exactly as given — the explicit override, and
 //      what a test or a parallel dev instance sets.
-//   2. $XDG_CONFIG_HOME/ckmux/ckmux.conf when that variable is set.
-//   3. $HOME/.config/ckmux/ckmux.conf.
+//   2. $XDG_CONFIG_HOME/ckmux/ckmux.conf when that variable holds an absolute
+//      path.
+//   3. $HOME/.config/ckmux/ckmux.conf, on the same condition.
 //
 // The XDG layout is the convention for a program of this kind on Linux and,
 // in practice, on macOS too: tmux, git, neovim and their neighbours all keep

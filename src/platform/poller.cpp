@@ -2,45 +2,52 @@
 #include "platform/poller.hpp"
 
 #include <cerrno>
-#include <vector>
-
-#include <poll.h>
 
 namespace ckm::platform {
 
 void Poller::clear() {
-    fds_.clear();
-    interests_.clear();
+    // The capacity stays, which is what makes the promise in the header true:
+    // the loop rebuilds this set on every pass, and a set that reallocated
+    // every time would allocate once per tick for the life of the server.
+    watching_.clear();
 }
 
 void Poller::watch(int fd, Interest interest) {
     if (fd < 0) return;
-    fds_.push_back(fd);
-    interests_.push_back(interest);
+    pollfd entry{};
+    entry.fd = fd;
+    entry.events = 0;
+    if (has(interest, Interest::Read)) entry.events |= POLLIN;
+    if (has(interest, Interest::Write)) entry.events |= POLLOUT;
+    entry.revents = 0;
+    watching_.push_back(entry);
 }
 
-std::size_t Poller::watched() const noexcept { return fds_.size(); }
+std::size_t Poller::watched() const noexcept { return watching_.size(); }
 
 const std::vector<Ready>& Poller::wait(int timeout_ms) {
     ready_.clear();
-    if (fds_.empty()) {
+    if (watching_.empty()) {
         // Nothing to wait on. A sleep is still the right answer — the caller
         // has a tick deadline — and a poll with no descriptors is exactly that,
-        // so this does not need a special case beyond not touching the array.
-        if (timeout_ms > 0) (void)::poll(nullptr, 0, timeout_ms);
+        // including when the caller asked to wait indefinitely.
+        if (timeout_ms != 0 && ::poll(nullptr, 0, timeout_ms) < 0)
+            outcome_ = errno == EINTR ? Outcome::Interrupted : Outcome::Failed;
+        else
+            outcome_ = Outcome::TimedOut;
         return ready_;
     }
-    std::vector<pollfd> waiting(fds_.size());
-    for (std::size_t index = 0; index < fds_.size(); ++index) {
-        waiting[index].fd = fds_[index];
-        waiting[index].events = 0;
-        if (has(interests_[index], Interest::Read)) waiting[index].events |= POLLIN;
-        if (has(interests_[index], Interest::Write)) waiting[index].events |= POLLOUT;
-        waiting[index].revents = 0;
+    for (pollfd& entry : watching_) entry.revents = 0;
+    const int count = ::poll(watching_.data(), static_cast<nfds_t>(watching_.size()), timeout_ms);
+    if (count < 0) {
+        outcome_ = errno == EINTR ? Outcome::Interrupted : Outcome::Failed;
+        return ready_;
     }
-    const int count = ::poll(waiting.data(), static_cast<nfds_t>(waiting.size()), timeout_ms);
-    if (count <= 0) return ready_;  // a timeout, or a signal: look again next pass
-    for (const pollfd& entry : waiting) {
+    if (count == 0) {
+        outcome_ = Outcome::TimedOut;
+        return ready_;
+    }
+    for (const pollfd& entry : watching_) {
         if (entry.revents == 0) continue;
         Ready result;
         result.fd = entry.fd;
@@ -49,6 +56,7 @@ const std::vector<Ready>& Poller::wait(int timeout_ms) {
         result.hangup = (entry.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0;
         ready_.push_back(result);
     }
+    outcome_ = ready_.empty() ? Outcome::TimedOut : Outcome::Ready;
     return ready_;
 }
 

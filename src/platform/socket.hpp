@@ -40,6 +40,13 @@ bool socket_path_fits(const std::filesystem::path& path);
 // exists and is not a directory owned by this user with no access for anyone
 // else: a socket in a directory somebody else can write to is a socket
 // somebody else can replace.
+//
+// The directory is created WITH mode 0700 rather than created and then
+// corrected — between a `mkdir` under a permissive umask and a `chmod` there is
+// a window in which anybody on the machine may walk in — and it is examined
+// through a descriptor opened `O_NOFOLLOW`, so a symbolic link planted at the
+// path is refused instead of being followed to a target whose ownership says
+// what the checker wanted to hear.
 bool prepare_socket_directory(const std::filesystem::path& socket, std::string& problem);
 
 enum class ConnectStatus {
@@ -62,7 +69,14 @@ struct ConnectResult {
 };
 
 // Connects to a listening server. Never blocks for longer than the connect
-// itself: the returned descriptor is non-blocking.
+// itself: the returned descriptor is non-blocking, and close-on-exec, so that
+// no program a terminal window starts inherits the connection its own session
+// is driven through.
+//
+// A signal arriving during the connect does not fail it. POSIX leaves an
+// interrupted connect running and completes it asynchronously, so this waits
+// for the descriptor to say how it went rather than calling `connect` again,
+// which would answer EALREADY and be read as a failure.
 ConnectResult connect_to_server(const std::filesystem::path& path);
 
 // The listening end, and the lock that makes starting one race-free.
@@ -93,19 +107,65 @@ public:
     Listener(const Listener&) = delete;
     Listener& operator=(const Listener&) = delete;
 
+    // What came of asking for a connection. The distinction is the point:
+    // "none pending" is the ordinary answer several times a second, and a
+    // descriptor table that has run out is a state a loop must stop asking
+    // from — a caller that reads both as "-1, try again" polls a listener that
+    // is permanently readable and spins at full speed for as long as the
+    // process lives.
+    enum class AcceptStatus {
+        Accepted,
+        // Nothing is waiting. Not an error, and not worth a word to anybody.
+        Idle,
+        // A signal, or a peer that hung up between connecting and being
+        // accepted. Asking again immediately is right.
+        Retry,
+        // The connection was this server's to refuse: another user's.
+        Refused,
+        // Out of descriptors, or out of memory. Asking again immediately is
+        // wrong — nothing will have changed, and the listener stays readable.
+        Exhausted,
+        // The listener is closed, or the system said something this build does
+        // not classify.
+        Failed,
+    };
+
+    struct AcceptResult {
+        AcceptStatus status = AcceptStatus::Idle;
+        int fd = -1;
+        // In a reader's words, and empty when there is nothing a reader could
+        // do about it (Idle and Retry).
+        std::string problem;
+        // `errno` as it stood, for a caller that logs or decides by it.
+        int error = 0;
+    };
+
     Status listen(const std::filesystem::path& path);
 
     int fd() const noexcept { return fd_; }
     const std::string& problem() const noexcept { return problem_; }
     const std::filesystem::path& path() const noexcept { return path_; }
 
-    // Accepts one connection, or -1 when there is none pending. Connections
-    // from another user are refused here rather than anywhere later: this is
-    // the only place that can still say no without having read a byte.
+    // Accepts one connection. Connections from another user are refused here
+    // rather than anywhere later: this is the only place that can still say no
+    // without having read a byte. The accepted descriptor is non-blocking and
+    // close-on-exec before it is returned.
+    AcceptResult accept_one();
+
+    // The same, in the shape the server loop was written against: a descriptor
+    // or -1, and a word for the reader only when there is one. Which of the
+    // several reasons for -1 this was, the overload above says.
     int accept_one(std::string& refusal);
 
-    // Stops listening and removes the socket file and the lock. Called by the
-    // destructor; safe to call twice.
+    // Stops listening and removes the socket file. Called by the destructor;
+    // safe to call twice.
+    //
+    // The LOCK file stays where it is, and only the lock on it is released.
+    // Removing it would be the same mistake the lock exists to prevent: a
+    // starter that arrives while this one is shutting down has already opened
+    // that file, so unlinking it leaves the two of them holding exclusive locks
+    // on two different inodes, both convinced they won. A zero-byte file
+    // beside the socket is the price of the race being settled at all.
     void close() noexcept;
 
 private:
@@ -145,7 +205,11 @@ public:
     static constexpr std::size_t kDeltaBacklogBytes = 256u * 1024u;
 
     Stream() = default;
-    explicit Stream(int fd) : fd_(fd) {}
+    // Takes ownership of `fd`, and makes the no-SIGPIPE guarantee flush()
+    // states true for it: on macOS that is a socket option, which every
+    // descriptor this class is handed needs and only the ones this file made
+    // would otherwise have.
+    explicit Stream(int fd);
     ~Stream();
     Stream(const Stream&) = delete;
     Stream& operator=(const Stream&) = delete;
@@ -159,6 +223,13 @@ public:
     // queue is over its high-water mark — the bytes are still queued, because
     // dropping half a frame would desynchronise the stream; what the caller
     // must stop doing is adding more.
+    //
+    // False is also the answer when the write itself failed, which is to say
+    // the peer is gone. Both cases mean the same thing to a caller — stop
+    // adding — and the caller that needs to tell them apart has `flush()`,
+    // which says so directly. What this must never do is discard the failure:
+    // a send that answered "fine" for a connection that has died is a server
+    // queueing a session's whole output into a socket nobody will ever read.
     bool send(std::string_view bytes);
 
     // Writes whatever the socket will take. Returns false when the peer is

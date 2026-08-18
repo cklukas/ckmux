@@ -22,6 +22,8 @@
 
 #include "client/server_connection.hpp"
 #include "common/proto.hpp"
+#include "platform/paths.hpp"
+#include "platform/poller.hpp"
 #include "platform/process.hpp"
 #include "platform/socket.hpp"
 #include "server/server.hpp"
@@ -150,6 +152,44 @@ struct WireClient {
         return hear(answer);
     }
 };
+
+// One environment variable, put back however the case leaves — the cases below
+// change where ckmux would look for things, and a suite in one process cannot
+// let that outlive the case that wanted it.
+class ScopedVariable {
+public:
+    explicit ScopedVariable(std::string name) : name_(std::move(name)) {
+        const char* const current = std::getenv(name_.c_str());
+        had_value_ = current != nullptr;
+        if (had_value_) previous_ = current;
+    }
+    ~ScopedVariable() {
+        if (had_value_) (void)::setenv(name_.c_str(), previous_.c_str(), 1);
+        else (void)::unsetenv(name_.c_str());
+    }
+    ScopedVariable(const ScopedVariable&) = delete;
+    ScopedVariable& operator=(const ScopedVariable&) = delete;
+
+    void set(const std::string& value) { (void)::setenv(name_.c_str(), value.c_str(), 1); }
+    void clear() { (void)::unsetenv(name_.c_str()); }
+
+private:
+    std::string name_;
+    std::string previous_;
+    bool had_value_ = false;
+};
+
+bool is_close_on_exec(int fd) {
+    if (fd < 0) return false;
+    const int flags = ::fcntl(fd, F_GETFD, 0);
+    return flags >= 0 && (flags & FD_CLOEXEC) != 0;
+}
+
+bool is_non_blocking(int fd) {
+    if (fd < 0) return false;
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    return flags >= 0 && (flags & O_NONBLOCK) != 0;
+}
 
 }  // namespace
 
@@ -467,6 +507,250 @@ CK_TEST(a_frame_the_server_cannot_read_ends_that_connection_and_no_other) {
     if (answered != nullptr) CK_CHECK(answered->nonce == 99U);
 
     end_server(server);
+    forget(socket);
+}
+
+// --- What the descriptors and the directory are, before any of that ----
+//
+// The cases above drive real servers over the wire. These drive the layer
+// underneath them directly, because the properties they are about — a flag on
+// a descriptor, a mode on a directory, which of several reasons an accept
+// returned nothing for — are invisible from the wire and are exactly the ones
+// that fail quietly for months.
+
+CK_TEST(the_control_plane_is_never_inherited_by_a_program_a_terminal_starts) {
+    // Every terminal window ckmux opens execs a shell, and a shell inherits
+    // every descriptor that is not close-on-exec. Without this the shell holds
+    // the client's connection to the server, the server's listening socket and
+    // the accepted connections of every other client — all of them usable, and
+    // none of them reachable by anything that could refuse them. There is no
+    // handshake to fail: the connection is already past it.
+    const std::filesystem::path socket = private_socket("cloexec");
+    forget(socket);
+
+    ckm::platform::Listener listener;
+    CK_CHECK(listener.listen(socket) == ckm::platform::Listener::Status::Listening);
+    CK_CHECK(is_close_on_exec(listener.fd()));
+
+    ckm::platform::ConnectResult connected = ckm::platform::connect_to_server(socket);
+    CK_CHECK(connected.status == ckm::platform::ConnectStatus::Connected);
+    CK_CHECK(is_close_on_exec(connected.fd));
+    CK_CHECK(is_non_blocking(connected.fd));
+
+    // The accepted end, which is the one the server keeps for the life of the
+    // connection and the one every shell in every window would have inherited.
+    ckm::platform::Listener::AcceptResult accepted;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        accepted = listener.accept_one();
+        if (accepted.status != ckm::platform::Listener::AcceptStatus::Idle) break;
+        ::usleep(2000);
+    }
+    CK_CHECK(accepted.status == ckm::platform::Listener::AcceptStatus::Accepted);
+    CK_CHECK(accepted.fd >= 0);
+    CK_CHECK(is_close_on_exec(accepted.fd));
+    CK_CHECK(is_non_blocking(accepted.fd));
+    if (accepted.fd >= 0) (void)::close(accepted.fd);
+
+    (void)::close(connected.fd);
+    listener.close();
+    forget(socket);
+}
+
+CK_TEST(nothing_pending_is_a_different_answer_from_out_of_descriptors) {
+    // Both used to be -1. A loop that reads them the same way keeps asking a
+    // listener that stays readable for as long as the connection it cannot
+    // accept is pending, which is 100 % of one core until somebody notices
+    // (M-F5, and the server-side half of it in R2). The classification is what
+    // makes the two answers separable at all; this pins the ordinary one.
+    const std::filesystem::path socket = private_socket("idle");
+    forget(socket);
+
+    ckm::platform::Listener listener;
+    CK_CHECK(listener.listen(socket) == ckm::platform::Listener::Status::Listening);
+
+    const ckm::platform::Listener::AcceptResult idle = listener.accept_one();
+    CK_CHECK(idle.status == ckm::platform::Listener::AcceptStatus::Idle);
+    CK_CHECK(idle.fd == -1);
+    // Nothing a reader could do about it, so nothing said to them about it.
+    CK_CHECK(idle.problem.empty());
+
+    // And the shape the server loop is written against is unchanged: -1, and a
+    // refusal string left alone when there is nothing to refuse.
+    std::string refusal;
+    CK_CHECK(listener.accept_one(refusal) == -1);
+    CK_CHECK(refusal.empty());
+
+    // A closed listener is a failure rather than an idle moment: a caller that
+    // could not tell those apart would poll a descriptor that no longer exists.
+    listener.close();
+    const ckm::platform::Listener::AcceptResult closed = listener.accept_one();
+    CK_CHECK(closed.status == ckm::platform::Listener::AcceptStatus::Failed);
+    CK_CHECK(!closed.problem.empty());
+    forget(socket);
+}
+
+CK_TEST(the_socket_directory_is_made_owner_only_rather_than_made_and_corrected) {
+    // A `mkdir` under the process umask followed by a `chmod` is owner-only
+    // only after the chmod. In between it is whatever the umask said — 0755 on
+    // most machines — and the socket that is about to appear in it is one
+    // anybody on the host may replace with their own. Umask 0 here is the
+    // permissive machine, made deterministic.
+    const std::filesystem::path fresh =
+        private_socket("mode").parent_path() / "made-here" / "default.sock";
+    std::error_code ignored;
+    std::filesystem::remove_all(fresh.parent_path(), ignored);
+
+    const ::mode_t previous = ::umask(0);
+    std::string problem;
+    const bool prepared = ckm::platform::prepare_socket_directory(fresh, problem);
+    (void)::umask(previous);
+
+    CK_CHECK(prepared);
+    CK_CHECK(problem.empty());
+    struct ::stat info{};
+    CK_CHECK(::lstat(fresh.parent_path().c_str(), &info) == 0);
+    CK_CHECK(S_ISDIR(info.st_mode));
+    CK_CHECK((info.st_mode & 0777U) == 0700U);
+
+    std::filesystem::remove_all(fresh.parent_path(), ignored);
+    forget(private_socket("mode"));
+}
+
+CK_TEST(a_socket_directory_that_is_a_symbolic_link_is_refused_rather_than_followed) {
+    // The ownership check exists to answer "could somebody else have put
+    // something here?". Asked of a name that follows a symbolic link, it
+    // answers about the target — which the reader owns, so the check says yes
+    // — while the link, and therefore where the socket really goes, was
+    // planted by whoever could write the directory the link sits in.
+    const std::filesystem::path base = private_socket("nofollow").parent_path();
+    const std::filesystem::path target = base / "real-directory";
+    const std::filesystem::path link = base / "linked-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(target, ignored);
+    std::filesystem::remove(link, ignored);
+    std::filesystem::create_directories(target, ignored);
+    std::filesystem::create_directory_symlink(target, link, ignored);
+    CK_CHECK(!ignored);
+    if (ignored) return;
+
+    std::string problem;
+    CK_CHECK(!ckm::platform::prepare_socket_directory(link / "default.sock", problem));
+    CK_CHECK(!problem.empty());
+
+    std::filesystem::remove(link, ignored);
+    std::filesystem::remove_all(target, ignored);
+    forget(private_socket("nofollow"));
+}
+
+CK_TEST(an_environment_variable_that_is_empty_or_relative_names_nowhere) {
+    // Set-but-empty is how a shell says nothing, and a relative path is what
+    // the XDG specification says to ignore. Believing either gives a socket in
+    // a different place for every directory ckmux is started from, which a
+    // reader meets as "all my sessions are gone".
+    ScopedVariable probe("CKMUX_PLATFORM_PROBE");
+    probe.set("");
+    CK_CHECK(ckm::platform::environment_value("CKMUX_PLATFORM_PROBE") == nullptr);
+    CK_CHECK(ckm::platform::environment_directory("CKMUX_PLATFORM_PROBE") == nullptr);
+    probe.set("relative/place");
+    // Still a value — an explicit override is used exactly as given — but not
+    // a directory to build a path under.
+    CK_CHECK(ckm::platform::environment_value("CKMUX_PLATFORM_PROBE") != nullptr);
+    CK_CHECK(ckm::platform::environment_directory("CKMUX_PLATFORM_PROBE") == nullptr);
+    probe.set("/absolute/place");
+    const char* const absolute = ckm::platform::environment_directory("CKMUX_PLATFORM_PROBE");
+    CK_CHECK(absolute != nullptr);
+    if (absolute != nullptr) CK_CHECK(std::string(absolute) == "/absolute/place");
+    probe.clear();
+    CK_CHECK(ckm::platform::environment_value("CKMUX_PLATFORM_PROBE") == nullptr);
+
+    // And the rule reaches the socket path, which is what it is for.
+    ScopedVariable explicit_socket("CKMUX_SOCKET");
+    ScopedVariable runtime("XDG_RUNTIME_DIR");
+    ScopedVariable temporary("TMPDIR");
+    explicit_socket.clear();
+    runtime.set("relative/runtime");
+    temporary.set("/tmp");
+    const std::filesystem::path chosen = ckm::platform::socket_path();
+    CK_CHECK(chosen.is_absolute());
+    CK_CHECK(chosen == std::filesystem::path("/tmp") /
+                           ("ckmux-" + std::to_string(static_cast<unsigned long>(::geteuid()))) /
+                           "default.sock");
+}
+
+CK_TEST(a_wait_that_found_nothing_says_why_it_found_nothing) {
+    // Three different things return an empty set: a timeout, a signal, and a
+    // descriptor poll() refuses. Only the first means "sleep and come back",
+    // and a loop that treats the third that way spins at full speed for the
+    // life of the process, because a refused descriptor is refused instantly
+    // and stays refused.
+    ckm::platform::Poller poller;
+    CK_CHECK(poller.wait(0).empty());
+    CK_CHECK(poller.outcome() == ckm::platform::Poller::Outcome::TimedOut);
+
+    int ends[2] = {-1, -1};
+    CK_CHECK(::pipe(ends) == 0);
+    poller.clear();
+    poller.watch(ends[0], ckm::platform::Interest::Read);
+    CK_CHECK(poller.watched() == 1U);
+    CK_CHECK(poller.wait(0).empty());
+    CK_CHECK(poller.outcome() == ckm::platform::Poller::Outcome::TimedOut);
+
+    CK_CHECK(::write(ends[1], "x", 1) == 1);
+    const std::vector<ckm::platform::Ready>& ready = poller.wait(1000);
+    CK_CHECK(ready.size() == 1U);
+    if (!ready.empty()) {
+        CK_CHECK(ready.front().fd == ends[0]);
+        CK_CHECK(ready.front().readable);
+    }
+    CK_CHECK(poller.outcome() == ckm::platform::Poller::Outcome::Ready);
+
+    // A descriptor that has been closed under the poller is reported, not
+    // silently skipped: it comes back as a hangup, which is a state the caller
+    // can act on, rather than as an empty set it would mistake for a timeout.
+    (void)::close(ends[0]);
+    (void)::close(ends[1]);
+    const std::vector<ckm::platform::Ready>& refused = poller.wait(0);
+    CK_CHECK(refused.size() == 1U);
+    if (!refused.empty()) CK_CHECK(refused.front().hangup);
+    CK_CHECK(poller.outcome() == ckm::platform::Poller::Outcome::Ready);
+}
+
+CK_TEST(a_send_whose_peer_has_gone_reports_that_rather_than_answering_fine) {
+    // `send` queues and writes, and the write can fail. Discarding that failure
+    // answered "fine" about a connection that had died: a server told that goes
+    // on queueing a flooding session's entire output — megabyte after megabyte
+    // — into a socket that will never take another byte, and finds out only
+    // when it next tries to read.
+    const std::filesystem::path socket = private_socket("gone");
+    forget(socket);
+
+    ckm::platform::Listener listener;
+    CK_CHECK(listener.listen(socket) == ckm::platform::Listener::Status::Listening);
+    ckm::platform::ConnectResult connected = ckm::platform::connect_to_server(socket);
+    CK_CHECK(connected.status == ckm::platform::ConnectStatus::Connected);
+    ckm::platform::Stream stream(connected.fd);
+
+    ckm::platform::Listener::AcceptResult accepted;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        accepted = listener.accept_one();
+        if (accepted.status != ckm::platform::Listener::AcceptStatus::Idle) break;
+        ::usleep(2000);
+    }
+    CK_CHECK(accepted.status == ckm::platform::Listener::AcceptStatus::Accepted);
+    // The peer goes, which is what a killed server or a crashed client looks
+    // like from here. This must also not raise SIGPIPE — on macOS that is a
+    // socket option every Stream sets for itself — because a process that died
+    // on this line would be the client dying mid-frame with nothing on the
+    // screen to say why.
+    if (accepted.fd >= 0) (void)::close(accepted.fd);
+
+    CK_CHECK(!stream.send("anything"));
+    // The bytes are still queued: dropping half a frame would desynchronise a
+    // stream that might yet be flushed, and "stop adding" is what false says.
+    CK_CHECK(stream.queued() == 8U);
+
+    stream.close();
+    listener.close();
     forget(socket);
 }
 

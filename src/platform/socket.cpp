@@ -3,18 +3,21 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <system_error>
 #include <utility>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "platform/descriptors.hpp"
+#include "platform/paths.hpp"
 
 #if defined(__APPLE__)
 #include <sys/ucred.h>
@@ -22,13 +25,6 @@
 
 namespace ckm::platform {
 namespace {
-
-// An environment variable that is set but empty is not a value. Treating one as
-// a value is how a program comes to listen on "/ckmux-501/default.sock".
-const char* value_of(const char* name) {
-    const char* const value = std::getenv(name);
-    return value != nullptr && *value != '\0' ? value : nullptr;
-}
 
 // A socket that will never raise SIGPIPE on this process (macOS's half of the
 // guarantee flush() states; on Linux MSG_NOSIGNAL there does it per write).
@@ -41,9 +37,45 @@ void suppress_sigpipe(int fd) {
 #endif
 }
 
-bool set_non_blocking(int fd) {
-    const int flags = ::fcntl(fd, F_GETFL, 0);
-    return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+// A stream socket that is close-on-exec from the moment it exists where the
+// system offers that, and one call later where it does not. macOS has no
+// SOCK_CLOEXEC, so both halves of this are live code.
+int make_stream_socket() {
+#if defined(SOCK_CLOEXEC)
+    return ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    if (set_close_on_exec(fd)) return fd;
+    const int failure = errno;
+    (void)::close(fd);
+    errno = failure;
+    return -1;
+#endif
+}
+
+// Finishes a connect a signal interrupted, and returns the errno it ended
+// with — 0 when it succeeded.
+//
+// POSIX: an interrupted connect is NOT aborted; the connection continues to be
+// established asynchronously. Calling `connect` again would be answered with
+// EALREADY (or EISCONN once it has completed), so the way to learn how it went
+// is to wait for the descriptor to become writable and ask it. Waiting
+// indefinitely is what the interrupted call was already doing.
+int finish_interrupted_connect(int fd) {
+    for (;;) {
+        pollfd waiting{};
+        waiting.fd = fd;
+        waiting.events = POLLOUT;
+        if (::poll(&waiting, 1, -1) < 0) {
+            if (errno == EINTR) continue;
+            return errno;
+        }
+        int failure = 0;
+        socklen_t length = sizeof(failure);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &failure, &length) != 0) return errno;
+        return failure;
+    }
 }
 
 // Fills a `sockaddr_un`, or returns false when the path cannot be one.
@@ -94,10 +126,14 @@ bool peer_is_this_user(int fd, std::string& refusal) {
 }  // namespace
 
 std::filesystem::path socket_path() {
-    if (const char* const explicit_path = value_of("CKMUX_SOCKET"))
+    if (const char* const explicit_path = environment_value("CKMUX_SOCKET"))
         return std::filesystem::path(explicit_path);
-    const char* runtime = value_of("XDG_RUNTIME_DIR");
-    if (runtime == nullptr) runtime = value_of("TMPDIR");
+    // Both of these name a directory to build a path under, so both have to be
+    // absolute: a socket under a relative runtime directory is a different
+    // socket for every directory ckmux is started from, which reads to a
+    // reader as "my sessions are gone".
+    const char* runtime = environment_directory("XDG_RUNTIME_DIR");
+    if (runtime == nullptr) runtime = environment_directory("TMPDIR");
     const std::filesystem::path base = runtime != nullptr ? std::filesystem::path(runtime)
                                                           : std::filesystem::path("/tmp");
     const std::string directory = "ckmux-" + std::to_string(static_cast<unsigned long>(::geteuid()));
@@ -115,31 +151,62 @@ bool prepare_socket_directory(const std::filesystem::path& socket, std::string& 
         problem = "the socket path has no directory: " + socket.string();
         return false;
     }
-    std::error_code error;
-    std::filesystem::create_directories(directory, error);
-    // An existing directory is not an error; anything else about it might be.
-    struct ::stat info{};
-    if (::stat(directory.c_str(), &info) != 0) {
+    // The ancestors are ordinary directories — $TMPDIR, $XDG_RUNTIME_DIR and
+    // their parents exist already in every case but a hand-written
+    // $CKMUX_SOCKET — and they are made under the process umask like anything
+    // else. The LAST component is the one that carries the 0700, so it is
+    // created WITH that mode: a mkdir under a permissive umask followed by a
+    // chmod leaves a window, however short, in which the directory the socket
+    // is about to appear in is one anybody may write to.
+    if (directory.has_parent_path()) {
+        std::error_code ignored;
+        std::filesystem::create_directories(directory.parent_path(), ignored);
+    }
+    if (::mkdir(directory.c_str(), 0700) != 0 && errno != EEXIST) {
         problem = "cannot create " + directory.string() + ": " + std::string(std::strerror(errno));
         return false;
     }
-    if (!S_ISDIR(info.st_mode)) {
-        problem = directory.string() + " exists and is not a directory";
+    // An existing directory is not an error; anything else about it might be —
+    // and what it is has to be asked of the thing that will be used, not of a
+    // name that may mean something else by the time the socket is bound.
+    // O_NOFOLLOW refuses a symbolic link outright: following one would check
+    // the ownership of a target somebody else chose, which is the check saying
+    // yes to precisely the case it exists to catch.
+    const int handle = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (handle < 0) {
+        const int failure = errno;
+        if (failure == ELOOP || failure == EMLINK)
+            problem = directory.string() + " is a symbolic link, not a directory";
+        else if (failure == ENOTDIR)
+            problem = directory.string() + " exists and is not a directory";
+        else
+            problem = "cannot open " + directory.string() + ": " +
+                      std::string(std::strerror(failure));
+        return false;
+    }
+    struct ::stat info{};
+    if (::fstat(handle, &info) != 0) {
+        problem = "cannot examine " + directory.string() + ": " +
+                  std::string(std::strerror(errno));
+        (void)::close(handle);
         return false;
     }
     if (info.st_uid != ::geteuid()) {
         problem = directory.string() + " belongs to another user";
+        (void)::close(handle);
         return false;
     }
     // Owner-only, always, and reset rather than merely checked: a directory
     // anybody else can write to is a socket anybody else can replace, and the
     // reader who chmod'd it once by accident should not have to find that out
     // from a security advisory.
-    if ((info.st_mode & (S_IRWXG | S_IRWXO)) != 0 && ::chmod(directory.c_str(), 0700) != 0) {
+    if ((info.st_mode & (S_IRWXG | S_IRWXO)) != 0 && ::fchmod(handle, 0700) != 0) {
         problem = "cannot make " + directory.string() + " owner-only: " +
                   std::string(std::strerror(errno));
+        (void)::close(handle);
         return false;
     }
+    (void)::close(handle);
     return true;
 }
 
@@ -151,14 +218,21 @@ ConnectResult connect_to_server(const std::filesystem::path& path) {
         result.problem = "the socket path is too long to be a Unix socket address: " + path.string();
         return result;
     }
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    const int fd = make_stream_socket();
     if (fd < 0) {
         result.status = ConnectStatus::Unusable;
         result.problem = "cannot make a socket: " + std::string(std::strerror(errno));
         return result;
     }
+    int outcome = 0;
     if (::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
-        const int failure = errno;
+        outcome = errno;
+        // A signal is not a failed connect. The request is still in flight, so
+        // the answer comes from the descriptor rather than from a second call.
+        if (outcome == EINTR) outcome = finish_interrupted_connect(fd);
+    }
+    if (outcome != 0) {
+        const int failure = outcome;
         (void)::close(fd);
         // ENOENT is "no server has ever run here"; ECONNREFUSED is "a socket
         // file is here and nothing is listening", which is what a server that
@@ -233,14 +307,17 @@ Listener::Status Listener::listen(const std::filesystem::path& path) {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 
-    fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    fd_ = make_stream_socket();
     if (fd_ < 0) {
         problem_ = "cannot make a socket: " + std::string(std::strerror(errno));
         close();
         return Status::Failed;
     }
     // The socket is created with the process umask applied, so the mode is set
-    // afterwards rather than hoped for.
+    // afterwards rather than hoped for. Safe to do by name here and nowhere
+    // else: the directory it sits in was just established as owner-only and
+    // owned by this user, so there is nobody who could put something else at
+    // this path between the bind and the chmod.
     if (::bind(fd_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
         problem_ = "cannot bind " + path.string() + ": " + std::string(std::strerror(errno));
         close();
@@ -265,21 +342,92 @@ Listener::Status Listener::listen(const std::filesystem::path& path) {
     return Status::Listening;
 }
 
-int Listener::accept_one(std::string& refusal) {
-    if (fd_ < 0) return -1;
+Listener::AcceptResult Listener::accept_one() {
+    AcceptResult result;
+    if (fd_ < 0) {
+        result.status = AcceptStatus::Failed;
+        result.problem = "there is nothing listening to accept a connection on";
+        return result;
+    }
+#if defined(SOCK_CLOEXEC)
+    // Linux and the BSDs make the accepted descriptor with both flags in the
+    // one call, which is the only form with no window at all: a fork between an
+    // accept and an fcntl hands the new control connection to whatever is being
+    // started. macOS has neither accept4 nor SOCK_CLOEXEC, and takes the branch
+    // below.
+    const int client = ::accept4(fd_, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    const int failure = client < 0 ? errno : 0;
+#else
     const int client = ::accept(fd_, nullptr, nullptr);
-    if (client < 0) return -1;
+    const int failure = client < 0 ? errno : 0;
+    if (client >= 0 && (!set_close_on_exec(client) || !set_non_blocking(client))) {
+        (void)::close(client);
+        result.status = AcceptStatus::Failed;
+        result.problem = "cannot make the connection non-blocking and close-on-exec";
+        return result;
+    }
+#endif
+    if (client < 0) {
+        result.error = failure;
+        switch (failure) {
+            case EAGAIN:
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+            case EWOULDBLOCK:
+#endif
+                result.status = AcceptStatus::Idle;
+                return result;
+            case EINTR:
+            case ECONNABORTED:
+#if defined(EPROTO)
+            // accept(2) says to treat a protocol error on a pending connection
+            // as a connection that went away, not as a listener that is broken.
+            case EPROTO:
+#endif
+                result.status = AcceptStatus::Retry;
+                return result;
+            case EMFILE:
+            case ENFILE:
+            case ENOMEM:
+            case ENOBUFS:
+                // The listener stays readable for as long as the connection is
+                // pending, so a caller that comes straight back gets here again
+                // with nothing changed. What has to change is elsewhere: fewer
+                // descriptors held, or a pause before asking again.
+                result.status = AcceptStatus::Exhausted;
+                result.problem = "cannot accept a connection: " +
+                                 std::string(std::strerror(failure));
+                return result;
+            default:
+                result.status = AcceptStatus::Failed;
+                result.problem = "cannot accept a connection: " +
+                                 std::string(std::strerror(failure));
+                return result;
+        }
+    }
+    std::string refusal;
     if (!peer_is_this_user(client, refusal)) {
         (void)::close(client);
-        return -1;
+        result.status = AcceptStatus::Refused;
+        result.problem = std::move(refusal);
+        return result;
     }
     suppress_sigpipe(client);
-    if (!set_non_blocking(client)) {
-        refusal = "cannot make the connection non-blocking";
-        (void)::close(client);
-        return -1;
-    }
-    return client;
+    result.status = AcceptStatus::Accepted;
+    result.fd = client;
+    return result;
+}
+
+int Listener::accept_one(std::string& refusal) {
+    const AcceptResult result = accept_one();
+    // Only what a reader could act on, which is what this shape has always
+    // said: "none pending" arrives several times a second and a message for it
+    // would bury everything else, and a descriptor table that has run out says
+    // nothing here because a caller that cannot pause is a caller that would
+    // print it as fast as the loop goes round. Telling those apart is what the
+    // AcceptResult overload is for (M-F5, consumed by the server loop in R2).
+    if (result.status == AcceptStatus::Refused || result.status == AcceptStatus::Failed)
+        refusal = result.problem;
+    return result.fd;
 }
 
 void Listener::close() noexcept {
@@ -295,10 +443,24 @@ void Listener::close() noexcept {
         }
     }
     if (lock_fd_ >= 0) {
+        // The lock goes; the lock FILE stays. A starter that arrived while this
+        // one was shutting down has already opened that file, and unlinking it
+        // would leave the two of them holding exclusive locks on two different
+        // inodes — the very race the lock exists to settle. Closing the
+        // descriptor releases the lock on its own; the explicit unlock is for
+        // the reader.
         (void)::flock(lock_fd_, LOCK_UN);
         (void)::close(lock_fd_);
         lock_fd_ = -1;
     }
+}
+
+Stream::Stream(int fd) : fd_(fd) {
+    // Whoever made this descriptor, flush() promises never to raise SIGPIPE on
+    // this process — and on macOS that promise is a socket option rather than a
+    // flag on each write. Set here so it holds for every Stream and not only
+    // for the ones whose descriptor came from this file.
+    if (fd_ >= 0) suppress_sigpipe(fd_);
 }
 
 Stream::~Stream() { close(); }
@@ -323,7 +485,11 @@ Stream& Stream::operator=(Stream&& other) noexcept {
 
 bool Stream::send(std::string_view bytes) {
     pending_.append(bytes);
-    (void)flush();
+    // A write that failed means the peer is gone, and that is the one answer a
+    // sender must not be given as "fine": a server told nothing goes on
+    // queueing a session's whole output — megabyte after megabyte of it — into
+    // a socket that will never take another byte.
+    if (!flush()) return false;
     return !over_high_water();
 }
 

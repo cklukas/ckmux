@@ -11,8 +11,11 @@
 // instead of scattered across handlers.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
+
+#include <poll.h>
 
 namespace ckm::platform {
 
@@ -41,23 +44,45 @@ struct Ready {
 
 class Poller {
 public:
+    // Why the last wait returned the set it did. Three of these produce an
+    // empty set, and a caller that cannot tell them apart cannot behave: a
+    // descriptor the system refuses to poll — one that was closed while still
+    // being watched — makes every wait return instantly with nothing in it,
+    // which is indistinguishable from a timeout that took its whole timeout.
+    // That is a loop at 100 % CPU for the life of the process.
+    enum class Outcome {
+        Ready,        // something in the set is ready
+        TimedOut,     // the timeout expired with nothing ready
+        Interrupted,  // a signal arrived; look again next pass
+        Failed,       // poll() itself failed, and will fail the same way again
+    };
+
     void clear();
     void watch(int fd, Interest interest);
 
-    // Waits up to `timeout_ms` (negative waits indefinitely) and returns what
-    // is ready. An interrupted wait returns nothing rather than an error: the
-    // caller's next pass around its loop will look again, which is what a
-    // signal arriving during a wait should cost.
+    // Waits up to `timeout_ms` for a watched descriptor and returns what is
+    // ready — empty for any of the three reasons above, with `outcome()`
+    // saying which. An interrupted wait is not an error: the caller's next pass
+    // around its loop will look again, which is what a signal arriving during
+    // a wait should cost.
+    //
+    // A negative timeout waits indefinitely, with no descriptors watched as
+    // with any number of them: a caller that asked to sleep until something
+    // happens is not served by being handed back an empty set at once.
     const std::vector<Ready>& wait(int timeout_ms);
+
+    Outcome outcome() const noexcept { return outcome_; }
 
     std::size_t watched() const noexcept;
 
 private:
-    // Kept as parallel arrays of what poll() wants and what a caller asked
-    // for, so a wait allocates nothing.
-    std::vector<int> fds_;
-    std::vector<Interest> interests_;
+    // What poll() wants, filled in by watch() and kept between waits so that a
+    // wait allocates nothing once the set has reached its usual size. A kqueue
+    // or epoll implementation would replace this member and nothing else: no
+    // caller can see it.
+    std::vector<pollfd> watching_;
     std::vector<Ready> ready_;
+    Outcome outcome_ = Outcome::TimedOut;
 };
 
 }  // namespace ckm::platform
