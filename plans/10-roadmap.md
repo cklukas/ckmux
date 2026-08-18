@@ -234,7 +234,9 @@ over a child-controlled stream is the exact hazard WP-PRINT removes.
    exactly one session exists?
 4. **Session auto-names**: numeric `1, 2, …` (tmux-like, recommended) or
    generated word names?
-5. **Terminal-window scrollbars**: default off (recommended)?
+5. **Terminal-window scrollbars**: **resolved** — on, frame-mounted on the
+   window's right border (ckVision D-051, [06](06-ui-design.md) open
+   question 3), so they cost neither a column nor a child reflow.
 6. **Naming**: binary `ckmux`, C++ namespace `ckm::` — confirm.
 7. **License** target for both projects (ckVision D-OPEN-1).
 8. v1 **packaging** ambition: `make install` only, or brew formula too?

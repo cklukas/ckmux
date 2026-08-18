@@ -31,11 +31,13 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 22>& default_bindings() {
-    static const std::array<KeyBinding, 22> kBindings{{
+const std::array<KeyBinding, 23>& default_bindings() {
+    static const std::array<KeyBinding, 23> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
-        {"n", kNextWindow, "&Next Terminal", "next", 70, Action::NextTerminal},
+        // Mnemonics are per menu, and New already holds the Terminal menu's N
+        // — so Next answers to its x, the way Cascade answers to its a.
+        {"n", kNextWindow, "Ne&xt Terminal", "next", 70, Action::NextTerminal},
         {"p", kPreviousWindow, "&Previous Terminal", "prev", 60, Action::PreviousTerminal},
         {"1-9", commands::kFocusByNumber, "Focus Terminal by Number", "focus n", 0, std::nullopt},
         {"w", kWindowList, "&Window List…", "windows", 30, Action::WindowList},
@@ -45,7 +47,11 @@ const std::array<KeyBinding, 22>& default_bindings() {
         {"T", kCascade, "C&ascade", "cascade", 0, Action::Cascade},
         {"m", kMenu, "&Menu Bar", "menu", 95, Action::MenuBar},
         {"[", commands::kCopyMode, "Cop&y Mode", "copy", 45, Action::CopyMode},
-        {"]", commands::kPaste, "&Paste", "paste", 25, Action::Paste},
+        {"]", commands::kPaste, "Past&e", "paste", 25, Action::Paste},
+        // The chord is filled in at startup with the prefix's own spelling
+        // (Keymap::set_default_chord): ^B ^B sends a literal prefix to the
+        // program, and the table cannot know what the reader made the prefix.
+        {"", commands::kSendPrefix, "&Send Prefix to Program", "send prefix", 0, Action::SendPrefix},
         {"d", commands::kDetach, "&Detach", "detach", 80, Action::Detach},
         {"s", commands::kSessions, "&Sessions…", "sessions", 0, Action::Sessions},
         {"S", commands::kNewSession, "&New Session…", "new session", 0, Action::NewSession},
@@ -150,6 +156,14 @@ void Keymap::apply(std::span<const BindDirective> directives, std::vector<std::s
         }
         row->chord = directive.chord;
     }
+}
+
+void Keymap::set_default_chord(Action action, std::string chord) {
+    KeyBinding* const row = row_for(action);
+    if (row == nullptr || chord.empty()) return;
+    for (KeyBinding& binding : bindings_)
+        if (binding.chord == chord) binding.chord.clear();
+    row->chord = std::move(chord);
 }
 
 const KeyBinding* Keymap::find(std::string_view chord) const {

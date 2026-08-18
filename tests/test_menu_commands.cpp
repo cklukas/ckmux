@@ -256,6 +256,14 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
         CK_CHECK(shared_row);
     }
 
+    // The frame scrollbar — on the window's right border exactly once the
+    // shell has printed more rows than the window shows (plans/06 mouse
+    // rules; ckVision D-051), where it costs the terminal nothing.
+    reader.press("i=0; while [ $i -lt 80 ]; do echo scroll-line-$i; i=$((i+1)); done\r");
+    CK_CHECK(reader.sees("scroll-line-79"));
+    CK_CHECK(reader.sees("▲"));
+    CK_CHECK(reader.screen().find("▼") != std::string::npos);
+
     // ^B [ — copy mode, which says so on the window and in the footer.
     reader.press("\x02" "[");
     CK_CHECK(reader.sees("COPY"));
@@ -271,6 +279,21 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     CK_CHECK(reader.screen().find("Quit ckmux") != std::string::npos);
     // And no New Terminal here: that item is the Terminal menu's, once.
     CK_CHECK(reader.screen().find("New Terminal") == std::string::npos);
+
+    // → the Terminal menu. Rule 2 of plans/06: everything is in the menu,
+    // with the chord that reaches it beside it — Copy Mode, Paste and Send
+    // Prefix each carry their prefix chord, and Send Prefix's chord is the
+    // prefix itself.
+    reader.press("\x1b[C");
+    CK_CHECK(reader.sees("Copy Mode"));
+    {
+        const std::string screen = reader.screen();
+        CK_CHECK(screen.find("^B [") != std::string::npos);
+        CK_CHECK(screen.find("Paste") != std::string::npos);
+        CK_CHECK(screen.find("^B ]") != std::string::npos);
+        CK_CHECK(screen.find("Send Prefix to Program") != std::string::npos);
+        CK_CHECK(screen.find("^B C-b") != std::string::npos);
+    }
     reader.press("\x1b");
 
     reader.quit();

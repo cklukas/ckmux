@@ -133,6 +133,14 @@ public:
     // this project pins tests against (plans/12, the reachability rule).
     void apply(std::span<const BindDirective> directives, std::vector<std::string>& problems);
 
+    // Fills one row's default chord before a reader's directives apply — for
+    // the row whose sensible default depends on another setting rather than
+    // on this table: send-prefix mirrors the prefix itself, and the prefix is
+    // the reader's to choose. Runs under apply()'s own collision rule
+    // (whatever held the chord loses it), and a later `bind` moves it like
+    // any other default.
+    void set_default_chord(Action action, std::string chord);
+
     // Fills in each row's `command` from the registry that declared it.
     // Called once, after the application has declared everything, because an
     // id is assigned at declaration time and is meaningful only to the

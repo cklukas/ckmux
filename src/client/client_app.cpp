@@ -15,6 +15,7 @@
 #include "cvision/widgets/dialog.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/message_box.hpp"
+#include "cvision/widgets/terminal_scrollbar.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 
 namespace ckm::client {
@@ -121,6 +122,11 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     // joins the warnings the reader is shown at startup, in the same list as
     // a misspelled key — a binding that quietly does nothing is the failure
     // this project pins tests against.
+    //
+    // Send-prefix defaults to the prefix key itself — ^B ^B types a ^B — and
+    // the prefix is settled by now, so the default is seeded before the
+    // reader's directives get their say over it.
+    keymap_.set_default_chord(Action::SendPrefix, ckm::chord_spelling(options_.settings.prefix));
     keymap_.apply(options_.settings.binds, options_.config_warnings);
     roles_ = u::intern_standard_roles(app_.roles());
     // [general] theme, applied before anything is drawn — and before
@@ -265,6 +271,22 @@ void ClientApp::register_commands() {
             });
             registry.set_enabled_predicate(
                 sessions, [this] { return static_cast<bool>(options_.list_sessions); });
+        } else if (binding.key == commands::kSendPrefix) {
+            declare(binding.key, binding.title, "Terminal", [this] {
+                if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
+                    std::string bytes;
+                    const ckv::KeyChord& p = options_.settings.prefix;
+                    if (p.key == ckv::Key::Char && !p.text.empty() &&
+                        has_modifier(p.modifiers, ckv::Modifier::Ctrl)) {
+                        const char letter = p.text[0];
+                        const char upper = (letter >= 'a' && letter <= 'z')
+                                               ? static_cast<char>(letter - 'a' + 'A')
+                                               : letter;
+                        bytes.push_back(static_cast<char>(upper - 'A' + 1));
+                    }
+                    if (!bytes.empty()) view->session().send_input(bytes);
+                }
+            });
         } else if (binding.key == commands::kFocusByNumber) {
             // Display-only: the digits carry a value, so they are dispatched
             // directly rather than through one handler.
@@ -308,22 +330,6 @@ void ClientApp::register_commands() {
                           .visibility = u::CommandVisibility::Hidden,
                           .handler = [this] { arm_prefix(); }}));
 
-    declare(commands::kSendPrefix, "Send Prefix to Program", "Terminal", [this] {
-        if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
-            std::string bytes;
-            const ckv::KeyChord& p = options_.settings.prefix;
-            if (p.key == ckv::Key::Char && !p.text.empty() &&
-                has_modifier(p.modifiers, ckv::Modifier::Ctrl)) {
-                const char letter = p.text[0];
-                const char upper = (letter >= 'a' && letter <= 'z')
-                                       ? static_cast<char>(letter - 'a' + 'A')
-                                       : letter;
-                bytes.push_back(static_cast<char>(upper - 'A' + 1));
-            }
-            if (!bytes.empty()) view->session().send_input(bytes);
-        }
-    });
-
     // Everything is declared, so the table can learn what its keys resolve to.
     // Every surface reads ids from here afterwards, which is why this is the
     // last line rather than an incremental step inside the loop above.
@@ -359,10 +365,16 @@ void ClientApp::build_chrome() {
         {item(commands::kNewSession), item(commands::kSessions),
          item(commands::kRenameSession), item(commands::kKillSession), separator,
          item(commands::kDetach), item(u::std_command_keys::kQuit)}};
+    // Rule 2 of plans/06: everything is in the menu, with the chord that
+    // reaches it beside it. Copy Mode, Paste and Send Prefix live here — the
+    // three verbs a reader aims at the terminal itself rather than at the
+    // desktop around it.
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal), separator,
-         item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow)}};
+         item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
+         separator, item(commands::kCopyMode), item(commands::kPaste), separator,
+         item(commands::kSendPrefix)}};
     // The window list is a list of WINDOWS — it lives with the other commands
     // that arrange them, not under Terminal, where it sat because M1 had no
     // Window menu yet to put it in.
@@ -800,6 +812,11 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     view->on_parent_escape = [this] { arm_prefix(); };
     view->on_selection_copy = [this](std::string text) { app_.set_clipboard_text(std::move(text)); };
     window->set_content(std::move(view));
+    // The scrollbar on the frame (ckVision D-051): on screen exactly while
+    // the terminal is on its primary screen with history off the top, costing
+    // the terminal neither a column nor a reflow. The wheel, PageUp and the
+    // bar all move the same view.
+    w::attach_terminal_scrollbar(*window, *terminal_view);
 
     w::Window* const terminal_window = window.get();
     ckv::term::TerminalSubsession* const terminal_session = &session;
@@ -996,11 +1013,11 @@ void ClientApp::resolve_prefix(const std::string& chord) {
     focus_active_terminal();
 
     if (!chord.empty()) {
-        if (chord == chord_spelling(ckv::KeyEvent{options_.settings.prefix})) {
-            if (const std::optional<u::CommandId> send_prefix =
-                    app_.commands().id_for(commands::kSendPrefix))
-                app_.execute_command(*send_prefix);
-        } else if (const int index = digit_chord(chord); index != 0) {
+        // The prefix pressed twice reaches send-prefix through the same table
+        // as every other chord: its row is seeded with the prefix's own
+        // spelling at startup, so a reader's rebinding — of it, or of the
+        // chord — is honoured here like anywhere else.
+        if (const int index = digit_chord(chord); index != 0) {
             desktop_->select_by_number(index);
             focus_active_terminal();
         } else if (const KeyBinding* const binding = keymap_.find(chord)) {

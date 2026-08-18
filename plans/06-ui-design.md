@@ -284,7 +284,7 @@ ckVision dialog:
 | Gesture (terminal window, content area) | If inner app requested mouse | If not |
 |---|---|---|
 | Click / drag / release | Forwarded to app (translated coordinates, proper encoding per [04](04-terminal-emulation.md)) | Focus window; click-through suppressed on focus click (config) |
-| Wheel | Forwarded as wheel events | Alternate screen: arrow-key fallback (mode 1007 semantics). Primary screen: scroll ckmux scrollback (enters transient scroll state; any key exits to live) |
+| Wheel | Forwarded as wheel events (`Shift`+wheel stays ckmux's and scrolls scrollback) | Alternate screen: arrow-key fallback (mode 1007 semantics). Primary screen: scroll ckmux scrollback — implemented in `TerminalView` (transient scroll state; any key sent to the child exits to live; the view is pinned while the child prints). A frame-mounted scrollbar on the window's right border shows and steers the same position (ckVision D-051, [07](07-ckvision-integration.md) L-55) |
 | `Shift` + click/drag | **Always ckmux**: select text (rectangle with `Alt`) → copy on release to internal clipboard + host clipboard | Same |
 | `Shift` + right-click | ckmux context menu (Copy / Paste / window ops) | Right-click: forwarded if app wants it, else context menu |
 | Middle-click | Paste internal clipboard (config, default on) | Same |
@@ -303,8 +303,11 @@ otherwise.
 
 Implemented, WP-17 (`src/client/copy_mode.*`).
 
-- Enter via `^B [`. `Shift`+drag stays the implicit path through
-  `TerminalView`'s own selection; wheel-up entry is not wired yet.
+- Enter via `^B [` (also `Terminal ▸ Copy Mode`). `Shift`+drag stays the
+  implicit path through `TerminalView`'s own selection. Wheel-up does not
+  enter copy mode: it scrolls the view in place ([07](07-ckvision-integration.md)
+  L-55) — reading history is lighter than selecting from it, and the
+  transient scroll state costs nothing to leave.
 - Footer switches to copy-mode hints; the window title bar shows a `COPY`
   badge and the scroll position (`-1024/10000`).
 - Keys: arrows/`PgUp`/`PgDn`/`Home`/`End` and `h`/`j`/`k`/`l`, `0`/`$`,
@@ -559,8 +562,11 @@ Nearly every surface above is a stock ckVision widget; ckmux mostly writes
    avoids shell `beginning-of-line`; recommend **B**.
 2. Should plain `F10` also open the menu even when a terminal is focused
    (breaking mc's F10-quit)? Recommend **no** by default; offer as config.
-3. Scrollbars on terminal windows (costs a column; wheel + copy mode may
-   suffice)? Recommend **off** by default, config later.
+3. Scrollbars on terminal windows — **resolved** (owner decision, 2026-08-18):
+   on, mounted on the window's right frame border (ckVision D-051), which
+   dissolves the "costs a column" objection — the border cell was always
+   there. Shown exactly while the primary screen has history off the top;
+   hidden on the alternate screen.
 4. Session picker at startup even when exactly one session exists, or
    auto-attach? Recommend **picker always** (predictability), `ckmux attach`
    for speed.
