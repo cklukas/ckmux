@@ -37,8 +37,35 @@ if(TARGET ckmux)
 endif()
 ckmux_strict(ckmux_tests)
 
+# Labels are plans/09's own taxonomy — `unit`, `golden`, `script`, `pty`,
+# `e2e`, `benchmark`, `fuzz-corpus`, `portable` — and they have to say what a
+# suite actually does, because they are what a reader selects by: `ctest -L
+# unit` has to mean the suites that need nothing but the process they run in,
+# or nobody can trust it to be the fast lane. Labelling all nineteen `unit`
+# said the opposite of the truth about four of them.
+#
+# Only the exceptions are named; everything else is `unit`, so a suite added
+# tomorrow is labelled by default rather than unlabelled. Each entry below is
+# derived from what the file does, not from its name:
+#
+#   * `script` + `e2e`: spawns the real ckmux binary through CKMUX_BINARY_PATH
+#     and drives it end to end.
+#   * `pty`: launches a real PTY child (ckVision's PosixTerminalSubsession),
+#     so it needs a pseudo-terminal to exist and cannot run in a sandbox that
+#     has none.
+#   * `golden`: pins a decoded frame against a checked-in golden
+#     (`cvision/core/golden.hpp`, ckVision D-014).
+set(CKMUX_LABELS_test_cli "script;e2e")
+set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
+set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
+set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
+
 foreach(source ${CKMUX_TEST_SOURCES})
     get_filename_component(suite ${source} NAME_WE)
     add_test(NAME suite_${suite} COMMAND ckmux_tests --suite ${source})
-    set_tests_properties(suite_${suite} PROPERTIES LABELS "unit" TIMEOUT 120)
+    set(CKMUX_SUITE_LABELS "unit")
+    if(DEFINED CKMUX_LABELS_${suite})
+        set(CKMUX_SUITE_LABELS "${CKMUX_LABELS_${suite}}")
+    endif()
+    set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}" TIMEOUT 120)
 endforeach()

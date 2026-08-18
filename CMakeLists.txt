@@ -6,30 +6,145 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
 include(GNUInstallDirs)
 
-# ckVision is consumed as an installed package when one is available, and
-# otherwise from a sibling source checkout. Both paths are first-class: the
-# package path is what an ordinary adopter uses, and the source path is what
-# co-development uses, because ckmux and ckVision are developed together and a
-# library change must be buildable from ckmux in the same edit (plans/07).
-find_package(ckvision CONFIG QUIET)
-if(NOT ckvision_FOUND)
-    set(CKMUX_CKVISION_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ckvision"
-        CACHE PATH "ckVision source checkout used when no installed package is found")
-    if(NOT EXISTS "${CKMUX_CKVISION_SOURCE_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR
-            "ckVision not found. Install it, or point CKMUX_CKVISION_SOURCE_DIR at a "
-            "checkout (looked in ${CKMUX_CKVISION_SOURCE_DIR}).")
-    endif()
-    message(STATUS "ckmux: building ckVision from ${CKMUX_CKVISION_SOURCE_DIR}")
-    # ckVision defaults its examples/tests to PROJECT_IS_TOP_LEVEL, so both
-    # stay off here without being forced.
-    add_subdirectory("${CKMUX_CKVISION_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ckvision")
+# Said once, plainly: ckmux builds on POSIX only. The server forks, opens
+# PTYs, polls file descriptors and speaks over a unix-domain socket, and
+# src/platform is written against those calls; plans/02 puts Windows/ConPTY
+# out of scope and names the seams that would have to grow first. Guarding
+# the executable with if(UNIX) while the libraries built unconditionally
+# advertised a portability that does not exist — the libraries are the part
+# that cannot compile elsewhere. One honest check, here, instead.
+if(NOT UNIX)
+    message(FATAL_ERROR
+        "ckmux builds on POSIX systems only (macOS, Linux). Windows/ConPTY is out "
+        "of scope; see plans/02-architecture.md, 'Portability seams'.")
 endif()
 
-# What both ends are made of: the wire format, the configuration, the diff
-# algebra, and the platform calls. Its own library because the client and the
-# server are separate libraries that both need it, and a shared object linked
-# into both would be the same symbols twice in the one binary that links both.
+# ckVision comes either from a sibling source checkout or from an installed
+# package. Both are first-class, but they are not equal in rank and the rank
+# is now stated rather than inherited from the order of two commands:
+#
+#   * A sibling checkout means co-development (AGENTS.md: "Fix ckVision, never
+#     work around it"). A library edit has to be visible in the very next
+#     ckmux build, so when ../ckvision exists it wins even if a ckvision
+#     package happens to be installed. The old order preferred the package,
+#     which silently built ckmux against yesterday's installed library while
+#     the developer read and edited today's source — the one failure mode
+#     co-development cannot tolerate.
+#   * An adopter has no sibling checkout, so this default computes to OFF for
+#     them and find_package supplies the library, unchanged.
+#
+# Either preference can be stated outright with -DCKMUX_PREFER_CKVISION_SOURCE.
+set(CKMUX_CKVISION_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ckvision"
+    CACHE PATH "ckVision source checkout used for co-development builds")
+if(EXISTS "${CKMUX_CKVISION_SOURCE_DIR}/CMakeLists.txt")
+    set(ckmux_ckvision_source_available TRUE)
+else()
+    set(ckmux_ckvision_source_available FALSE)
+endif()
+option(CKMUX_PREFER_CKVISION_SOURCE
+    "Build ckVision from CKMUX_CKVISION_SOURCE_DIR even if an installed package exists"
+    ${ckmux_ckvision_source_available})
+
+if(CKMUX_PREFER_CKVISION_SOURCE AND NOT ckmux_ckvision_source_available)
+    message(FATAL_ERROR
+        "CKMUX_PREFER_CKVISION_SOURCE is ON but no ckVision checkout is at "
+        "${CKMUX_CKVISION_SOURCE_DIR} (its CMakeLists.txt was expected there). "
+        "Point -DCKMUX_CKVISION_SOURCE_DIR at one, or set "
+        "-DCKMUX_PREFER_CKVISION_SOURCE=OFF to use an installed package.")
+endif()
+
+if(CKMUX_PREFER_CKVISION_SOURCE)
+    # A sanitizer setting that reaches only half of a statically linked binary
+    # is worse than none: ASan's container annotations disagree across an
+    # instrumented/uninstrumented boundary and report container-overflow on
+    # correct code, while the uninstrumented half's real bugs stay invisible —
+    # so the reader learns to distrust the tool. CKMUX_SANITIZE is the knob
+    # AGENTS.md documents, so it decides for both projects; the FORCE is
+    # required because ckVision's own `set(CKVISION_SANITIZE "" CACHE ...)`
+    # runs inside add_subdirectory below and a plain cache set there would not
+    # overwrite an existing entry, nor this one overwrite the user's.
+    # CKMUX_FORWARDED_SANITIZE remembers what we forwarded last time, so the
+    # warning fires on a real disagreement and not on our own value coming
+    # back around on the next configure.
+    if(CKMUX_SANITIZE)
+        if(DEFINED CACHE{CKVISION_SANITIZE}
+           AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_SANITIZE}"
+           AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_FORWARDED_SANITIZE}")
+            message(WARNING
+                "CKVISION_SANITIZE='${CKVISION_SANITIZE}' disagrees with "
+                "CKMUX_SANITIZE='${CKMUX_SANITIZE}'; using CKMUX_SANITIZE for both. "
+                "A half-instrumented binary reports findings that are not bugs and "
+                "misses bugs that are.")
+        endif()
+        set(CKVISION_SANITIZE "${CKMUX_SANITIZE}" CACHE STRING
+            "Sanitizers for the ckVision subproject (forwarded from CKMUX_SANITIZE)" FORCE)
+        set(CKMUX_FORWARDED_SANITIZE "${CKMUX_SANITIZE}" CACHE INTERNAL
+            "Last CKVISION_SANITIZE value forwarded from CKMUX_SANITIZE")
+    elseif(CKVISION_SANITIZE)
+        message(WARNING
+            "CKVISION_SANITIZE='${CKVISION_SANITIZE}' is set while CKMUX_SANITIZE is "
+            "empty: only the library half of the binary would be instrumented. Use "
+            "-DCKMUX_SANITIZE='${CKVISION_SANITIZE}' to instrument both, or clear both.")
+    endif()
+
+    message(STATUS "ckmux: building ckVision from ${CKMUX_CKVISION_SOURCE_DIR}")
+    # EXCLUDE_FROM_ALL is here for the install rules and nothing else. CMake's
+    # directory property of that name has three documented effects: the
+    # subdirectory's targets leave the parent's ALL target, they leave IDE
+    # project files, and "any install rules defined in the subdirectory or
+    # below will be ignored when installing the parent directory". The third
+    # is the point. Without it, `cmake --install` copied ckVision's entire SDK
+    # — the library, 119 headers, the export set and the package config —
+    # into ckmux's prefix, so installing an application installed a second
+    # copy of a library the adopter may already have from its own package.
+    #
+    # The first effect costs nothing, because the same documentation adds that
+    # inter-target dependencies supersede the exclusion: every ckmux target
+    # links ckvision::cvision (an ALIAS for this subdirectory's `cvision`
+    # target), so `cvision` is pulled into the build system to satisfy those
+    # dependencies and a plain `cmake --build` still builds it. What stops
+    # being built by default is only what nothing here depends on — ckVision's
+    # diagnostic tools. Ask for one by name when you want it:
+    #   cmake --build build --target ckvision_terminal_probe
+    # ckVision's tests and examples were already off from here: both default
+    # to PROJECT_IS_TOP_LEVEL, which is false in this configuration.
+    add_subdirectory("${CKMUX_CKVISION_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ckvision"
+        EXCLUDE_FROM_ALL)
+else()
+    find_package(ckvision CONFIG QUIET)
+    if(NOT ckvision_FOUND)
+        message(FATAL_ERROR
+            "ckVision not found. Install it, or check out ../ckvision (looked in "
+            "${CKMUX_CKVISION_SOURCE_DIR}) and configure with "
+            "-DCKMUX_PREFER_CKVISION_SOURCE=ON.")
+    endif()
+endif()
+
+# The OS seam as a real target. AGENTS.md and plans/02 both list `platform`
+# as one of four modules; compiling its sources into ckmux_common made that a
+# claim about a folder rather than a structure. As its own library the seam is
+# something a Linux port can swap or select as a unit, and its dependency
+# direction becomes checkable — tools/check_layers.py rejects an include of
+# any other ckmux module from here, which is what keeps the seam a seam
+# instead of a place where common code accumulated. The split costs nothing
+# downstream: the include path is unchanged, and ckmux_common carries this
+# library PUBLIC, so everything that used to find these symbols in
+# ckmux_common's archive still finds them by linking ckmux_common.
+add_library(ckmux_platform STATIC
+    src/platform/clipboard.cpp
+    src/platform/paths.cpp
+    src/platform/poller.cpp
+    src/platform/process.cpp
+    src/platform/socket.cpp)
+target_include_directories(ckmux_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(ckmux_platform PUBLIC ckvision::cvision)
+ckmux_strict(ckmux_platform)
+
+# What both ends are made of: the wire format, the configuration, and the diff
+# algebra, on top of the platform seam. Its own library because the client and
+# the server are separate libraries that both need it, and a shared object
+# linked into both would be the same symbols twice in the one binary that
+# links both.
 #
 # Nothing here may touch ckVision's `ui`, `widgets` or `scene`, for the same
 # reason the server may not: this is what the server is built out of.
@@ -38,14 +153,9 @@ add_library(ckmux_common STATIC
     src/common/grid_delta.cpp
     src/common/keymap.cpp
     src/common/proto.cpp
-    src/common/shell.cpp
-    src/platform/clipboard.cpp
-    src/platform/paths.cpp
-    src/platform/poller.cpp
-    src/platform/process.cpp
-    src/platform/socket.cpp)
+    src/common/shell.cpp)
 target_include_directories(ckmux_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_common PUBLIC ckvision::cvision)
+target_link_libraries(ckmux_common PUBLIC ckmux_platform ckvision::cvision)
 ckmux_strict(ckmux_common)
 
 # The client object graph is a plain library so every part of it is reachable
@@ -65,11 +175,16 @@ target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_client PUBLIC ckmux_common ckvision::cvision)
 ckmux_strict(ckmux_client)
 
-# The server is its own library and links only ckVision's core and term through
-# ckmux_common, so AGENTS.md's layer rule — server code may include core and
-# term, never ui, widgets or scene — is a fact the build enforces rather than a
-# convention a reader has to remember. It is also what lets the server run with
-# no host terminal at all, which is the whole point of the split.
+# The server is its own library and reaches ckVision through `core` and `term`
+# only — AGENTS.md's layer rule. What holds that rule is tools/check_layers.py,
+# registered below as the CTest cases `layer_check` and
+# `layer_checker_self_test`: it fails when common, platform or server include
+# cvision/ui, cvision/widgets or cvision/scene. The link line cannot say it,
+# and an earlier comment here claimed it could: ckvision::cvision is a single
+# archive containing every layer, so linking it proves nothing about which
+# headers a translation unit used. The rule is what lets the server run with
+# no host terminal at all, which is the whole point of the split, so it is
+# enforced by something that runs rather than by something a reader remembers.
 add_library(ckmux_server STATIC
     src/server/diff_engine.cpp
     src/server/server.cpp
@@ -78,15 +193,51 @@ target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_server PUBLIC ckmux_common ckvision::cvision)
 ckmux_strict(ckmux_server)
 
-if(UNIX)
-    add_executable(ckmux src/main.cpp)
-    target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server ckvision::cvision)
-    ckmux_strict(ckmux)
-    install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# The one installed artifact: ckmux itself. Everything it needs is linked in
+# statically, so the prefix gets a binary and nothing else.
+add_executable(ckmux src/main.cpp)
+target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server ckvision::cvision)
+ckmux_strict(ckmux)
+install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Python is build tooling, never a dependency of ckmux (AGENTS.md: no external
+# dependencies beyond ckvision::cvision). The convenience target is offered
+# when an interpreter is present; the CTest gate below demands one.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_FOUND)
+    add_custom_target(ckmux_check_layers
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_layers.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Checking ckmux module and ckVision layer includes"
+        VERBATIM)
 endif()
 
 option(CKMUX_BUILD_TESTING "Build ckmux tests" ${PROJECT_IS_TOP_LEVEL})
 if(CKMUX_BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
+
+    # The architecture rule fails like a test because it is one. REQUIRED, so
+    # the gate can never vanish silently on a host without an interpreter —
+    # the same reasoning, and the same wiring, as ckVision's own checker.
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME layer_check
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_layers.py)
+    set_tests_properties(layer_check PROPERTIES LABELS "script;architecture" TIMEOUT 30)
+    # And the checker is itself tested against a tree containing every
+    # forbidden edge: a checker that has quietly stopped checking reads
+    # exactly like a clean repository.
+    add_test(NAME layer_checker_self_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_layers.py
+                --self-test)
+    set_tests_properties(layer_checker_self_test PROPERTIES
+        LABELS "script;architecture" TIMEOUT 30)
+endif()
+
+# After tests/, deliberately: the fuzz directory registers its bounded corpus
+# runs as CTest cases when CKMUX_BUILD_TESTING is on, and enable_testing() has
+# to have run before an add_test(). With testing off it still builds the
+# drivers, which is what a fuzzing campaign wants and a test run does not.
+if(CKMUX_BUILD_FUZZERS)
+    add_subdirectory(fuzz)
 endif()
