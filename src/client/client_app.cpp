@@ -362,10 +362,13 @@ void ClientApp::build_chrome() {
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal), separator,
-         item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow), separator,
-         item(u::std_command_keys::kWindowList)}};
+         item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow)}};
+    // The window list is a list of WINDOWS — it lives with the other commands
+    // that arrange them, not under Terminal, where it sat because M1 had no
+    // Window menu yet to put it in.
     w::MenuBarItem window_menu{"&Window",
-                               {item(commands::kMoveResize), item(u::std_command_keys::kZoom), separator,
+                               {item(u::std_command_keys::kWindowList), separator,
+                                item(commands::kMoveResize), item(u::std_command_keys::kZoom), separator,
                                 item(u::std_command_keys::kTile), item(u::std_command_keys::kCascade)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
     // Settings menu rather than hiding one per feature area — and the colour

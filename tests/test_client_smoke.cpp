@@ -168,7 +168,10 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckm::client::commands::kNewTerminal)));
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckm::client::commands::kCloseTerminal)));
     CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kNextWindow)));
-    CK_CHECK(menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
+    // The window list is a list of windows, so it lives under Window with the
+    // commands that arrange them — not under Terminal, where M1 left it.
+    CK_CHECK(!menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTile)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kCascade)));
     CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckm::client::commands::kSettings)));
