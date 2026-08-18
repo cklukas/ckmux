@@ -17,6 +17,7 @@
 #include <filesystem>
 
 #include "common/config.hpp"
+#include "common/proto.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/ui/standard_roles.hpp"
 #include "cvision/widgets/common_components.hpp"
@@ -987,4 +988,29 @@ CK_TEST(the_close_dialogs_move_button_swaps_to_the_move_picker) {
     CK_CHECK(move_offered);
     CK_CHECK(closes == 0);  // nothing was closed that the reader did not choose
     CK_CHECK(terminal_window_count(f.client) == 1U);
+}
+
+CK_TEST(a_refusal_from_the_server_is_shown_with_its_code_and_its_request) {
+    // The reader's end of "a request is always answered" (plans/05). The server
+    // has always sent an `Error` for a request it could not honour; what was
+    // missing was anybody to put it in front of the person who asked, so a
+    // reader who tried something impossible watched a ckmux that looked hung.
+    //
+    // The code and the context are on screen as well as the sentence, because
+    // those two are what a bug report is written from.
+    Fixture f;
+    f.app.step(0);
+    f.client.show_server_error(
+        static_cast<std::uint16_t>(ckm::proto::ErrorCode::NameTaken), "RenameSession",
+        "a session called 'work' already exists");
+    f.app.step(0);
+    f.app.step(0);  // a dialog may be presented from a posted callback
+
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    CK_CHECK(screen.find("already exists") != std::string::npos);
+    CK_CHECK(screen.find("RenameSession") != std::string::npos);
+    CK_CHECK(screen.find("Code: 4") != std::string::npos);  // NameTaken, by number
 }

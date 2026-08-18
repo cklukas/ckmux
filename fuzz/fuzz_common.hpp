@@ -84,6 +84,7 @@ constexpr bool is_server_to_client(proto::MessageType type) {
         case proto::MessageType::ImagePlace:
         case proto::MessageType::ImageRemove:
         case proto::MessageType::ClipboardSet:
+        case proto::MessageType::TermDiagnostic:
         case proto::MessageType::Error:
         case proto::MessageType::PrintState:
         case proto::MessageType::PrintJobAdded:

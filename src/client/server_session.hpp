@@ -57,6 +57,11 @@ public:
     // `ListSessions`, which is a question with an answer rather than a value a
     // client can hold: sessions come and go without this client's involvement.
     std::function<void(const std::vector<proto::SessionInfo>&)> on_sessions;
+    // A request this server could not honour, with its code and the context it
+    // failed in. Shown to the reader by whoever draws: a request is always
+    // answered, and an answer nobody surfaces is indistinguishable from a
+    // server that has hung.
+    std::function<void(const proto::Error&)> on_error;
 
     explicit ServerSession(Send send);
 
@@ -65,6 +70,16 @@ public:
     // whole, which is exactly what a client that has lost track needs and is why
     // healing needs no message of its own.
     void attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels);
+
+    // The reader's own terminal changed size while this client was attached.
+    //
+    // The desktop travelled once, at attach time, and a host terminal resized
+    // afterwards reached the server only at the next `Attach` — so a reader who
+    // made their window bigger kept the pixel metric of the old one until they
+    // detached and came back (`ClientResize` had a server handler and no
+    // sender at all). Idempotent: called from the client's loop on every pass,
+    // it sends a message only when the size has actually moved.
+    void desktop_resized(ckv::Size desktop, ckv::Size cell_pixels);
 
     // Sends one message to the server. The mirrors send their own input and
     // resizes; this is for what belongs to the attachment rather than to a

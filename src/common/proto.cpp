@@ -595,6 +595,12 @@ void write(Writer& w, const TerminalState& s) {
     w.u32(s.printer_bytes);
     w.u32(static_cast<std::uint32_t>(s.print_jobs.size()));
     for (const PrintJobInfo& job : s.print_jobs) w.job(job);
+    w.u64(s.clipboard_serial);
+    w.u8(s.exited);
+    w.i32(s.exit_status);
+    w.u8(s.hold);
+    w.u8(static_cast<std::uint8_t>(s.diagnostic_kind));
+    w.str(s.diagnostic);
 }
 void read(Reader& r, TerminalState& s) {
     s.term = r.u64();
@@ -621,6 +627,12 @@ void read(Reader& r, TerminalState& s) {
     const std::uint32_t jobs = r.count(25);
     s.print_jobs.reserve(jobs);
     for (std::uint32_t i = 0; i < jobs && r.ok(); ++i) s.print_jobs.push_back(r.job());
+    s.clipboard_serial = r.u64();
+    s.exited = r.u8();
+    s.exit_status = r.i32();
+    s.hold = r.u8();
+    s.diagnostic_kind = r.enum_of<DiagnosticKind>(r.u8(), 3);
+    s.diagnostic = r.str();
 }
 
 void write(Writer& w, const Attached& m) {
@@ -636,10 +648,10 @@ void read(Reader& r, Attached& m) {
     m.snapshot.desktop_columns = r.u16();
     m.snapshot.desktop_rows = r.u16();
     m.snapshot.focused_term = r.u64();
-    // Sixty-two bytes is a terminal state with no title, no grid, no history,
-    // no images and no print jobs — every fixed field and the four counts that
-    // say the variable ones are empty.
-    const std::uint32_t terminals = r.count(62);
+    // Seventy-nine bytes is a terminal state with no title, no grid, no
+    // history, no images, no print jobs and no diagnostic — every fixed field
+    // and the four counts that say the variable ones are empty.
+    const std::uint32_t terminals = r.count(79);
     m.snapshot.terminals.reserve(terminals);
     for (std::uint32_t i = 0; i < terminals && r.ok(); ++i) {
         TerminalState state;
@@ -901,8 +913,25 @@ void read(Reader& r, ImageRemove& m) {
     m.id = r.u64();
 }
 
-void write(Writer& w, const ClipboardSet& m) { w.blob(m.text); }
-void read(Reader& r, ClipboardSet& m) { m.text = r.blob(); }
+void write(Writer& w, const ClipboardSet& m) {
+    w.u64(m.term);
+    w.blob(m.text);
+}
+void read(Reader& r, ClipboardSet& m) {
+    m.term = r.u64();
+    m.text = r.blob();
+}
+
+void write(Writer& w, const TermDiagnostic& m) {
+    w.u64(m.term);
+    w.u8(static_cast<std::uint8_t>(m.kind));
+    w.str(m.text);
+}
+void read(Reader& r, TermDiagnostic& m) {
+    m.term = r.u64();
+    m.kind = r.enum_of<DiagnosticKind>(r.u8(), 3);
+    m.text = r.str();
+}
 
 void write(Writer& w, const Error& m) {
     w.u16(m.code);
@@ -1113,10 +1142,11 @@ std::size_t encoded_size(const TerminalState& state) {
     // the grid or the history: 8 term + 2 index + 2 title length + 1 flags +
     // 2 columns + 2 rows + 8 rect + 2 z_order + 1 zoomed + 7 cursor +
     // 4 modes + 4 image count + 1 printer mode + 1 scope + 1 state +
-    // 4 printer bytes + 4 job count.
-    constexpr std::size_t kFixed = 54;
+    // 4 printer bytes + 4 job count + 8 clipboard serial + 1 exited +
+    // 4 exit status + 1 hold + 1 diagnostic kind + 2 diagnostic length.
+    constexpr std::size_t kFixed = 71;
     // 8 per image id; 8 job + 1 kind + 4 bytes + 4 lines + 8 at per job.
-    return kFixed + state.title.size() + encoded_size(state.grid) +
+    return kFixed + state.title.size() + state.diagnostic.size() + encoded_size(state.grid) +
            encoded_size(state.scrollback) + 8 * state.images.size() +
            25 * state.print_jobs.size();
 }

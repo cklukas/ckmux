@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 #include <utility>
 #include <variant>
 
@@ -89,6 +90,17 @@ template <typename WithGeometry>
 ckv::Size cell_metric_of(const WithGeometry& message) {
     if (message.columns == 0 || message.rows == 0) return ckv::Size{0, 0};
     return ckv::Size{message.pixel_width / message.columns, message.pixel_height / message.rows};
+}
+
+// The reader's `[printer] mode`, in the wire's own enumeration. One place, so
+// the two spellings of the same three answers cannot drift apart.
+proto::PrinterMode wire_printer_mode(PrinterMode mode) {
+    switch (mode) {
+        case PrinterMode::Ask: return proto::PrinterMode::Ask;
+        case PrinterMode::Capture: return proto::PrinterMode::Capture;
+        case PrinterMode::Off: return proto::PrinterMode::Off;
+    }
+    return proto::PrinterMode::Ask;
 }
 
 const char* name_of(proto::MessageType type) {
@@ -530,8 +542,17 @@ void Server::handle(Client& client, const proto::Message& message) {
         // mirrored mode state (plans/04), so the server writes them to the PTY
         // without understanding them. A server that re-encoded would be a third
         // opinion about the child's dialect.
-        if (Terminal* terminal = terminals_.find(input->term))
+        if (Terminal* terminal = terminals_.find(input->term)) {
             terminal->send_input(input->bytes);
+            // The terminal a reader's input goes to is the terminal the reader
+            // is in. That is the only statement of focus this protocol carries
+            // today — `Raise` and `FocusTerm` encode and nothing sends them —
+            // and it is a true one: keys, mouse reports and focus reports all
+            // arrive as `Input`. Kept because two things read it: the snapshot
+            // a reattaching client is given (`focused_term`), and the activity
+            // mark, which means "output in a terminal the reader is not in".
+            if (Session* const home = session_holding(input->term)) home->focused = input->term;
+        }
         return;
     }
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
@@ -827,6 +848,128 @@ void Server::notice_exits() {
     }
 }
 
+void Server::announce_terminal_news() {
+    for (const TerminalId id : terminals_.ids()) {
+        Terminal* const terminal = terminals_.find(id);
+        if (terminal == nullptr) continue;
+        Session* const home = session_holding(id);
+        if (home == nullptr) continue;
+        const ckv::term::TerminalDamage& damage = terminal->session().damage();
+
+        // A screen that changed because a reader moved a window is not the
+        // child saying anything. Read and cleared here whichever branch is
+        // taken below, so it describes exactly one tick.
+        const bool a_client_resized_it = terminal->take_client_resize();
+
+        // The marks are kept whether or not anybody is watching — that is the
+        // whole difference between a mark and an event, and a session with no
+        // client is precisely when a reader most wants to be told afterwards
+        // that something happened.
+        if (home->focused == id) {
+            // The reader is in this terminal, so there is nothing they have
+            // missed. Cleared before the marks below are set, so output in the
+            // focused terminal never marks itself.
+            terminal->clear_marks();
+        } else {
+            if (damage.bell) terminal->mark_bell();
+            // Activity is output on a terminal the reader is not in — the tmux
+            // meaning, and the only one that makes a window marker worth
+            // looking at. What counts as output is what a child put on the
+            // screen: cells, or lines that scrolled into the history. A cursor
+            // that moved and a mode that changed are the child doing something
+            // ABOUT the screen rather than writing to it, and a program that
+            // parks a cursor would otherwise mark itself forever.
+            if (!a_client_resized_it) {
+                bool wrote = damage.scrollback_pushed > 0;
+                for (const ckv::term::TerminalDamage::RowSpan& row : damage.rows) {
+                    if (row.empty()) continue;
+                    wrote = true;
+                    break;
+                }
+                if (wrote) terminal->mark_activity();
+            }
+        }
+
+        Client* const watcher = client_attached_to(home->id);
+        if (watcher == nullptr) continue;
+
+        if (!terminal->marks_announced()) {
+            proto::TermMeta meta;
+            meta.term = id;
+            const auto position = std::find(home->terminals.begin(), home->terminals.end(), id);
+            meta.index = static_cast<std::uint16_t>(position - home->terminals.begin());
+            // The title as well as the marks, because this message STATES a
+            // title and a mirror applies what it is told. Through the same
+            // clamp the delta's `Title` op uses, so the two producers cannot
+            // disagree by a byte and leave a caption flipping once a tick.
+            const ckv::term::TerminalStatus status = terminal->status();
+            meta.title = std::string(clamp_utf8(status.title, proto::kMaxTitleBytes));
+            meta.flags = static_cast<std::uint8_t>(
+                (terminal->bell_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Bell) : 0) |
+                (terminal->activity_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)
+                                             : 0));
+            send(*watcher, meta);
+            terminal->note_marks_announced();
+        }
+
+        // The child asked to put text on the reader's clipboard. Gated on the
+        // reader's own `[terminal] osc52`: the emulator refuses the write at
+        // the child's door when that setting is off, and this is the same
+        // answer said again on the way out — because what leaves this server is
+        // the server's decision, and a producer that forwarded whatever the
+        // emulator happened to hold would make the setting depend on a refusal
+        // elsewhere staying total.
+        //
+        // The text lives in the snapshot rather than in `status()` (ckVision
+        // keeps a serial there instead, so that reading a terminal every tick
+        // costs nothing), so it is fetched only when the damage flag says there
+        // is something new to fetch — which is what the flag is for.
+        if (damage.clipboard && options_.settings.osc52) {
+            ckv::core::TerminalSnapshotOptions wanted;
+            wanted.include_scrollback = false;
+            wanted.include_rasters = false;
+            proto::ClipboardSet clipboard;
+            clipboard.term = id;
+            clipboard.text = terminal->snapshot(wanted).clipboard_text;
+            if (!clipboard.text.empty()) send(*watcher, clipboard);
+        }
+
+        // The printer, in the message that already exists for it. While the
+        // controller is on, the child's output is going to the printer and NOT
+        // to the screen — the one printer fact a reader must be shown, or they
+        // are watching a terminal that has apparently stopped responding.
+        if (damage.printer) {
+            const ckv::term::TerminalStatus status = terminal->status();
+            proto::PrintState printing;
+            printing.term = id;
+            printing.mode = wire_printer_mode(options_.settings.printer_mode);
+            printing.state = status.printer_controller_active ? proto::PrinterState::Capturing
+                                                              : proto::PrinterState::Idle;
+            printing.bytes = static_cast<std::uint32_t>(
+                std::min<std::size_t>(status.printer_pending_bytes, 0xFFFFFFFFu));
+            printing.jobs = static_cast<std::uint16_t>(
+                std::min<std::size_t>(status.printer_jobs_ready, 0xFFFFu));
+            send(*watcher, printing);
+        }
+
+        // And the newest complaint. One entry, not the ring: what a view paints
+        // is the last one, and re-sending the whole ring on every change would
+        // send a client entries it already holds.
+        if (damage.diagnostics) {
+            const std::span<const ckv::core::TerminalDiagnostic> complaints =
+                terminal->session().diagnostics();
+            if (!complaints.empty()) {
+                proto::TermDiagnostic said;
+                said.term = id;
+                said.kind = wire_kind(complaints.back().kind);
+                said.text =
+                    std::string(clamp_utf8(complaints.back().message, proto::kMaxTitleBytes));
+                send(*watcher, said);
+            }
+        }
+    }
+}
+
 void Server::remove_terminal(TerminalId id, bool exited) {
     Session* const home = session_holding(id);
     std::optional<int> status;
@@ -1048,6 +1191,32 @@ void Server::send_snapshot(Client& client) {
         // continuity from its first delta rather than take it on trust (WP-4b).
         proto::TerminalState state = diffs_.snapshot(id, terminal->session());
         state.index = index++;
+        // The reader's printer policy, which is the server's to state: the
+        // differ reads a terminal and this is configuration. Said here so that
+        // a snapshot and the `PrintState` that follows it agree about the mode
+        // rather than one of them defaulting.
+        state.printer_mode = wire_printer_mode(options_.settings.printer_mode);
+        state.flags = static_cast<std::uint8_t>(
+            (terminal->bell_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Bell) : 0) |
+            (terminal->activity_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)
+                                         : 0));
+        // A snapshot IS an announcement of the marks, so the tick that follows
+        // it does not restate them: a `TermMeta` is sent when the pair changes,
+        // and this has just said what the pair is.
+        terminal->note_marks_announced();
+        // The child's own life, which no delta can carry because it is not a
+        // fact about a screen. A terminal whose child has ended and which is
+        // STILL IN A SESSION is a held one by construction — `notice_exits`
+        // removes the others — so `hold` is read off that rather than derived
+        // from the policy a second time. Without these three, a reattach found
+        // no field for "the child exited" and the mirror had to preserve what a
+        // `TermClosed` had told it, which meant a server that genuinely
+        // restarted a terminal had no way to say so (M-R4).
+        if (!terminal->live()) {
+            state.exited = 1;
+            state.exit_status = terminal->exit_status().value_or(0);
+            state.hold = 1;
+        }
         snapshot.terminals.push_back(std::move(state));
     }
     // The eight bytes are `Attached::session`, which the snapshot's own measure
@@ -1211,6 +1380,18 @@ void Server::flush_tick() {
         if (!client->stream.ready_for_screen()) continue;
         send_snapshot(*client);
     }
+
+    // Everything a terminal has to say that is not its grid — the marks, a
+    // clipboard write, the printer going on or off, the newest complaint.
+    //
+    // Before `diffs_.flush`, which is what clears the damage each of them is
+    // gated on, and AFTER the heal above, which is the ordering that matters
+    // for exactly one of them: a snapshot carries the clipboard WATERMARK and
+    // deliberately not the text, so a write announced before it would be
+    // adopted away by the snapshot that followed it in the same tick. The
+    // others are restatements of what a snapshot just said, which costs a few
+    // bytes and says the same thing twice rather than losing something.
+    announce_terminal_news();
 
     const DiffEngine::Tick tick = diffs_.flush(terminals_);
 

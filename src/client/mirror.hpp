@@ -72,6 +72,25 @@ public:
 
     void apply(const proto::TermMeta& meta);
     void apply(const proto::TermClosed& closed);
+    // The child put text on the clipboard (OSC 52), and the server let it.
+    //
+    // The serial is bumped rather than carried: what a consumer does with a
+    // clipboard write is compare the serial against the one it last acted on
+    // (ckVision's `TerminalView` does exactly that), so what has to be true is
+    // that the number MOVES and never goes backwards. The snapshot restores the
+    // server's own watermark, and every write after it advances by one from
+    // there — so a write that arrives after a reattach can never land on a
+    // number a watcher has already seen, which is how one would be dropped in
+    // silence.
+    void apply(const proto::ClipboardSet& clipboard);
+    // The printer went on or off, or its byte count moved. Not part of the
+    // grid — while the controller is on, the child's output is going to the
+    // printer and NOT to the screen, which is the fact a reader has to be shown
+    // rather than left watching a terminal that has apparently stopped.
+    void apply(const proto::PrintState& printing);
+    // The terminal's newest complaint. One entry, replacing whatever was there:
+    // the emulator keeps the ring, and what a view paints is the last of it.
+    void apply(const proto::TermDiagnostic& said);
 
     // Whether the mirror knows it is out of date. Cleared by `adopt`, because a
     // snapshot is the cure.
@@ -87,6 +106,31 @@ public:
     ckv::Size cells() const noexcept { return state_.cells; }
     std::optional<int> exit_status() const noexcept { return exit_status_; }
     bool exited() const noexcept { return exited_; }
+    // Whether the terminal is being kept although its child has ended — the
+    // window with a banner over the last screen the program drew (plans/03
+    // on-exit). Read by a test rather than by the view, which asks the seam
+    // whether the terminal has exited and draws the banner from that; what this
+    // says is that the SERVER means to keep it.
+    bool held() const noexcept { return hold_; }
+    // What a reader who is not in this terminal has missed (plans/05's
+    // `TermMeta` flags), as the server last stated it.
+    bool bell_marked() const noexcept { return bell_marked_; }
+    bool activity_marked() const noexcept { return activity_marked_; }
+    // The clipboard, as the child last asked for it. The serial is what a
+    // consumer compares; the text is what it forwards when the serial moved. A
+    // mirror that has just adopted a snapshot holds the server's serial and NO
+    // text, which is the pair that makes a reattach forward nothing.
+    std::uint64_t clipboard_serial() const noexcept { return clipboard_serial_; }
+    const std::string& clipboard_text() const noexcept { return clipboard_text_; }
+    // The printer, as the snapshot or the last `PrintState` said.
+    bool printer_active() const noexcept { return printer_active_; }
+    std::size_t printer_bytes() const noexcept { return printer_bytes_; }
+    std::size_t printer_jobs() const noexcept { return printer_jobs_; }
+    // The terminal's newest complaint, or nothing. At most one entry: the ring
+    // is the emulator's, and a client is given its last line.
+    std::span<const ckv::core::TerminalDiagnostic> diagnostics() const noexcept {
+        return diagnostics_;
+    }
     // What the reader's `[general] scrollback` says this mirror keeps. Set once,
     // by the client, from configuration: the server's own capacity is its
     // business, and a client that kept more than it was configured to would be
@@ -137,12 +181,22 @@ private:
     std::vector<ckv::core::TerminalRaster> rasters_;
     std::vector<std::uint64_t> raster_wire_ids_;
     int raster_identity_ = 0;
+    // At most one entry, so that `diagnostics()` can hand out the seam's own
+    // span type without the mirror keeping a ring the wire never sends.
+    std::vector<ckv::core::TerminalDiagnostic> diagnostics_;
     ckv::core::TerminalDamage damage_;
     std::uint32_t sequence_ = 0;
     std::uint64_t gaps_ = 0;
+    std::uint64_t clipboard_serial_ = 0;
+    std::string clipboard_text_;
+    std::size_t printer_bytes_ = 0;
+    std::size_t printer_jobs_ = 0;
+    bool printer_active_ = false;
     bool needs_snapshot_ = false;
     bool exited_ = false;
     bool hold_ = false;
+    bool bell_marked_ = false;
+    bool activity_marked_ = false;
     std::optional<int> exit_status_;
 };
 

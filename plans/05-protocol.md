@@ -71,7 +71,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | Value | Meaning |
 |---|---|
 | **live** | one end constructs it and the other acts on it, in shipping code |
-| **encode-only** | codec only: no producer, no handler. **17 of the 48 types** are here |
+| **encode-only** | codec only: no producer, no handler. **15 of the 49 types** are here |
 | **handler only** | one end acts on it; nothing sends it |
 | **producer only** | one end sends it; nothing acts on it |
 | **tests only** | producer and handler exist, but the only asker is a test |
@@ -85,14 +85,14 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `NewSession` | `name str?, spawn_first u8, cmd str?` | **live** | empty name means the server names it (`session-N`); answered with `SessionList` to every greeted client — creating a session stales every picker |
 | `Attach` | `session u64, cols u16, rows u16, pixel_w u16, pixel_h u16, host_sixel u8` | **live** | session 0 = "the default one": the session already there, or a new one on a server that has none — a cold `ckmux` start is one round trip. **Always granted — latest client wins**: any prior client is detached first (`Detached{takeover}`, best-effort bounded flush; an unresponsive old client never delays the new attach). Pixel size feeds `TIOCSWINSZ` pixel fields & XTWINOPS 14/16 replies; `host_sixel` is what the client's OUTER terminal advertised, which is what a child's own advertisement must reflect (WP-16) |
 | `Detach` | — | **live** | also implicit on socket close |
-| `ClientResize` | `cols, rows, pixel_w, pixel_h` | *handler only* | the server applies it; no client sends one. A host terminal resized while attached therefore reaches the server only at the next `Attach` — the desktop size travels once, at attach time (`server_session.cpp`) |
+| `ClientResize` | `cols, rows, pixel_w, pixel_h` | **live** | the reader's own window, whenever it changes while attached (`ServerSession::desktop_resized`, asked of the host terminal on every pass of the client's loop and sent only when the size actually moved). The cell metric it carries is what a child's `TIOCSWINSZ` pixel fields and its XTWINOPS answers derive from, so a reader who resized their window — or changed its font — used to keep the old metric until they detached and came back (R8) |
 | `NewTerminal` | `session u64?, cmd str?, geom rect?` | **live** | a zero-size rect means "place it yourself"; a non-zero one becomes the terminal's columns and rows |
 | `CloseTerminal` | `term u64, force u8, grace_seconds u16` | **live** | the program is ASKED first (SIGHUP→SIGTERM through ckVision's `request_termination()`, PTY still draining); the survivors are killed at the deadline only if `force`. `force = 0` means the program keeps running and its terminal with it |
 | `KillTerminal` | `term u64` | *encode-only* | SIGKILL outright; `CloseTerminal{force=1}` covers the reader-facing case today |
 | `RespawnTerminal` | `term u64` | *encode-only* | restart exited terminal in-window — WP-13 |
 | `MoveTerminal` | `term u64, dest_session u64, to_new_session u8` | **live** | the flag outranks the id, because `Attach` already gave 0 a different meaning; a close pending against the terminal is cancelled, since a move is the reader deciding to keep it (WP-10) |
 | `MoveResize` | `term u64, rect` | **live** | one TERMINAL's own size, sent by its mirror when its view is laid out |
-| `Raise` / `FocusTerm` | `term u64` | *encode-only* | z-order / focus; the client draws its own z-order, and the server's `Session::focused` is set where a terminal is opened and never moved after, so the snapshot's `focused_term` is "the last one created" rather than "the one the reader is in" |
+| `Raise` / `FocusTerm` | `term u64` | *encode-only* | z-order and focus, both still dormant: the client draws its own z-order, and nothing sends either message. **`Session::focused` is maintained off `Input` instead** — the terminal a reader's keys, mouse reports and focus reports go to is the terminal they are in, and it is the only statement of focus this wire carries today (R8). Two things read it: the snapshot's `focused_term`, and `TermMeta`'s activity mark, which means "output in a terminal the reader is NOT in" |
 | `ZoomTerm` | `term u64, on u8` | *encode-only* | maximize/restore |
 | `RenameSession` | `id u64, name str` | **live** | |
 | `RenameTerminal` | `id u64, name str` | *encode-only* | M3 |
@@ -113,21 +113,22 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `SessionList` | `n × { id, name, terminals u16, attached u8, created i64, last_attached i64 }` | **live** | sent to every greeted client whenever the set changes, which is why there is no separate refresh hint |
 | `Attached` | `session u64` + **Snapshot** | **live** | full state; also sent for self-healing |
 | `Detached` | `reason u8 (user\|takeover\|session_killed\|server_shutdown), text str` | **live** | |
-| `LayoutDelta` | `session u64, n × { term u64, rect, z u16, zoomed u8 }, focused u64, desktop cols/rows` | *encode-only* | no producer, and the snapshot's matching `rect`/`z_order`/`zoomed` fields are written by nobody and read by nobody — a reattach cascades default windows. M-R3 → R8 in [13](13-architecture-review.md) |
+| `LayoutDelta` | `session u64, n × { term u64, rect, z u16, zoomed u8 }, focused u64, desktop cols/rows` | *encode-only* | no producer, and the snapshot's matching `rect`/`z_order`/`zoomed` fields are written by nobody and read by nobody — a reattach cascades default windows. M-R3, the one part of R8 still open: everything else a reattaching reader was losing now travels, and window GEOMETRY does not ([13](13-architecture-review.md)) |
 | `TermOpened` | `term u64, session u64, index u16, rect, title str, cols, rows` | **live** | `rect` and `title` are left at their defaults today; the client places and names the window itself |
-| `TermClosed` | `term u64, exited u8, exit_status i32, hold u8` | **live** | `exited = 0` is a leaving, not a death — that is how a moved terminal's old watcher is told. `hold` is read by the mirror and never set by the server (WP-13), and a child that exits on its own produces no `TermClosed` at all (m-exit-msg → R2) |
-| `TermMeta` | `term u64, index u16, title str, flags u8 (bell, activity)` | *handler only* | the client applies the title; the server never sends one, because a title change travels as `GridDelta`'s `Title` op. The bell and activity flags have no producer anywhere — WP-19 |
+| `TermClosed` | `term u64, exited u8, exit_status i32, hold u8` | **live** | `exited = 0` is a leaving, not a death — that is how a moved terminal's old watcher is told. A child that ends on its own produces one off the lifecycle damage flag, with `hold` set from `[general] on-exit` (R2); the same three facts are on the attach snapshot now, so a client that was not listening when it happened still learns them (R8) |
+| `TermMeta` | `term u64, index u16, title str, flags u8 (bell, activity)` | **live** | what a reader who is not in this terminal has MISSED. `Bell` is set when the child rings; `Activity` when it writes to a terminal that is not the focused one — the tmux meaning, and the only one that makes a window marker worth looking at. Both are cleared when that terminal becomes the focused one. Marks rather than counts, and edge-triggered: the server sends one only when the pair changes, so a terminal printing steadily costs one message and not one per tick. The title travels with them, through the same clamp the `Title` op uses, because a message that STATES a title must not state an empty one (R8) |
 | `GridDelta` | below | **live** | the hot path |
 | `ImageAddBegin/Chunk/End` | `id u64, w u16, h u16` · `id u64, seq u32, blob (raw RGBA)` · `id u64` | **live** (WP-16) | chunked ≤ 256 KiB |
 | `ImagePlace` / `ImageRemove` | `term u64, id u64, cell rect, pixel offsets` · `term u64, id u64` | **live** (WP-16) | the believed set is re-sent whole after an attach, so every mirror agrees until the next tick moves them together |
-| `ClipboardSet` | `blob` | *encode-only* | inner-app OSC 52 → client sets host clipboard per config. The policy is enabled toward the child and the write is then dropped: no producer, no handler, no rehydrated serial. M-R1 → R8; [08](08-configuration.md)'s `osc52` claim reads ahead of this |
-| `PrintState` | `term u64, mode u8, state u8 (idle\|capturing\|sunk\|full), bytes u32, jobs u16` | *encode-only* | drives the frame button's label and its live byte counter; coalesced onto the flush tick like everything else |
+| `ClipboardSet` | `term u64, blob` | **live** | inner-app OSC 52 → the client's clipboard targets, per `[terminal] clipboard`. Sent off the emulator's clipboard damage flag and gated on `[terminal] osc52` at the server as well as at the child's door. The terminal id travels with the text although a reader has one clipboard: the client routes the write into that terminal's mirror, and `TerminalView` then delivers it exactly as it would for a terminal in this process — serial moves, host is handed the text (R8). **The snapshot carries the serial and NOT the text**: see Snapshot, below |
+| `TermDiagnostic` | `term u64, kind u8, text str` | **live** | what the terminal last had to complain about — an unimplemented sequence, a malformed one, a limit a child ran into. The NEWEST one, one message at a time, off the emulator's diagnostics damage flag: the ring is bounded and the view paints its last entry, so shipping the ring whole would re-send what a client already holds every time one arrived. The snapshot carries the same single entry (R8) |
+| `PrintState` | `term u64, mode u8, state u8 (idle\|capturing\|sunk\|full), bytes u32, jobs u16` | **live** | sent off the emulator's printer damage flag, so a client knows the one printer fact a reader must be shown: while the controller is on, the child's output goes to the PRINTER and not to the screen, and a terminal that did not say so reads as one that has stopped responding. A message rather than a `GridDelta` op, because the printer is not the grid (R8). It will also drive the frame button's label and its live byte counter — PRINT-1…6 |
 | `PrintJobAdded` | `term u64, job u64, kind u8 (screen\|line\|controller\|autoprint), bytes u32, lines u32, at i64` | *encode-only* | **metadata only** — a 1 MB job never rides the hot path or the attach snapshot |
 | `PrintJobData` | `term u64, job u64, seq u32, final u8, blob` | *encode-only* | answer to `PrintJobFetch`, chunked ≤ 256 KiB |
 | `SessionsChanged` | — | *encode-only* | picker refresh hint, superseded before it was ever sent: every change answers with a fresh `SessionList`, which carries the answer instead of asking for another round trip |
 | `PasteAck` | `seq u32` | *encode-only* | the credit half of `PasteChunk` (below); it was described under flow control and missing from this table — WP-18 |
 | `Pong` | `nonce u64` | *tests only* | accepted and dropped by the client; see `Ping` |
-| `Error` | `code u16, context str, human str` | *producer only* | non-fatal errors (e.g. name collision). Codes are `proto::ErrorCode`: `NotImplemented` (1) — understood, and this build does not do it yet — then `NoSuchTerminal`, `NoSuchSession`, `NameTaken`. A request the server cannot honour is always **answered**: a client waiting for a reply that never comes is indistinguishable, to a reader, from a server that has hung (WP-2). The answer currently stops at the client's front door — `ServerSession::handle` does not claim it and `run_client` discards the result, so a reader is told nothing |
+| `Error` | `code u16, context str, human str` | **live** | non-fatal errors (e.g. name collision). Codes are `proto::ErrorCode`: `NotImplemented` (1) — understood, and this build does not do it yet — then `NoSuchTerminal`, `NoSuchSession`, `NameTaken`. A request the server cannot honour is always **answered**: a client waiting for a reply that never comes is indistinguishable, to a reader, from a server that has hung (WP-2). `ServerSession` claims it and `ClientApp` puts it in front of the reader who asked, code and context included, because those two are what a bug report is written from (R8) |
 
 ### `GridDelta` (hot path)
 
@@ -143,6 +144,10 @@ term u64, seq u32, ops[]:
                                                       # plus the mouse TRACKING LEVEL
                                                       # in bits 7–8 (DEC 1000/1002/1003
                                                       # are three levels of one facility)
+                                                      # and the KITTY KEYBOARD flags in
+                                                      # bits 9–13 — modes in all but
+                                                      # their spelling, so they ride the
+                                                      # word a mode already travels in
   op Title    { title str }
   op SbPush   { n × line (RLE cells) }                # lines entering scrollback —
                                                       # the client mirror keeps the
@@ -217,9 +222,33 @@ literally a rehydrated `TerminalSnapshot` — it feeds ckVision's
 rule: snapshots are cut atomically between ticks — a client never sees half
 a frame.
 
-**What of that is filled in today**: the grid, the scrollback, the modes, the
-cursor, the size, the title and the placed images — everything a reattaching
-reader sees. The **layout** fields (`rect`, `z_order`, `zoomed` per terminal)
+Per terminal it also carries the three things that HAPPENED rather than
+things that are set, and each is shaped by what a reattaching reader needs
+rather than by what the server holds (R8):
+
+- **the clipboard watermark, and never the clipboard text.** A child's OSC 52
+  is a live act — "put this on the reader's clipboard now" — so the text
+  travels only on `ClipboardSet`. A snapshot that carried it would, on every
+  reattach, put a child's text over whatever its reader had copied since,
+  minutes later, with nobody asking. What the snapshot restores is the SERIAL,
+  because the consumer of a clipboard write compares it against the one it last
+  acted on: a mirror that started over at zero would meet the next real write
+  with a number its watcher had already seen and drop it in silence. Monotonic,
+  never reset, never backwards.
+- **`exited` / `exit_status` / `hold`.** The child's own life, which no delta
+  can carry because it is not a fact about a screen. A terminal whose child has
+  ended and which is still in a session is a held one by construction, which is
+  what `hold` reports. An exit is a one-way door: a snapshot that states one is
+  adopted whole, and one that states none leaves what a `TermClosed` already
+  said, since ids are never reused and only a `TermOpened` says a terminal is
+  new.
+- **the newest diagnostic**, and nothing older — the same single entry
+  `TermDiagnostic` carries.
+
+**What of that is filled in today**: the grid, the scrollback, the modes
+(the kitty keyboard flags among them), the cursor, the size, the title, the
+placed images, the printer state, the clipboard watermark, the exit and the
+last complaint — everything a reattaching reader sees. The **layout** fields (`rect`, `z_order`, `zoomed` per terminal)
 are shaped and written by nobody, so window geometry is not restored and each
 window is placed by the client's own cascade; that is M-R3, remediation topic
 R8 in [13-architecture-review.md](13-architecture-review.md), and it is stated
@@ -238,10 +267,12 @@ is what this exists to prevent (C1). The client discards history past its own
 
 Also per terminal: the **printer state and job list** (effective mode, its
 scope, capture state, byte count, and one metadata row per held job — never
-the payloads) — *shaped, and written by nobody until PRINT-1…6*. Print jobs
-are session state like scrollback, so a reattached
-client finds its frame button exactly as it left it ([04](04-terminal-emulation.md)
-WP-PRINT).
+the payloads). The mode, the capture state and the byte count are written now
+(R8), so a reattached client reports a running printer as running rather than
+as a terminal that has stopped responding; the *job list* stays shaped and
+written by nobody until PRINT-1…6. Print jobs are session state like
+scrollback, so a reattached client will find its frame button exactly as it
+left it ([04](04-terminal-emulation.md) WP-PRINT).
 
 ## Flow control
 
@@ -331,17 +362,20 @@ snapshot. Nothing in it knows about a socket, which is why all of it is tested
 without one ([09-testing.md](09-testing.md)'s unit layer).
 
 **Encoding is not sending, and the `Today` column above is the difference.**
-Of the forty-eight types in `proto::Message`, **twenty-six are live** end to
+Of the forty-nine types in `proto::Message`, **thirty-two are live** end to
 end: the handshake, sessions, attach and detach, the terminal operations a
-reader can reach from a menu, `Input`, `GridDelta`, and — since WP-16 — the
-five image messages. **Seventeen are codec-only**, and `Ping`/`Pong` are asked
-for by nothing but a test. The remaining three are wired at one end only, and
-are the interesting ones, because each reads as working until somebody asks
-which end:
-`ClientResize` has a server handler and no sender, `TermMeta` has a client
-handler and no sender, and `Error` has eight senders and no reader. That is
-the shape WP-1 chose deliberately — build the wire once, wire the ends as the
-packages arrive — and it is honest only while this column says so.
+reader can reach from a menu, `Input`, `GridDelta`, the five image messages
+(WP-16), and — since R8 — `ClipboardSet`, `PrintState`, `TermDiagnostic` and
+the three that used to be wired at one end only. **Fifteen are codec-only**,
+and `Ping`/`Pong` are asked for by nothing but a test.
+
+**Nothing is wired at one end alone any more.** Three were, and each read as
+working until somebody asked which end: `ClientResize` had a server handler and
+no sender, `TermMeta` had a client handler and no sender, and `Error` had eight
+senders and no reader. That was the shape WP-1 chose deliberately — build the
+wire once, wire the ends as the packages arrive — and R8 was the package that
+arrived for all three. The column is honest only while it is re-derived, which
+is what m-docs asks for and what the header date says was last done.
 
 Two shapes are worth knowing before writing against it. `Message` is a
 `std::variant` of every message struct, and a decoder finds the alternative
@@ -352,11 +386,18 @@ half a frame, three frames, or a frame and a half, and that problem is solved
 once here rather than in the server and the client separately.
 
 Still open in WP-1 itself: nothing. The transport (WP-2), the server's
-terminals (WP-3) and the diff engine that fills `GridDelta` (WP-4a/4b) have
-all landed, which is what moved twenty-six rows into the **live** column.
-What is open *about* this wire is R1 in
-[13-architecture-review.md](13-architecture-review.md) — the encode-side size
-bound, `ScrollbackPush` run-length validation, `Reader::count()`'s reservation,
-and `Writer::str`'s silent truncation — and R3, which needs a geometry op so a
-shrinking terminal cannot diverge a mirror that never hears about the new
-shape.
+terminals (WP-3), the diff engine that fills `GridDelta` (WP-4a/4b) and the
+reattach fields (R8) have all landed, which is what moved thirty-two rows into
+the **live** column. What is open *about* this wire is the **layout**:
+`LayoutDelta` has no producer and the snapshot's `rect`/`z_order`/`zoomed` are
+written by nobody, so each window is still placed by the client's own cascade
+(M-R3, and the one part of R8 the fix did not reach — see
+[13-architecture-review.md](13-architecture-review.md)).
+
+**Version 3 covers all of it.** R1's `ResizeOp`, tracking level and close/move
+fields shipped nowhere before R8's additions were made on top of them — the
+keyboard-flag bits, `TerminalState`'s clipboard watermark, exit state and
+diagnostic, `ClipboardSet`'s terminal id, and `TermDiagnostic` — so both sets
+are v3. The version integer exists so that two builds can tell whether they can
+talk; two numbers for a wire nobody has ever spoken would say the same thing
+twice (`proto.hpp` records the same list).

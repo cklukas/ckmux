@@ -27,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "common/grid_delta.hpp"
@@ -41,6 +42,29 @@ namespace ckm::server {
 // socket and something else on the other is a defect nothing would report.
 std::uint32_t modes_of(const ckv::term::TerminalStatus& status);
 GridCursor cursor_of(const ckv::term::TerminalStatus& status);
+
+// Child-supplied text cut to a length the wire can say, on a character
+// boundary.
+//
+// A child writes its title with OSC 2 and may write a megabyte of it. A `str`
+// field's length is two bytes, so past 65535 the codec refuses the whole
+// message — a delta or a snapshot lost to a program's choice of caption. Cut
+// here instead, at the producer, far below the field's own limit: the cost is a
+// long title shown short, which is what a reader would see anyway.
+//
+// The back-off is to a leading byte (`(b & 0xC0) != 0x80`), because a cut
+// through the middle of a UTF-8 sequence produces bytes no decoder can read as
+// text — and the string_view makes this a substring rather than a copy.
+//
+// Exposed because two producers now state a title — a delta's `Title` op and
+// the `TermMeta` that carries a terminal's marks — and two clamps a byte apart
+// would make a mirror flip between two captions, one per tick.
+std::string_view clamp_utf8(std::string_view text, std::size_t limit);
+
+// A diagnostic's kind, in the wire's own enumeration. One conversion, stated
+// once: the protocol writes its values down rather than following the
+// library's, so this is the single place the two are matched up.
+proto::DiagnosticKind wire_kind(ckv::core::TerminalDiagnostic::Kind kind);
 
 // The history as lines, read out of the borrowed flat span the emulator keeps
 // it in. `count` lines from the end — which is what "the lines that just

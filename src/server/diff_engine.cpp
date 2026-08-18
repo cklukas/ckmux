@@ -13,24 +13,6 @@ namespace {
 
 using ckv::term::TerminalStatus;
 
-// A title cut to a length the wire can say, on a character boundary.
-//
-// A child writes its title with OSC 2 and may write a megabyte of it. The
-// field's length is two bytes, so past 65535 the codec refuses the whole
-// message — a delta or a snapshot lost to a program's choice of caption. Cut
-// here instead, at the producer, far below the field's own limit: the cost is
-// a long title shown short, which is what a reader would see anyway.
-//
-// The back-off is to a leading byte (`(b & 0xC0) != 0x80`), because a cut
-// through the middle of a UTF-8 sequence produces bytes no decoder can read as
-// text — and the string_view makes this a substring rather than a copy.
-std::string_view clamp_utf8(std::string_view text, std::size_t limit) {
-    if (text.size() <= limit) return text;
-    std::size_t cut = limit;
-    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) --cut;
-    return text.substr(0, cut);
-}
-
 // The view a live terminal is diffed through: borrowed cells, and the scalars
 // beside them. Nothing here copies a grid, which is the whole of U0-b arriving
 // where it was aimed.
@@ -69,6 +51,26 @@ GridState state_of(const GridView& view) {
 
 }  // namespace
 
+std::string_view clamp_utf8(std::string_view text, std::size_t limit) {
+    if (text.size() <= limit) return text;
+    std::size_t cut = limit;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0u) == 0x80u) --cut;
+    return text.substr(0, cut);
+}
+
+proto::DiagnosticKind wire_kind(ckv::core::TerminalDiagnostic::Kind kind) {
+    using Kind = ckv::core::TerminalDiagnostic::Kind;
+    switch (kind) {
+        case Kind::LimitExceeded: return proto::DiagnosticKind::LimitExceeded;
+        case Kind::UnsupportedSequence: return proto::DiagnosticKind::UnsupportedSequence;
+        case Kind::MalformedSequence: return proto::DiagnosticKind::MalformedSequence;
+        case Kind::ChildExited: return proto::DiagnosticKind::ChildExited;
+    }
+    // Unreachable for any value the library has; stated rather than assumed,
+    // because a kind added upstream must not silently become another one.
+    return proto::DiagnosticKind::MalformedSequence;
+}
+
 std::uint32_t modes_of(const TerminalStatus& status) {
     std::uint32_t modes = 0;
     const auto set = [&modes](proto::ModeBit bit, bool on) {
@@ -91,6 +93,15 @@ std::uint32_t modes_of(const TerminalStatus& status) {
     // being inferred at the far end (ckVision's TerminalMouseTracking).
     modes |= (static_cast<std::uint32_t>(status.mouse_tracking) << proto::kMouseTrackingShift) &
              proto::kMouseTrackingMask;
+    // The kitty keyboard enhancements, above the tracking level. A mode in all
+    // but its spelling, so it rides the modes word and needs no path of its
+    // own: the emulator flags `damage.modes` when the child pushes or pops a
+    // set, and the whole word travels on every snapshot. Without it the client
+    // encoded keys the legacy way while the server told the child the
+    // enhancements were on — the fallback the child had just switched off
+    // (M-R2).
+    modes |= (static_cast<std::uint32_t>(status.keyboard_flags) << proto::kKeyboardFlagsShift) &
+             proto::kKeyboardFlagsMask;
     return modes;
 }
 
@@ -221,6 +232,18 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
                                                            : proto::PrinterState::Idle;
     state.printer_bytes = static_cast<std::uint32_t>(
         std::min<std::size_t>(status.printer_pending_bytes, 0xFFFFFFFFu));
+    // The clipboard WATERMARK and not the text (proto::TerminalState says why):
+    // a write is a live act, so what a reattaching client is given is the
+    // number that stops it replaying an old one — and stops the next real one
+    // from colliding with a watermark it never reset.
+    state.clipboard_serial = status.clipboard_serial;
+    // The newest complaint, and nothing older. The ring is the emulator's; what
+    // a view paints is its last entry, so that is what the wire carries.
+    const std::span<const ckv::core::TerminalDiagnostic> complaints = source.diagnostics();
+    if (!complaints.empty()) {
+        state.diagnostic_kind = wire_kind(complaints.back().kind);
+        state.diagnostic = std::string(clamp_utf8(complaints.back().message, proto::kMaxTitleBytes));
+    }
 
     // What the client has just been given is what it holds, and the deltas that
     // follow start again at 1. A snapshot carries no sequence of its own — that

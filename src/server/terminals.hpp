@@ -143,6 +143,38 @@ public:
     bool exit_announced() const noexcept { return exit_announced_; }
     void mark_exit_announced() noexcept { exit_announced_ = true; }
 
+    // What a reader who is not looking at this terminal has missed: a bell it
+    // rang, and output it produced (plans/05's `TermMeta` flags).
+    //
+    // Marks rather than counts, and they live HERE rather than in a client
+    // because a session outlives its clients: a bell rung into a session
+    // nobody was attached to is exactly the one a reader wants marked when they
+    // come back. Cleared when this terminal becomes the focused one, which is
+    // the moment a reader has seen what it said.
+    bool bell_marked() const noexcept { return bell_marked_; }
+    bool activity_marked() const noexcept { return activity_marked_; }
+    void mark_bell() noexcept;
+    void mark_activity() noexcept;
+    void clear_marks() noexcept;
+    // Whether the watching client has been told the marks AS THEY NOW STAND.
+    // Set by the server when it sends them and cleared by any change above, so
+    // an unchanged pair costs no message and a changed one costs exactly one —
+    // which is what keeps a terminal printing steadily from putting a `TermMeta`
+    // on the wire every tick for the whole of a build.
+    bool marks_announced() const noexcept { return marks_announced_; }
+    void note_marks_announced() noexcept { marks_announced_ = true; }
+    // Whether the last thing to change this terminal's screen was a client
+    // resizing it rather than its child saying something. Read once and
+    // cleared, on the tick.
+    //
+    // A resize damages every row — the emulator has no way to tell a reader's
+    // window from a program's output, and after a resize nothing on the old
+    // screen can be relied on — so without this, every window a reattaching
+    // client lays out would mark itself as having news the moment it appeared,
+    // and the activity marker would say "something happened here" about all of
+    // them at once.
+    bool take_client_resize() noexcept;
+
     std::span<const ckv::term::WaitHandle> wait_handles() const noexcept {
         return session_->wait_handles();
     }
@@ -174,6 +206,12 @@ private:
     std::optional<int> exit_status_;
     bool closed_ = false;
     bool exit_announced_ = false;
+    bool bell_marked_ = false;
+    bool activity_marked_ = false;
+    bool resized_by_a_client_ = false;
+    // True until a mark moves. A terminal nobody has ever marked has nothing to
+    // say, so the announcement starts as already made.
+    bool marks_announced_ = true;
 };
 
 // Every terminal this server owns.

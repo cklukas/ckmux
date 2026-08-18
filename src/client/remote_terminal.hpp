@@ -62,8 +62,12 @@ public:
     std::span<const ckv::core::TerminalRaster> rasters() const noexcept override {
         return mirror_.rasters();
     }
+    // What this terminal last had to complain about, as the server said it.
+    // One entry rather than the emulator's ring: what a view paints is the most
+    // recent complaint, and a transport that shipped the whole ring would
+    // re-send entries the client already holds every time one arrived.
     std::span<const ckv::core::TerminalDiagnostic> diagnostics() const noexcept override {
-        return {};
+        return mirror_.diagnostics();
     }
     const ckv::core::TerminalCapabilityProfile& profile() const noexcept override {
         return profile_;

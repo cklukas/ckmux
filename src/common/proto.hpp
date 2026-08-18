@@ -56,6 +56,18 @@ namespace ckm::proto {
 // `CloseTerminal`'s `force`/`grace_seconds` with `MoveTerminal`'s
 // `to_new_session`, which changed the wire when close-with-grace landed and
 // were still riding on v2.
+//
+// v3 also carries what a reattaching reader was losing, and it EXTENDS v3
+// rather than bumping to v4 because v3 has shipped nowhere: the version integer
+// exists so two builds can tell whether they can talk, and two numbers for a
+// wire nobody has ever spoken would say the same thing twice. What was added
+// (R8 in 13-architecture-review): the kitty keyboard flags as five bits of
+// `ModesOp`'s word, beside the mouse-tracking level; `TerminalState`'s
+// `clipboard_serial`, its `exited`/`exit_status`/`hold`, and its latest
+// diagnostic; `ClipboardSet`'s terminal id, so a write can be routed into the
+// terminal that asked for it rather than guessed at; and `TermDiagnostic`, the
+// message that carries a terminal's newest complaint while a client is
+// watching.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -166,6 +178,7 @@ enum class MessageType : std::uint16_t {
     ImagePlace = 0x0309,
     ImageRemove = 0x030A,
     ClipboardSet = 0x030B,
+    TermDiagnostic = 0x030C,
 
     // --- 0x04xx events, errors, printer ---
     Error = 0x0401,
@@ -185,6 +198,17 @@ enum class ClientKind : std::uint8_t { Ui = 0, Cli = 1 };
 // latest client always wins, and the old one is told rather than dropped
 // silently (plans/03).
 enum class DetachReason : std::uint8_t { User = 0, Takeover = 1, SessionKilled = 2, ServerShutdown = 3 };
+
+// What a terminal's complaint was about. Mirrors
+// `ckv::core::TerminalDiagnostic::Kind` one for one, and is written down here
+// for the reason `Rect` is: the wire format is stated once, in this file, and
+// does not silently follow a change in the library's own enum.
+enum class DiagnosticKind : std::uint8_t {
+    LimitExceeded = 0,
+    UnsupportedSequence = 1,
+    MalformedSequence = 2,
+    ChildExited = 3,
+};
 
 enum class PrinterScope : std::uint8_t { Terminal = 0, Session = 1, Global = 2 };
 enum class PrinterMode : std::uint8_t { Ask = 0, Capture = 1, Off = 2 };
@@ -296,6 +320,23 @@ enum class ModeBit : std::uint32_t {
 inline constexpr std::uint32_t kMouseTrackingShift = 7;
 inline constexpr std::uint32_t kMouseTrackingMask = 0b11u << kMouseTrackingShift;
 
+// The kitty keyboard enhancements the child has on, as five bits above the
+// tracking level — `ckv::core::TerminalKeyboardFlags`, unshifted, one bit each.
+//
+// They live in the modes word because that is what they are. ckVision says the
+// same thing from its side: the flags are "modes in all but their spelling,
+// being switches a program turns on for as long as it needs them and puts back
+// on the way out", and its `TerminalDamage::modes` fires when they move — so a
+// delta transport carries them for free and a snapshot carries the whole set,
+// which is exactly the two paths a mode already has here.
+//
+// Without them the client's `TerminalView` encoded every key the legacy way
+// while the server's emulator answered the child's re-probe with the flags ON:
+// the program had turned the legacy fallback off and was being sent it anyway
+// (M-R2 in 13-architecture-review).
+inline constexpr std::uint32_t kKeyboardFlagsShift = 9;
+inline constexpr std::uint32_t kKeyboardFlagsMask = 0b11111u << kKeyboardFlagsShift;
+
 struct TitleOp {
     std::string title;
 
@@ -380,10 +421,54 @@ struct TerminalState {
     std::uint32_t printer_bytes = 0;
     std::vector<PrintJobInfo> print_jobs;
 
+    // --- What a reattaching reader was losing (R8) -------------------------
+
+    // The clipboard WATERMARK, and deliberately not the text.
+    //
+    // A child's OSC 52 is a live act: "put this on the reader's clipboard now".
+    // The text therefore travels only on the live path (`ClipboardSet`), and a
+    // snapshot carries the number so that a client which reattaches neither
+    // replays an old write over whatever its reader has copied since, nor
+    // treats the next real one as something it has already seen. The serial is
+    // monotonic per terminal and is never reset — a mirror that started over at
+    // zero would let the write after a reattach collide with a watcher's own
+    // high-water mark and be dropped in silence (ckVision's `clipboard_serial`
+    // says the same from the other end).
+    std::uint64_t clipboard_serial = 0;
+    // Whether the child has ended, what it ended with, and whether the terminal
+    // is being kept anyway. Without these, a snapshot could not restate what a
+    // `TermClosed` had already said, so `TerminalMirror::adopt` had to preserve
+    // its own knowledge and a server that genuinely restarted a terminal had no
+    // way to say so (M-R4). A terminal that has exited and is still in a
+    // session IS a held one, which is what `hold` reports.
+    std::uint8_t exited = 0;
+    std::int32_t exit_status = 0;
+    std::uint8_t hold = 0;
+    // The terminal's newest complaint, and nothing older. The emulator keeps a
+    // bounded ring; a view paints the most recent entry, so that is what a
+    // reattaching client needs and the rest would be bytes nobody reads. Empty
+    // text means the terminal has never complained.
+    DiagnosticKind diagnostic_kind = DiagnosticKind::MalformedSequence;
+    std::string diagnostic;
+
     friend bool operator==(const TerminalState&, const TerminalState&) = default;
 };
 
-// What a terminal's `flags` byte carries.
+// What a terminal's `flags` byte carries: what a reader who is not looking at
+// this terminal has missed.
+//
+// Both are MARKS rather than events, and both mean "since the reader was last
+// in this terminal". `Bell` is set when the child rings (BEL); `Activity` when
+// the child writes to a terminal that is not the focused one — output on the
+// terminal a reader is already watching is not news, it is the thing they are
+// watching. Both are cleared when that terminal becomes the focused one, which
+// is the moment the reader has seen what they said.
+//
+// A mark and not a count, because what a window marker answers is "is there
+// anything here I have not seen?" — and a count of bells while a reader was
+// away is a number nobody acts on. The emulator's own `bell_serial` is a count
+// for a different consumer (a host that flashes every bell as it happens); this
+// is the multiplexer's question.
 enum class TermMetaFlag : std::uint8_t { Bell = 1u << 0, Activity = 1u << 1 };
 
 struct Snapshot {
@@ -744,10 +829,37 @@ struct ImageRemove {
     friend bool operator==(const ImageRemove&, const ImageRemove&) = default;
 };
 
+// A child asked to put text on the reader's clipboard (OSC 52) and its
+// terminal's policy allowed it.
+//
+// The terminal travels with the text although a reader has only one clipboard:
+// every other terminal-scoped message here names its terminal, and the client
+// routes this one into that terminal's mirror so the write reaches the reader
+// through the same path a local terminal's does — `TerminalView` sees the
+// serial move and hands the text to its host (plans/07 seam 2). A message that
+// named no terminal could only be routed by guessing which one had asked.
 struct ClipboardSet {
     static constexpr MessageType kType = MessageType::ClipboardSet;
+    std::uint64_t term = 0;
     std::string text;
     friend bool operator==(const ClipboardSet&, const ClipboardSet&) = default;
+};
+
+// What a terminal has just had to complain about: a sequence it does not
+// implement, one that was malformed, a limit a child ran into.
+//
+// The newest one, one message at a time, rather than the emulator's whole ring.
+// A ring is a thing a host reads when it wants to; a transport that shipped it
+// whole would re-send entries the client already holds on every change, and the
+// view that shows this paints the most recent entry (ckVision's
+// `TerminalSubsession::diagnostics`). Sent while a client is watching; the
+// snapshot carries the same one entry for a client that has just arrived.
+struct TermDiagnostic {
+    static constexpr MessageType kType = MessageType::TermDiagnostic;
+    std::uint64_t term = 0;
+    DiagnosticKind kind = DiagnosticKind::MalformedSequence;
+    std::string text;
+    friend bool operator==(const TermDiagnostic&, const TermDiagnostic&) = default;
 };
 
 // What an `Error` code means. Non-fatal by definition: the connection survives,
@@ -846,8 +958,8 @@ using Message =
                  MoveTerminal, MoveResize, Raise, FocusTerm, ZoomTerm, RenameTerminal, Input,
                  PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta, GridDelta,
                  ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,
-                 ImageRemove, ClipboardSet, Error, SetPrinterPolicy, PrintState, PrintJobAdded,
-                 PrintJobFetch, PrintJobData, PrintJobDiscard>;
+                 ImageRemove, ClipboardSet, TermDiagnostic, Error, SetPrinterPolicy, PrintState,
+                 PrintJobAdded, PrintJobFetch, PrintJobData, PrintJobDiscard>;
 
 MessageType type_of(const Message& message);
 

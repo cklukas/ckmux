@@ -693,3 +693,273 @@ CK_TEST(a_host_that_shows_no_graphics_opens_children_that_are_told_not_to_draw) 
     server.terminals().close_all();
     forget(socket);
 }
+
+// --- R8: what a reattaching reader used to lose ----------------------------
+
+CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_dead) {
+    // The one scenario R8 exists for, over a real socket: a session where a
+    // child has turned the kitty keyboard protocol on, put text on the
+    // clipboard, started the printer, and — in the terminal beside it — ended
+    // with a status the reader is being shown. A client goes away and comes
+    // back, which is what a multiplexer is FOR, and every one of those facts
+    // has to survive the round trip.
+    //
+    // Before this each of them died differently: the flags were never
+    // transported at all while the server answered the child's re-probe with
+    // them ON (M-R2), the clipboard write was enabled toward the child and then
+    // dropped (M-R1), the printer had no client-side field, and the snapshot
+    // had no way to say a child had exited so the mirror had to remember it
+    // (M-R4).
+    const std::filesystem::path socket = private_socket("reattach-state");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& living = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& dying = server.open_terminal(0, spec_running("exit 7"));
+    const ckm::server::TerminalId living_id = living.id();
+    const ckm::server::TerminalId dead_id = dying.id();
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    // The child asks for the kitty protocol, puts "hello" on the clipboard, and
+    // starts the printer controller. Written straight into the emulator, which
+    // is what the child's PTY would have delivered.
+    living.session().feed_output("\x1b[>1u\x1b]52;c;aGVsbG8=\x07\x1b[5i");
+
+    ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(living_id);
+    ckm::client::RemoteTerminalSubsession* gone = watcher.session.terminal(dead_id);
+    CK_CHECK(mirror != nullptr);
+    CK_CHECK(gone != nullptr);
+    if (mirror == nullptr || gone == nullptr) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+
+    // Live, first — a reattach that restored what was never delivered would be
+    // proving the wrong thing.
+    CK_CHECK(run_until(server, clock, watcher, [&] {
+        return mirror->status().keyboard_flags ==
+                   ckv::core::TerminalKeyboardFlags::DisambiguateEscapeCodes &&
+               mirror->mirror().clipboard_text() == "hello" &&
+               mirror->status().printer_controller_active;
+    }));
+    CK_CHECK(run_until(server, clock, watcher, [&] { return gone->mirror().exited(); }));
+    const std::uint64_t watermark = mirror->status().clipboard_serial;
+    CK_CHECK(watermark != 0U);
+
+    // The detach, and the reattach. The programs carry on without either.
+    watcher.session.request(ckm::proto::Detach{});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return !watcher.session.attached(); }));
+    const std::uint64_t attachments = watcher.session.attachments();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return watcher.session.attachments() > attachments; }));
+
+    // The keyboard the child is expecting, so the next key it is sent is
+    // spelled the way it asked for.
+    CK_CHECK(mirror->status().keyboard_flags ==
+             ckv::core::TerminalKeyboardFlags::DisambiguateEscapeCodes);
+    // The printer, which is the one that reads as a fault rather than as a
+    // missing feature: with the controller on, the child's output is going to
+    // the printer and not to the screen.
+    CK_CHECK(mirror->status().printer_controller_active);
+    // The clipboard watermark stands and no write is replayed: the text
+    // deliberately does not ride the snapshot, so a reader's own clipboard is
+    // left exactly as they left it.
+    CK_CHECK(mirror->status().clipboard_serial >= watermark);
+    CK_CHECK(mirror->mirror().clipboard_text().empty());
+    // And the dead stay dead. A window a reader could type into with nothing on
+    // the other end is the failure this one prevents.
+    CK_CHECK(gone->mirror().exited());
+    CK_CHECK(gone->mirror().held());
+    CK_CHECK(gone->state() == ckv::core::TerminalSubsessionState::Exited);
+    CK_CHECK(gone->status().exit_code.has_value());
+    if (gone->status().exit_code.has_value()) CK_CHECK(*gone->status().exit_code == 7);
+
+    // A write after the reattach still arrives, which is the half that a
+    // watermark reset would have broken in silence: the client's own high-water
+    // mark would have been ahead of the number the next write carried.
+    //
+    // The printer controller is turned off first, because while it is on the
+    // child's output goes to the printer and not to the parser — which is the
+    // very fact asserted two lines above.
+    living.session().feed_output("\x1b[4i\x1b]52;c;d29ybGQ=\x07");
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return mirror->mirror().clipboard_text() == "world"; }));
+    CK_CHECK(mirror->status().clipboard_serial > watermark);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_terminal_the_reader_is_not_in_marks_what_they_missed) {
+    // m-replay's bell and activity, and the focus they are defined against.
+    // "Activity" is output in a terminal the reader is NOT in — the tmux
+    // meaning, and the only one that makes a window marker worth looking at —
+    // and the server's notion of where the reader is is the terminal their
+    // input goes to, which is the only statement of focus this protocol
+    // carries (`Raise` and `FocusTerm` encode and nothing sends them).
+    const std::filesystem::path socket = private_socket("marks");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& here = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& elsewhere = server.open_terminal(0, spec_running("sleep 30"));
+    const ckm::server::TerminalId here_id = here.id();
+    const ckm::server::TerminalId elsewhere_id = elsewhere.id();
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    ckm::client::RemoteTerminalSubsession* mine = watcher.session.terminal(here_id);
+    ckm::client::RemoteTerminalSubsession* theirs = watcher.session.terminal(elsewhere_id);
+    CK_CHECK(mine != nullptr);
+    CK_CHECK(theirs != nullptr);
+    if (mine == nullptr || theirs == nullptr) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+
+    // The reader types in the first terminal, which is what puts them in it.
+    // Whatever mark it carried from being opened beside a focused one clears,
+    // and from here on the second terminal is the one nobody is in — which is
+    // what the next step actually proves, since a server whose focus never
+    // moved would go on clearing the second one's marks instead of setting
+    // them.
+    ckm::proto::Input keystroke;
+    keystroke.term = here_id;
+    keystroke.bytes = " ";
+    watcher.session.request(keystroke);
+    CK_CHECK(run_until(server, clock, watcher, [&] { return !mine->mirror().activity_marked(); }));
+
+    // The other one rings and prints while the reader is not in it.
+    elsewhere.session().feed_output("\aa line the reader did not see\r\n");
+    CK_CHECK(run_until(server, clock, watcher, [&] {
+        return theirs->mirror().bell_marked() && theirs->mirror().activity_marked();
+    }));
+    // And the terminal the reader IS in does not mark itself: output there is
+    // not news, it is the thing they are watching.
+    here.session().feed_output("a line the reader is looking at\r\n");
+    for (int pass = 0; pass < 8; ++pass) {
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        watcher.pump();
+    }
+    CK_CHECK(!mine->mirror().activity_marked());
+
+    // The reader goes there; the marks go with them.
+    keystroke.term = elsewhere_id;
+    watcher.session.request(keystroke);
+    CK_CHECK(run_until(server, clock, watcher, [&] {
+        return !theirs->mirror().bell_marked() && !theirs->mirror().activity_marked();
+    }));
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_host_terminal_that_grows_says_so_while_the_client_is_attached) {
+    // `ClientResize` had a server handler and no sender at all: the desktop and
+    // its cell metric travelled once, at attach time, so a reader who resized
+    // their window — or changed its font — kept the old metric until they
+    // detached and came back. The metric is what a child's `TIOCSWINSZ` pixel
+    // fields and its XTWINOPS answers are derived from, which is what decides
+    // the size of every picture it draws.
+    const std::filesystem::path socket = private_socket("client-resize");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 0U);
+
+    // The reader's own window, bigger and with larger cells under it.
+    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::Size{10, 20});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 1U);
+    // Idempotent: the client's loop asks on every pass, and a message per pass
+    // would be a resize storm nobody asked for.
+    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::Size{10, 20});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 1U);
+
+    // The server took it, and the proof is what a terminal is told next: its
+    // own size arrives as a `MoveResize` in CELLS, and the pixels the child is
+    // given are those cells times the metric the client last declared.
+    ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(id);
+    CK_CHECK(mirror != nullptr);
+    if (mirror == nullptr) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    mirror->resize(ckv::Size{50, 10}, ckv::Size{10, 20});
+    CK_CHECK(run_until(server, clock, watcher, [&] {
+        const ckm::server::Terminal* held = server.terminals().find(id);
+        return held != nullptr && held->cell_pixels() == ckv::Size{10, 20};
+    }));
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_request_the_server_refuses_reaches_the_reader) {
+    // "A request is always answered" was true of the server and false of
+    // everything after it: `Error` had eight senders and no reader, because
+    // `ServerSession::handle` did not claim it and the client's loop discarded
+    // what it did not understand. A reader who asked for something impossible
+    // was told nothing, which looks exactly like a server that has hung.
+    const std::filesystem::path socket = private_socket("refusal");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    (void)server.open_terminal(0, spec_running("sleep 30"));
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    ckm::proto::Error refused;
+    bool told = false;
+    watcher.session.on_error = [&refused, &told](const ckm::proto::Error& error) {
+        refused = error;
+        told = true;
+    };
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    // A terminal this server has never had. The id is not recycled, so this can
+    // only ever be a stale client — which is precisely the case a reader needs
+    // told rather than swallowed.
+    ckm::proto::MoveResize impossible;
+    impossible.term = 9999;
+    impossible.rect.width = 40;
+    impossible.rect.height = 10;
+    watcher.session.request(impossible);
+    CK_CHECK(run_until(server, clock, watcher, [&] { return told; }));
+    CK_CHECK(refused.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NoSuchTerminal));
+    CK_CHECK(refused.context == "MoveResize");
+    CK_CHECK(!refused.human.empty());
+    // And the session did not hand it on as something it failed to understand:
+    // an `Error` is claimed here now, not left for the host to discard.
+    CK_CHECK(watcher.count_of<ckm::proto::Error>() == 0U);
+
+    server.terminals().close_all();
+    forget(socket);
+}

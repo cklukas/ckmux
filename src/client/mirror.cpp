@@ -22,6 +22,21 @@ ckv::core::TerminalDamage everything(ckv::Size cells) {
     return damage;
 }
 
+// A complaint's kind, back from the wire's own enumeration into the library's.
+// The protocol writes its values down rather than following ckVision's
+// (proto::DiagnosticKind), so the two are matched up here and in the server's
+// `wire_kind` and nowhere else.
+ckv::core::TerminalDiagnostic::Kind kind_of(proto::DiagnosticKind kind) {
+    using Kind = ckv::core::TerminalDiagnostic::Kind;
+    switch (kind) {
+        case proto::DiagnosticKind::LimitExceeded: return Kind::LimitExceeded;
+        case proto::DiagnosticKind::UnsupportedSequence: return Kind::UnsupportedSequence;
+        case proto::DiagnosticKind::MalformedSequence: return Kind::MalformedSequence;
+        case proto::DiagnosticKind::ChildExited: return Kind::ChildExited;
+    }
+    return Kind::MalformedSequence;
+}
+
 }  // namespace
 
 bool TerminalMirror::adopt(const proto::TerminalState& state) {
@@ -58,6 +73,43 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
                                state.cursor.visible, state.cursor.blink};
     state_.modes = state.modes;
     state_.title = state.title;
+    bell_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
+    activity_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
+    printer_active_ = state.printer_state == proto::PrinterState::Capturing;
+    printer_bytes_ = state.printer_bytes;
+    printer_jobs_ = state.print_jobs.size();
+    // The clipboard WATERMARK, and no text with it — the server sends none in a
+    // snapshot on purpose (proto::TerminalState). A reattaching client that was
+    // handed the last text would put it on its reader's system clipboard over
+    // whatever they had copied since, minutes after the child asked; one that
+    // took no watermark would meet the NEXT write with a number a watcher had
+    // already seen and drop it. So: the number, never the text.
+    //
+    // Never backwards, because a consumer's comparison is a high-water mark and
+    // a serial that went down could collide with one. The server's own is
+    // monotonic per terminal and this mirror only ever advances by one per
+    // write, so the max is the same number in every real case and an invariant
+    // rather than an argument in every case.
+    clipboard_serial_ = std::max(clipboard_serial_, state.clipboard_serial);
+    clipboard_text_.clear();
+    diagnostics_.clear();
+    if (!state.diagnostic.empty())
+        diagnostics_.push_back(
+            ckv::core::TerminalDiagnostic{kind_of(state.diagnostic_kind), state.diagnostic});
+    // An exit is a one-way door, and the snapshot now states which side of it
+    // this terminal is on. A snapshot that says the child ended is adopted
+    // whole — status and hold with it — and one that says nothing leaves what a
+    // `TermClosed` already said, because ids are never reused and a terminal
+    // cannot come back to life under the same one (`open()` is the seam for a
+    // terminal that genuinely starts again). Before the field existed, `adopt`
+    // cleared the exit state and a dead shell's window came back alive-looking
+    // after every reattach: no banner, no exit code, and a terminal a reader
+    // could type into with nothing on the other end (M-R4).
+    if (state.exited != 0) {
+        exited_ = true;
+        hold_ = state.hold != 0;
+        exit_status_ = state.exit_status;
+    }
 
     damage_ = everything(state_.cells);
     // The pictures are restated after every snapshot (the server's
@@ -71,23 +123,14 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
     // the next delta's seq of 1 means something (plans/05).
     sequence_ = 0;
     needs_snapshot_ = false;
-    // The exit state deliberately survives.
-    //
-    // A snapshot replaces the SCREEN. Whether the child is still running is a
-    // fact about a process, and `proto::TerminalState` carries no field for it
-    // (common/proto.hpp) — so a snapshot cannot restate what a `TermClosed`
-    // already said, and clearing it here brought a dead shell's window back
-    // alive-looking after every reattach: no banner, no exit code, and a
-    // terminal a reader could type into with nothing on the other end.
+    // A snapshot that states no exit leaves the exit state alone, above.
     //
     // `open()` is the seam for a terminal that genuinely starts again: it
     // clears all three. That is sound because the server mints terminal ids
     // monotonically and never reuses one (server/terminals.hpp), so a
     // `TermOpened` for an id is the only statement that a terminal by that id
     // is new — and a mirror never outlives the connection it was filled over
-    // (`ServerSession::connection_lost` drops them all). When the snapshot
-    // grows an exit field, `adopt` takes the state from `state` and this
-    // becomes the fallback for a server that did not send one.
+    // (`ServerSession::connection_lost` drops them all).
     return true;
 }
 
@@ -167,6 +210,14 @@ void TerminalMirror::open(ckv::Size cells) {
     exited_ = false;
     hold_ = false;
     exit_status_.reset();
+    // And nothing a reader has missed, because there was nothing here to miss:
+    // this terminal is a different program behind the same mirror.
+    bell_marked_ = false;
+    activity_marked_ = false;
+    printer_active_ = false;
+    printer_bytes_ = 0;
+    printer_jobs_ = 0;
+    diagnostics_.clear();
 }
 
 void TerminalMirror::apply(const proto::TermMeta& meta) {
@@ -174,6 +225,30 @@ void TerminalMirror::apply(const proto::TermMeta& meta) {
         state_.title = meta.title;
         damage_.title = true;
     }
+    // The marks are assigned, not accumulated: the message states them as they
+    // now stand, and the one that says a reader has caught up is the same
+    // message with the bits off.
+    bell_marked_ = (meta.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
+    activity_marked_ = (meta.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
+}
+
+void TerminalMirror::apply(const proto::ClipboardSet& clipboard) {
+    clipboard_text_ = clipboard.text;
+    // Forward, always. What the number IS does not matter to anything here —
+    // only that it differs from the one a consumer last acted on, and that it
+    // never repeats one (mirror.hpp).
+    ++clipboard_serial_;
+}
+
+void TerminalMirror::apply(const proto::PrintState& printing) {
+    printer_active_ = printing.state == proto::PrinterState::Capturing;
+    printer_bytes_ = printing.bytes;
+    printer_jobs_ = printing.jobs;
+}
+
+void TerminalMirror::apply(const proto::TermDiagnostic& said) {
+    diagnostics_.clear();
+    diagnostics_.push_back(ckv::core::TerminalDiagnostic{kind_of(said.kind), said.text});
 }
 
 void TerminalMirror::apply(const proto::TermClosed& closed) {

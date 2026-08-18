@@ -41,6 +41,12 @@ struct FakeServer {
         value.cells = ckv::Size{40, 8};
         value.cell_pixels = ckv::Size{9, 18};
         value.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
+        // What a real server's terminals are opened with when the reader's
+        // `[terminal] osc52` is on and the printer is not off (server/
+        // terminals.cpp): the child may put text on the clipboard and may
+        // capture print output, and the server decides what to do with both.
+        value.clipboard_policy = ckv::core::TerminalClipboardPolicy::AllowWrite;
+        value.printer_policy = ckv::core::TerminalPrinterPolicy::Capture;
         return value;
     }();
     ckv::term::TerminalSubsessionOptions options = [] {
@@ -63,6 +69,29 @@ struct FakeServer {
         (void)engine.fill_history(id, state, terminal, ckm::proto::kSnapshotPayloadBudget);
         terminal.clear_damage();
         return state;
+    }
+
+    // The same snapshot a server states for a terminal whose child has ended
+    // and which it is keeping anyway. The exit fields are the SERVER's rather
+    // than the differ's — it is the server that knows a terminal still in a
+    // session with a dead child is a held one (server.cpp's `send_snapshot`) —
+    // so they are filled here the same way, and the reattach cases below drive
+    // the wire instead of a mirror's memory.
+    ckm::proto::TerminalState snapshot_of_a_held_terminal(int status) {
+        ckm::proto::TerminalState state = snapshot();
+        state.exited = 1;
+        state.exit_status = status;
+        state.hold = 1;
+        return state;
+    }
+
+    // The clipboard message a server sends when the child asked for one: the
+    // terminal it came from, and the text the emulator decoded and sanitized.
+    ckm::proto::ClipboardSet clipboard_write() {
+        ckm::proto::ClipboardSet clipboard;
+        clipboard.term = id;
+        clipboard.text = terminal.snapshot().clipboard_text;
+        return clipboard;
     }
 
     // What the child printed, as the messages a client would receive.
@@ -416,11 +445,11 @@ CK_TEST(an_exited_child_is_an_exited_terminal_to_the_view) {
 }
 
 CK_TEST(a_snapshot_does_not_bring_an_exited_child_back_to_life) {
-    // Reattaching hands a client every terminal whole, and the wire has no
-    // field for "the child exited" (proto::TerminalState) — so a mirror that
-    // let `adopt` clear what a `TermClosed` had already told it showed a dead
-    // shell as a live terminal after every reattach: no banner, no status, and
-    // a window a reader could type into with nothing on the other end.
+    // Reattaching hands a client every terminal whole. Before the snapshot
+    // carried the child's fate, a mirror that let `adopt` clear what a
+    // `TermClosed` had already told it showed a dead shell as a live terminal
+    // after every reattach: no banner, no status, and a window a reader could
+    // type into with nothing on the other end (M-R4).
     FakeServer server;
     server.child_printed("done\r\n");
     RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
@@ -435,22 +464,210 @@ CK_TEST(a_snapshot_does_not_bring_an_exited_child_back_to_life) {
     CK_CHECK(remote.state() == ckv::core::TerminalSubsessionState::Exited);
 
     // The reattach: the same terminal, stated whole, exactly as a server states
-    // it to a client that has come back.
-    remote.mirror().adopt(server.snapshot());
+    // it to a client that has come back — the exit included, which is what
+    // makes the wire rather than the mirror's memory the thing being trusted.
+    remote.mirror().adopt(server.snapshot_of_a_held_terminal(3));
     CK_CHECK(remote.state() == ckv::core::TerminalSubsessionState::Exited);
     CK_CHECK(remote.mirror().exited());
+    CK_CHECK(remote.mirror().held());
     CK_CHECK(remote.status().exit_code.has_value());
     if (remote.status().exit_code.has_value()) CK_CHECK(*remote.status().exit_code == 3);
     // And the screen still came from the snapshot rather than from before it.
     CK_CHECK(mirror_text(remote.mirror()).find("done") != std::string::npos);
+
+    // A client that was never told at all — one that attached AFTER the child
+    // ended, which is the ordinary reattach — learns it from the same snapshot.
+    // Nothing but the wire has spoken to this mirror.
+    RemoteTerminalSubsession arriving(server.id, server.profile, nullptr);
+    arriving.mirror().adopt(server.snapshot_of_a_held_terminal(3));
+    CK_CHECK(arriving.state() == ckv::core::TerminalSubsessionState::Exited);
+    CK_CHECK(arriving.mirror().held());
+    CK_CHECK(arriving.status().exit_code.has_value());
+    if (arriving.status().exit_code.has_value()) CK_CHECK(*arriving.status().exit_code == 3);
+
+    // A snapshot that states no exit leaves what a `TermClosed` said, because
+    // an exit is a one-way door and ids are never reused: the server has no way
+    // to say "alive again" about a terminal by the same id, so silence must not
+    // be read as one.
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(remote.mirror().exited());
 
     // The one way back to alive is the server announcing a terminal, which is
     // sound because ids are never reused: a `TermOpened` really is a different
     // program behind the same mirror.
     remote.mirror().open(ckv::Size{40, 8});
     CK_CHECK(!remote.mirror().exited());
+    CK_CHECK(!remote.mirror().held());
     CK_CHECK(!remote.status().exit_code.has_value());
     CK_CHECK(remote.state() != ckv::core::TerminalSubsessionState::Exited);
+}
+
+CK_TEST(the_keys_a_view_encodes_follow_the_kitty_flags_the_child_asked_for) {
+    // M-R2, from the end that matters: the client encodes the keys, so a client
+    // that was never told the child had switched the legacy fallback off sends
+    // it the legacy encoding — and the server, meanwhile, answers the child's
+    // re-probe with the enhancements ON. A bare Escape is the cheapest place to
+    // see it: under the protocol it is `CSI 27 u`, and the whole reason a
+    // program turns the protocol on is to tell that apart from the start of a
+    // sequence.
+    FakeServer server;
+    std::vector<ckm::proto::Message> sent;
+    RemoteTerminalSubsession remote(server.id, server.profile,
+                                    [&sent](const ckm::proto::Message& message) {
+                                        sent.push_back(message);
+                                    });
+    remote.mirror().adopt(server.snapshot());
+
+    ckv::ui::RoleRegistry registry;
+    ckv::ui::StandardRoles roles = ckv::ui::intern_standard_roles(registry);
+    ckv::ui::Theme theme = ckv::ui::make_classic_theme(registry, roles);
+    ckv::widgets::TerminalView view(remote);
+    view.set_context(ckv::ui::Context{&theme, &registry, nullptr});
+    view.set_bounds(ckv::Rect{0, 0, 40, 8});
+
+    ckv::KeyEvent escape;
+    escape.chord.key = ckv::Key::Escape;
+    sent.clear();  // the view's own resize has already been sent
+    CK_CHECK(view.on_key(escape));
+    CK_CHECK(!sent.empty());
+    if (!sent.empty()) {
+        const auto* input = std::get_if<ckm::proto::Input>(&sent.back());
+        CK_CHECK(input != nullptr);
+        if (input != nullptr) CK_CHECK(input->bytes == "\x1b");
+    }
+
+    // The child pushes "disambiguate escape codes"; the server states the
+    // change in the modes word; the same keystroke now encodes the other way.
+    sent.clear();
+    server.child_printed("\x1b[>1u");
+    for (const ckm::proto::GridDelta& delta : server.tick()) CK_CHECK(remote.mirror().apply(delta));
+    CK_CHECK(remote.status().keyboard_flags ==
+             ckv::core::TerminalKeyboardFlags::DisambiguateEscapeCodes);
+    CK_CHECK(view.on_key(escape));
+    CK_CHECK(!sent.empty());
+    if (!sent.empty()) {
+        const auto* input = std::get_if<ckm::proto::Input>(&sent.back());
+        CK_CHECK(input != nullptr);
+        if (input != nullptr) CK_CHECK(input->bytes == "\x1b[27u");
+    }
+
+    // And a client that arrives later is told the same thing by the snapshot
+    // rather than having to have watched the change go past.
+    RemoteTerminalSubsession arriving(server.id, server.profile, nullptr);
+    arriving.mirror().adopt(server.snapshot());
+    CK_CHECK(arriving.status().keyboard_flags ==
+             ckv::core::TerminalKeyboardFlags::DisambiguateEscapeCodes);
+}
+
+CK_TEST(a_reattach_keeps_the_clipboard_watermark_and_replays_no_write) {
+    // M-R1's serial rule. The text of a clipboard write travels live and only
+    // live: a snapshot that carried it would, on every reattach, put a child's
+    // text over whatever its reader had copied since — minutes later, with
+    // nobody asking. What the snapshot carries instead is the WATERMARK, so
+    // that the next real write cannot land on a number a watcher has already
+    // seen and be dropped in silence.
+    FakeServer server;
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(remote.status().clipboard_serial == 0U);
+
+    // The child asks; the server forwards the text once.
+    server.child_printed("\x1b]52;c;aGVsbG8=\x07");  // "hello"
+    remote.mirror().apply(server.clipboard_write());
+    CK_CHECK(remote.snapshot().clipboard_text == "hello");
+    const std::uint64_t after_the_write = remote.status().clipboard_serial;
+    CK_CHECK(after_the_write != 0U);
+
+    // The reattach. The watermark stands — it never goes backwards — and there
+    // is no text behind it, so a view built over this mirror with a watermark
+    // of its own at zero asks once and is given nothing to put anywhere.
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(remote.status().clipboard_serial >= after_the_write);
+    CK_CHECK(remote.snapshot().clipboard_text.empty());
+
+    // And the write after the reattach still moves the number, which is the
+    // half a reset watermark would have broken.
+    server.child_printed("\x1b]52;c;d29ybGQ=\x07");  // "world"
+    remote.mirror().apply(server.clipboard_write());
+    CK_CHECK(remote.status().clipboard_serial > after_the_write);
+    CK_CHECK(remote.snapshot().clipboard_text == "world");
+}
+
+CK_TEST(a_reattached_terminal_reports_the_printer_and_the_last_complaint) {
+    // m-replay's other two. The printer is the one that a reader would notice
+    // as a fault rather than as a missing feature: while the controller is on,
+    // the child's output goes to the printer and NOT to the screen, so a client
+    // that reported "idle" after a reattach would leave them watching a
+    // terminal that has apparently stopped responding.
+    FakeServer server;
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(!remote.status().printer_controller_active);
+    CK_CHECK(remote.diagnostics().empty());
+
+    // The complaint first and the printer second, because the controller
+    // swallows everything a child writes after it — which is the whole reason
+    // a reader has to be told it is on.
+    server.child_printed("\x1b]99;x\x07");  // an OSC this terminal does not implement
+    server.child_printed("\x1b[5i");        // MC: the printer controller on
+
+    // Live: the two messages a server sends off the printer and diagnostics
+    // damage flags.
+    ckm::proto::PrintState printing;
+    printing.term = server.id;
+    printing.state = ckm::proto::PrinterState::Capturing;
+    remote.mirror().apply(printing);
+    ckm::proto::TermDiagnostic said;
+    said.term = server.id;
+    said.kind = ckm::proto::DiagnosticKind::UnsupportedSequence;
+    said.text = "unsupported child OSC sequence";
+    remote.mirror().apply(said);
+    CK_CHECK(remote.status().printer_controller_active);
+    CK_CHECK(remote.diagnostics().size() == 1U);
+
+    // And after a reattach, from the snapshot alone.
+    RemoteTerminalSubsession arriving(server.id, server.profile, nullptr);
+    arriving.mirror().adopt(server.snapshot());
+    CK_CHECK(arriving.status().printer_controller_active);
+    CK_CHECK(arriving.diagnostics().size() == 1U);
+    if (!arriving.diagnostics().empty())
+        CK_CHECK(arriving.diagnostics().front().kind ==
+                 ckv::core::TerminalDiagnostic::Kind::UnsupportedSequence);
+    // The snapshot's copy is what the seam hands a view, so it is the same
+    // answer either way round.
+    CK_CHECK(arriving.snapshot().diagnostics.size() == 1U);
+}
+
+CK_TEST(a_mark_the_server_sends_is_the_mark_the_mirror_holds) {
+    // `TermMeta`'s flags are marks — "since the reader was last in this
+    // terminal" — so they are ASSIGNED rather than accumulated: the message
+    // that says a reader has caught up is the same message with the bits off.
+    FakeServer server;
+    server.child_printed("\x1b]0;a caption\a");
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().adopt(server.snapshot());
+    CK_CHECK(!remote.mirror().bell_marked());
+    CK_CHECK(!remote.mirror().activity_marked());
+
+    ckm::proto::TermMeta meta;
+    meta.term = server.id;
+    // The title travels with the marks, and it is the one the server holds:
+    // a message that stated an empty title would erase the caption a child
+    // asked for.
+    meta.title = "a caption";
+    meta.flags = static_cast<std::uint8_t>(
+        static_cast<std::uint8_t>(ckm::proto::TermMetaFlag::Bell) |
+        static_cast<std::uint8_t>(ckm::proto::TermMetaFlag::Activity));
+    remote.mirror().apply(meta);
+    CK_CHECK(remote.mirror().bell_marked());
+    CK_CHECK(remote.mirror().activity_marked());
+    CK_CHECK(remote.mirror().title() == "a caption");
+
+    meta.flags = 0;
+    remote.mirror().apply(meta);
+    CK_CHECK(!remote.mirror().bell_marked());
+    CK_CHECK(!remote.mirror().activity_marked());
+    CK_CHECK(remote.mirror().title() == "a caption");
 }
 
 CK_TEST(a_terminal_that_only_left_the_session_reports_no_exit_status) {
@@ -565,4 +782,70 @@ CK_TEST(the_whole_client_ui_drives_a_terminal_it_does_not_own) {
         if (std::holds_alternative<ckm::proto::Input>(sent[index])) leaked = true;
     }
     CK_CHECK(!leaked);
+}
+
+CK_TEST(a_childs_clipboard_write_reaches_the_readers_clipboard_targets) {
+    // M-R1, end to end through the client a reader actually has: the policy
+    // said yes to the child, the server forwards the write, and it lands
+    // wherever a yank from copy mode lands — because a reader configured those
+    // targets for their clipboard, not for one way of filling it. Before this,
+    // every one of those steps existed except the last, and the text was
+    // dropped on the floor with the setting still claiming to honour it.
+    FakeServer server;
+    ckv::term::HeadlessTerminal host(ckv::Size{80, 24});
+    ckv::ManualClock clock;
+    ckv::ui::Application app(host, clock);
+
+    ckm::client::ClientOptions options;
+    options.settings.shell = "/bin/sh";
+    options.settings.scrollback = 200;
+    options.local_now = [] {
+        return ckm::client::LocalMoment{{2026, 8, 17}, {12, 0, 0}};
+    };
+    // The reader's second clipboard target, recorded rather than forked: what
+    // is on trial is that the copy reached the targets, and a test that forked
+    // pbcopy would be testing the machine it runs on.
+    std::vector<std::pair<std::string, std::string>> helpers;
+    options.clipboard_writer = [&helpers](const std::string& command, std::string_view text) {
+        helpers.emplace_back(command, std::string(text));
+        return true;
+    };
+    RemoteTerminalSubsession* remote_ptr = nullptr;
+    options.terminal_source =
+        [&](ckm::client::TerminalRequest request) -> ckv::term::TerminalSubsession& {
+        auto remote =
+            std::make_unique<RemoteTerminalSubsession>(server.id, request.launch.profile, nullptr);
+        remote->mirror().set_history_limit(request.options.max_scrollback_lines);
+        remote_ptr = remote.get();
+        return app.adopt_terminal_subsession(std::move(remote));
+    };
+
+    ckm::client::ClientApp client(app, std::move(options));
+    app.step(0);
+    CK_CHECK(client.new_terminal() != nullptr);
+    CK_CHECK(remote_ptr != nullptr);
+    if (remote_ptr == nullptr) return;
+
+    remote_ptr->mirror().adopt(server.snapshot());
+    app.root().notify_terminal_subsession_changed(*remote_ptr);
+    app.step(0);
+    // Nothing has been copied, and a mirror that has only been adopted must not
+    // look as though something had: the watermark and the view's own start at
+    // the same number precisely so that an attach copies nothing.
+    CK_CHECK(client.internal_clipboard().empty());
+    CK_CHECK(helpers.empty());
+
+    server.child_printed("\x1b]52;c;aGVsbG8=\x07");  // "hello"
+    remote_ptr->mirror().apply(server.clipboard_write());
+    app.root().notify_terminal_subsession_changed(*remote_ptr);
+    app.step(0);
+
+    // ckmux's own clipboard, so `^B ]` pastes it whether or not anything
+    // outside this process would take it...
+    CK_CHECK(client.internal_clipboard() == "hello");
+    // ...and the helper the reader named.
+    bool the_helper_was_asked = false;
+    for (const std::pair<std::string, std::string>& asked : helpers)
+        if (asked.first == "pbcopy" && asked.second == "hello") the_helper_was_asked = true;
+    CK_CHECK(the_helper_was_asked);
 }

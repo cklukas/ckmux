@@ -95,6 +95,11 @@ Terminal::Terminal(TerminalId id, std::unique_ptr<ckv::term::PosixTerminalSubses
       pixel_height_(std::max(0, spec.pixel_height)) {}
 
 void Terminal::resize(int columns, int rows, int pixel_width, int pixel_height) {
+    // Whatever the emulator reports as changed after this is the resize, not
+    // the child. Set even when the size turns out to be the one it already had:
+    // the ONE caller is a client asking, so this says "the screen is about to
+    // change because a reader moved a window".
+    resized_by_a_client_ = true;
     columns_ = std::max(1, columns);
     rows_ = std::max(1, rows);
     // Zero pixels is "I do not know", and the last metric that made sense is
@@ -139,6 +144,34 @@ void Terminal::observe_exit() {
     // and one closes (plans/03 on-exit) — so a server that could not tell them
     // apart would have to guess, and would guess wrong half the time.
     exit_status_ = session_->exit_code();
+}
+
+void Terminal::mark_bell() noexcept {
+    if (bell_marked_) return;
+    bell_marked_ = true;
+    marks_announced_ = false;
+}
+
+void Terminal::mark_activity() noexcept {
+    if (activity_marked_) return;
+    activity_marked_ = true;
+    marks_announced_ = false;
+}
+
+bool Terminal::take_client_resize() noexcept {
+    const bool resized = resized_by_a_client_;
+    resized_by_a_client_ = false;
+    return resized;
+}
+
+void Terminal::clear_marks() noexcept {
+    if (!bell_marked_ && !activity_marked_) return;
+    bell_marked_ = false;
+    activity_marked_ = false;
+    // A mark going out is news exactly as a mark coming on is: the window
+    // marker a reader is looking at has to stop saying "something happened
+    // here" once they have been here.
+    marks_announced_ = false;
 }
 
 void Terminal::flush_replies_to_child() {

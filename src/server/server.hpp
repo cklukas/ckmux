@@ -223,6 +223,19 @@ private:
     // is the reader's `[general] on-exit`, which either takes the window away
     // or keeps it with a banner over the last screen the program drew.
     void notice_exits();
+    // Everything about a terminal that is NOT its grid, said once per tick to
+    // the one client watching its session: the bell and activity marks, a
+    // child's OSC 52 write, the printer going on or off, the newest complaint
+    // the emulator had to make.
+    //
+    // Read before `diffs_.flush`, which clears the damage all four are gated
+    // on, and after any healing snapshot, because a snapshot carries the
+    // clipboard watermark and deliberately not the text — a write announced
+    // before it would be adopted away by it. They are messages rather than ops
+    // for the reason plans/05 splits the two: an op describes the GRID, and
+    // none of these is the grid — a clipboard write is not something a reader
+    // can see on a screen at all.
+    void announce_terminal_news();
     // Actually removes one terminal: the PTY, the diffs, the session row, and
     // the watcher's window. `exited` distinguishes a child that ended from a
     // terminal that merely left for another session — the client keeps a

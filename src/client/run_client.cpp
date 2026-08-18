@@ -333,6 +333,14 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         client->show_session_picker(std::move(rows));
     };
 
+    // A request the server could not honour, in front of the reader who made
+    // it. The client already sent one of eight `Error`s back for every
+    // impossible request; what was missing was anybody to show it.
+    session.on_error = [&client](const proto::Error& error) {
+        if (client == nullptr) return;
+        client->show_server_error(error.code, error.context, error.human);
+    };
+
     // A terminal the server has ended takes its window with it — including
     // every terminal of a session this client has just left, which is how a
     // switch clears what it was showing.
@@ -482,6 +490,13 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             (void)session.handle(message);
         }
         session.heal_if_needed();
+        // The reader's own window, if they have resized it. Asked of the host
+        // terminal every pass rather than hooked to an event, because that is
+        // where the answer is — ckVision resizes the desktop from its own
+        // SIGWINCH handling and a client watching the same fact twice would
+        // have two sizes to keep in step. The call sends nothing unless the
+        // size actually moved.
+        session.desktop_resized(terminal.size(), terminal.capabilities().cell_pixels);
         open_one_if_the_session_is_empty();
         // Every window whose terminal has news repaints, which is the same
         // notification a local terminal raises — the client does not care where

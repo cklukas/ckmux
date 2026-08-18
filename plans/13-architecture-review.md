@@ -1,6 +1,6 @@
 # 13 — Architecture Review Findings (2026-08-18)
 
-Status: waves 1–2 complete — R1–R7, R9, R10 done, R8 open · source: multi-agent code/architecture review
+Status: waves 1–2 complete — R1–R7, R9, R10 done, R8 ongoing · source: multi-agent code/architecture review
 of 2026-08-18 (7 specialist reviewers over the whole tree, 65 claims
 adversarially verified by independent agents — several by probe programs
 compiled against the built library — 0 findings refuted). Reviewed at
@@ -31,7 +31,7 @@ verification evidence: the "ckmux Architecture Review" artifact of 2026-08-18.
 | R5 | Client lifetimes & reattach windows | C4, M-L1…M-L3, M-R4, m-client | **done** — reattach reconciles windows with mirrors (`announced_`/`windows_forgotten()`, heals announce nothing); teardown order provable; single-flight heal; lifetime tokens on every window held across a dialog; Send Prefix delivers any chord via ckVision `send_key`; profile from reader settings; clipboard failures surfaced with the reason |
 | R6 | Config & keymap truthfulness | M-T1, m-conf | **done** — config half in `a63c819`; chord spelling unified on plans/06's `^B` with `chord_spelling()` the single authority (`prefix_label` reduced to a forwarder, pinned equal by test), both spellings parse, Ctrl+letter case-folds (`C-B` previously parsed into a chord no terminal can send) |
 | R7 | ckVision upstream fixes | U1…U3 | **done** — ckVision `8ddcd53`: five named damage flags + keyboard-flags-as-modes (U1, widened to printer/diagnostics), DECPAM refusal D-053 (U2), mouse-tracking levels D-054 (U3), `TerminalView::send_key`, PTY signal reset, sixel refusal un-deadened; both suites green. ckmux-side adoption of the new flags is R2/R8's work |
-| R8 | Reattach feature gaps | M-R1…M-R3, m-replay | **open** — needs proto additions (R1) and R7's damage flags first |
+| R8 | Reattach feature gaps | M-R1…M-R3, m-replay | **done** (M-R3 carved out) — M-R1, M-R2, M-R4 and m-replay fixed, Debug + ASan + fuzz-corpus green; **M-R3 (layout) deliberately not** — see the note below. Extends protocol v3 rather than bumping it (v3 had shipped nowhere): kitty keyboard flags as `ModesOp` bits 9–13; `TerminalState` gains the clipboard watermark, `exited`/`exit_status`/`hold` and the newest diagnostic; `ClipboardSet` gains its terminal id; `TermDiagnostic` is new. Producers and consumers both ends, with `ClientResize`, `Error` and `Session::focused` picked up from R10's handoffs |
 | R9 | Build & enforcement | m-build, layer lint, fuzz targets | **done** — layer rule mechanically enforced (`tools/check_layers.py`, ctest `layer_check` + self-test); install ships `bin/ckmux` alone; `CKMUX_SANITIZE` forwards; source checkout outranks an installed package; `ckmux_platform` is a real target; `-Wconversion` opt-in (`CKMUX_WCONVERSION`); honest label taxonomy (unit/e2e/pty/golden/script/architecture/fuzz-corpus); three libFuzzer targets with 21 checked-in seeds, corpus-gated in ctest |
 | R10 | Documentation truth | m-docs, plans/12 queue states | **done** — plans/12 queue re-derived (ten rows corrected, "a Blocked row whose prerequisites are all done is a bug in this file" now stated); plans/05 catalog carries per-row liveness; plans/10 status/risks current, three open questions resolved; plans/02 describes the mechanisms that exist; plans/07 records L-57…L-62 and the real consumption precedence; README done earlier (`a357512`) |
 
@@ -140,6 +140,40 @@ never read; `LayoutDelta` has no producer; reattach cascades default windows.
 state has no client-side field; diagnostics ring not transported; no test
 drives any mode through snapshot → `adopt()`.
 
+What the fix decided, where a decision was needed:
+
+- **The clipboard travels as a live act, and a snapshot carries only its
+  watermark.** A child's OSC 52 says "put this on the reader's clipboard now".
+  Carrying the text on the snapshot would replay it on every reattach, over
+  whatever the reader had copied since; carrying no watermark would let the
+  next real write land on a serial the watching view had already acted on and
+  be dropped in silence. So the serial goes, monotonic and never reset, and the
+  text goes only on `ClipboardSet` — which now names its terminal, so the write
+  reaches the reader through ckVision's own path (the view sees the serial move
+  and hands the text to its host) rather than through a second one invented
+  here.
+- **Activity means output in a terminal the reader is not in**, which is the
+  tmux meaning and the only one that makes a window marker worth looking at.
+  Bell and activity are both marks — "since the reader was last here" — cleared
+  when that terminal becomes the focused one, and sent only when the pair
+  changes. A resize the client itself asked for damages every row and does not
+  count, or every window a reattaching client lays out would mark itself the
+  moment it appeared.
+- **The printer and the diagnostics are messages, not `GridDelta` ops**, since
+  neither is the grid: `PrintState` already existed for exactly this, and
+  `TermDiagnostic` carries the newest complaint rather than the ring, because
+  the view paints the last entry and shipping the ring would re-send what a
+  client already holds.
+- **M-R3 (layout) is not fixed and is not folded into "done" quietly.** It is
+  the one gap here that is a FEATURE rather than a correctness hole — a
+  reattaching reader sees every terminal, with its screen, its history, its
+  modes, its clipboard watermark, its printer and its exit; what they do not
+  see is the windows where they left them. It needs a producer for
+  `LayoutDelta`, a client that reports its own window geometry as it changes,
+  and a decision about what happens when a session is reattached on a smaller
+  desktop than it was laid out for — which is a design question, not a
+  transport one. plans/05 and plans/12 both say so where it belongs.
+
 Build & enforcement (R9): `cmake --install` ships 119 ckVision SDK files;
 `CKMUX_SANITIZE` does not reach ckVision; the "build enforces the layer rule"
 comment is false and the promised include-lint does not exist (port ckVision's
@@ -154,6 +188,16 @@ header comments disclaim implemented features (`server.hpp:9`,
 `server.cpp:483`, `client_app.hpp:6`); eight plans/12 rows Blocked with all
 prerequisites Done; plans/05 catalog liveness unmarked (17 dormant message
 types); plans/05 layout claim vs no producer; plans/08 `osc52` claim vs M-R1.
+
+R10 handed three of its findings on rather than editing a plan to match a gap,
+and R8 picked all three up because each is one end of a message this topic was
+already wiring: `ClientResize` now has a sender (the client's loop watches the
+host terminal's size and sends one when it moves), `Error` now has a reader
+(`ServerSession` routes it and `ClientApp` shows it with its code and its
+context), and `Session::focused` is maintained off `Input` — the only statement
+of focus this protocol carries, since `Raise` and `FocusTerm` remain dormant.
+plans/08's `osc52` claim is true as of M-R1's fix, so nothing there had to
+change.
 
 ## Working agreement for this remediation
 

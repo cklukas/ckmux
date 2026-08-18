@@ -50,9 +50,28 @@ ckv::core::TerminalStatus RemoteTerminalSubsession::status() const {
     status.application_cursor_keys = has(state.modes, proto::ModeBit::ApplicationCursorKeys);
     status.focus_reporting_enabled = has(state.modes, proto::ModeBit::FocusReporting);
     status.alternate_scroll_enabled = has(state.modes, proto::ModeBit::AlternateScroll);
-    // The kitty keyboard flags are the child's, and the wire does not carry them
-    // yet (plans/04 U1/U2). Legacy encoding remains correct — only coarser — so
-    // a mirror reports None rather than guessing.
+    // The kitty enhancements the child has on, as the server reported them.
+    // This is what `TerminalView` reads before it encodes a key, so a mirror
+    // that answered None would send the legacy encoding to a program that had
+    // just switched the legacy fallback off (M-R2). Five bits hold every flag
+    // the protocol defines, so nothing out of this mask can be a flag that does
+    // not exist.
+    status.keyboard_flags = static_cast<ckv::core::TerminalKeyboardFlags>(
+        (state.modes & proto::kKeyboardFlagsMask) >> proto::kKeyboardFlagsShift);
+    // The clipboard serial, which is what a consumer compares against the one
+    // it last acted on before asking for the text (ckVision's TerminalView).
+    status.clipboard_serial = mirror_.clipboard_serial();
+    // The printer, so a reattached client says what a local one would: while
+    // the controller is on, the child's output is going to the printer and NOT
+    // to the screen, and a terminal that did not say so reads as one that has
+    // stopped responding.
+    status.printer_controller_active = mirror_.printer_active();
+    status.printer_pending_bytes = mirror_.printer_bytes();
+    status.printer_jobs_ready = mirror_.printer_jobs();
+    // `bell_serial` stays at zero, and that is honest rather than lazy: the
+    // wire carries a MARK — has this terminal rung since the reader was last in
+    // it — and not the count ckVision keeps for a host that flashes every bell
+    // as it happens. A number invented here would be a count of nothing.
     status.exit_code = mirror_.exit_status();
     return status;
 }
@@ -80,6 +99,19 @@ ckv::core::TerminalSnapshot RemoteTerminalSubsession::snapshot() const {
     snapshot.application_cursor_keys = scalars.application_cursor_keys;
     snapshot.focus_reporting_enabled = scalars.focus_reporting_enabled;
     snapshot.alternate_scroll_enabled = scalars.alternate_scroll_enabled;
+    snapshot.keyboard_flags = scalars.keyboard_flags;
+    // The clipboard text lives here rather than in the scalars, exactly as it
+    // does upstream: a consumer sees the serial move in `status()` and comes
+    // here for the payload, which is the one read this pair exists to make
+    // rare. Empty after a snapshot, because a snapshot carries the watermark
+    // and not the text (mirror.cpp).
+    snapshot.clipboard_text = mirror_.clipboard_text();
+    snapshot.clipboard_serial = scalars.clipboard_serial;
+    const std::span<const ckv::core::TerminalDiagnostic> complaints = mirror_.diagnostics();
+    snapshot.diagnostics.assign(complaints.begin(), complaints.end());
+    snapshot.printer_controller_active = scalars.printer_controller_active;
+    snapshot.printer_pending_bytes = scalars.printer_pending_bytes;
+    snapshot.printer_jobs_ready = scalars.printer_jobs_ready;
     return snapshot;
 }
 

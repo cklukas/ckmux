@@ -36,6 +36,27 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
     send_(request);
 }
 
+void ServerSession::desktop_resized(ckv::Size desktop, ckv::Size cell_pixels) {
+    if (desktop.width <= 0 || desktop.height <= 0) return;
+    if (desktop == desktop_ && cell_pixels == cell_pixels_) return;
+    desktop_ = desktop;
+    if (cell_pixels.width > 0 && cell_pixels.height > 0) cell_pixels_ = cell_pixels;
+    // Remembered whether or not it can be sent, because the next `Attach` — a
+    // heal, a switch, a reconnection — declares the desktop, and one that
+    // declared a size the reader no longer has would undo this at the worst
+    // moment.
+    if (!attached_ || !send_) return;
+    proto::ClientResize resize;
+    resize.columns = static_cast<std::uint16_t>(desktop_.width);
+    resize.rows = static_cast<std::uint16_t>(desktop_.height);
+    // The whole text area, as `Attach` carries it: the server divides it back
+    // down to one cell (WP-3, where confusing the two was silent).
+    resize.pixel_width = static_cast<std::uint16_t>(desktop_.width * std::max(0, cell_pixels_.width));
+    resize.pixel_height =
+        static_cast<std::uint16_t>(desktop_.height * std::max(0, cell_pixels_.height));
+    send_(resize);
+}
+
 RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     const auto found = terminals_.find(id);
     if (found != terminals_.end()) return *found->second;
@@ -194,6 +215,34 @@ bool ServerSession::handle(const proto::Message& message) {
     if (const auto* meta = std::get_if<proto::TermMeta>(&message)) {
         if (RemoteTerminalSubsession* terminal = this->terminal(meta->term))
             terminal->mirror().apply(*meta);
+        return true;
+    }
+    if (const auto* clipboard = std::get_if<proto::ClipboardSet>(&message)) {
+        // Into the terminal that asked. What happens next is the client's:
+        // the mirror's serial moves, the view over it notices on the next
+        // repaint and hands the text to `on_clipboard_write`, which is the same
+        // path a terminal in this process would take (plans/07 seam 2).
+        if (RemoteTerminalSubsession* terminal = this->terminal(clipboard->term))
+            terminal->mirror().apply(*clipboard);
+        return true;
+    }
+    if (const auto* printing = std::get_if<proto::PrintState>(&message)) {
+        if (RemoteTerminalSubsession* terminal = this->terminal(printing->term))
+            terminal->mirror().apply(*printing);
+        return true;
+    }
+    if (const auto* said = std::get_if<proto::TermDiagnostic>(&message)) {
+        if (RemoteTerminalSubsession* terminal = this->terminal(said->term))
+            terminal->mirror().apply(*said);
+        return true;
+    }
+    if (const auto* error = std::get_if<proto::Error>(&message)) {
+        // A request the server could not honour. It is always ANSWERED — that
+        // is the rule this message exists for — and until now the answer
+        // stopped at the client's front door: nothing claimed it here and the
+        // host discarded it, so a reader who asked for something impossible was
+        // told nothing at all and watched a ckmux that looked hung (plans/05).
+        if (on_error) on_error(*error);
         return true;
     }
     if (const auto* sessions = std::get_if<proto::SessionList>(&message)) {

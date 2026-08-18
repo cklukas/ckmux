@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -261,6 +262,14 @@ public:
     // list rather than held per session: names change, and the list is the
     // only thing that says so.
     std::string session_name(std::uint64_t id) const;
+
+    // A request the server refused, in front of the reader who made it. Every
+    // request is answered (plans/05's `Error`), and an answer that reaches only
+    // the client's front door is indistinguishable — to the person waiting —
+    // from a server that has hung. Named by code and context as well as in
+    // words, because those two are what a bug report is written from.
+    void show_server_error(std::uint16_t code, const std::string& context,
+                           const std::string& human);
 
     // The picker: what is running, and what a reader may do about it. Shown at
     // startup when the choice is not obvious — when the only session is already

@@ -96,7 +96,11 @@ std::vector<Message> every_message() {
                   // The tracking level as well as the flag, since a codec that
                   // carried only the flag would leave a program that asked for
                   // DEC 1000 reading 1003's motion reports as something else.
-                  (3u << kMouseTrackingShift);
+                  (3u << kMouseTrackingShift) |
+                  // And the kitty keyboard enhancements, in the five bits above
+                  // it: a program that turned the legacy fallback off is sent
+                  // the legacy encoding by a client that was never told (M-R2).
+                  (0b10011u << kKeyboardFlagsShift);
     state.grid = to_runs({cell("a"), cell("a"), cell("b", ckv::Color::indexed(31)),
                           ckv::Cell::continuation(ckv::Style{})});
     state.scrollback = {to_runs({cell("o"), cell("l"), cell("d")}), to_runs({cell("e"), cell("r")})};
@@ -106,6 +110,16 @@ std::vector<Message> every_message() {
     state.printer_state = PrinterState::Capturing;
     state.printer_bytes = 12345;
     state.print_jobs.push_back(PrintJobInfo{1, PrintJobKind::Autoprint, 900, 30, -7});
+    // What a reattaching reader was losing (R8): the clipboard watermark, the
+    // child's own fate, and the terminal's newest complaint. A codec that
+    // dropped any of them would put a dead shell back on screen as a live
+    // terminal, or replay a clipboard write nobody asked for.
+    state.clipboard_serial = 9;
+    state.exited = 1;
+    state.exit_status = -6;
+    state.hold = 1;
+    state.diagnostic_kind = DiagnosticKind::UnsupportedSequence;
+    state.diagnostic = "unsupported child OSC sequence";
     attached.snapshot.terminals.push_back(std::move(state));
     messages.emplace_back(std::move(attached));
 
@@ -163,7 +177,9 @@ std::vector<Message> every_message() {
     messages.emplace_back(ImageEnd{77});
     messages.emplace_back(ImagePlace{11, 77, Rect{4, 5, 10, 6}, -3, 7});
     messages.emplace_back(ImageRemove{11, 77});
-    messages.emplace_back(ClipboardSet{"copied out of a program"});
+    messages.emplace_back(ClipboardSet{11, "copied out of a program"});
+    messages.emplace_back(
+        TermDiagnostic{11, DiagnosticKind::LimitExceeded, "child clipboard payload exceeded"});
     messages.emplace_back(Error{404, "rename-session", "a session called 'work' already exists"});
     messages.emplace_back(SetPrinterPolicy{PrinterScope::Global, 0, PrinterMode::Capture, 256 * 1024,
                                            1024 * 1024});
@@ -192,6 +208,38 @@ CK_TEST(every_message_in_the_catalogue_survives_the_wire) {
         for (const MessageType other : seen) CK_CHECK(other != type);
         seen.push_back(type);
     }
+}
+
+CK_TEST(the_modes_word_gives_every_facility_its_own_bits) {
+    // One word carries the flags, the mouse tracking LEVEL and the kitty
+    // keyboard enhancements, and two facilities sharing a bit would be a
+    // multiplexer turning one of them on by mentioning the other. Checked as
+    // arithmetic rather than by example, because the failure this prevents is
+    // somebody adding a third field above the second one and stopping a bit
+    // short.
+    std::uint32_t flags = 0;
+    for (const ModeBit bit :
+         {ModeBit::MouseReporting, ModeBit::MouseEncodingSgr, ModeBit::BracketedPaste,
+          ModeBit::ApplicationCursorKeys, ModeBit::FocusReporting, ModeBit::AlternateBuffer,
+          ModeBit::AlternateScroll})
+        flags |= static_cast<std::uint32_t>(bit);
+    CK_CHECK((flags & kMouseTrackingMask) == 0u);
+    CK_CHECK((flags & kKeyboardFlagsMask) == 0u);
+    CK_CHECK((kMouseTrackingMask & kKeyboardFlagsMask) == 0u);
+    // Five bits, which is every enhancement the kitty protocol defines: a mask
+    // one bit short would drop `ReportAssociatedText` in silence.
+    CK_CHECK((kKeyboardFlagsMask >> kKeyboardFlagsShift) == 0b11111u);
+
+    // And the whole word survives the wire, which is what makes the layout
+    // worth pinning here rather than in the client.
+    GridDelta delta;
+    delta.term = 3;
+    delta.ops.emplace_back(ModesOp{0xFFFFFFFFu, flags | (2u << kMouseTrackingShift) |
+                                                    (0b11111u << kKeyboardFlagsShift)});
+    const Message decoded = round_trip(delta);
+    const auto& modes = std::get<ModesOp>(std::get<GridDelta>(decoded).ops.front());
+    CK_CHECK(((modes.values & kMouseTrackingMask) >> kMouseTrackingShift) == 2u);
+    CK_CHECK(((modes.values & kKeyboardFlagsMask) >> kKeyboardFlagsShift) == 0b11111u);
 }
 
 CK_TEST(a_frame_states_its_own_length_type_and_zero_flags) {

@@ -883,6 +883,19 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     view->set_parent_escape(options_.settings.prefix);
     view->on_parent_escape = [this] { arm_prefix(); };
     view->on_selection_copy = [this](std::string text) { app_.set_clipboard_text(std::move(text)); };
+    // The child asked to put text on the clipboard with OSC 52, and the policy
+    // this terminal was opened with allows it ([terminal] osc52). It goes
+    // wherever a yank from copy mode goes — the reader configured those targets
+    // for their clipboard, not for one way of filling it — and this is the
+    // handler that was missing entirely: the policy said yes to the child and
+    // the text was then dropped on the floor (M-R1).
+    //
+    // Empty is the ordinary reattach: a snapshot restores the clipboard
+    // WATERMARK without the text, so a view built over a mirror that already
+    // holds one compares its own zero against it and asks once, with nothing to
+    // give. `copy_to_targets` returns on empty, which is what makes a reattach
+    // leave a reader's clipboard alone.
+    view->on_clipboard_write = [this](std::string text) { copy_to_targets(std::move(text)); };
     window->set_content(std::move(view));
     // The scrollbar on the frame (ckVision D-051): on screen exactly while
     // the terminal is on its primary screen with history off the top, costing
@@ -1416,6 +1429,22 @@ void ClientApp::copy_to_targets(std::string text) {
         }
     }
     if (!refused.empty()) report_clipboard_problem(refused);
+}
+
+void ClientApp::show_server_error(std::uint16_t code, const std::string& context,
+                                  const std::string& human) {
+    if (desktop_ == nullptr) return;
+    // The code and the context as well as the sentence, because those two are
+    // what a bug report can be written from: "NoSuchTerminal (2) in
+    // MoveTerminal" says which request failed and how, where the sentence alone
+    // says only what a reader could already see.
+    std::string body = human.empty() ? std::string("The server could not do that.") : human;
+    if (!context.empty()) body += "\n\nRequest: " + context;
+    body += "\nCode: " + std::to_string(static_cast<unsigned>(code));
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "ckmux server", std::move(body),
+                                w::MessageBoxButtons::Ok})));
 }
 
 void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused) {

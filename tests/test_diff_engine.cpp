@@ -568,6 +568,15 @@ CK_TEST(the_size_a_snapshot_will_take_is_known_before_it_is_written) {
     busy.images = {77, 78};
     busy.print_jobs.push_back(
         ckm::proto::PrintJobInfo{5, ckm::proto::PrintJobKind::Autoprint, 900, 30, -7});
+    // And the reattach fields (R8), the diagnostic included, because it is the
+    // second variable-length field a terminal state carries and an arithmetic
+    // that forgot it would be wrong by exactly one complaint.
+    busy.clipboard_serial = 4;
+    busy.exited = 1;
+    busy.exit_status = 2;
+    busy.hold = 1;
+    busy.diagnostic_kind = ckm::proto::DiagnosticKind::UnsupportedSequence;
+    busy.diagnostic = "unsupported child OSC sequence ✗";
     attached.snapshot.terminals.push_back(std::move(busy));
 
     // And one with nothing at all in it, so the fixed part is checked on its
@@ -576,7 +585,7 @@ CK_TEST(the_size_a_snapshot_will_take_is_known_before_it_is_written) {
     bare.term = 12;
     attached.snapshot.terminals.push_back(std::move(bare));
 
-    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 62U);
+    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 79U);
     const std::string frame = ckm::proto::encode(attached);
     CK_CHECK(!frame.empty());
     CK_CHECK(frame.size() ==
@@ -785,4 +794,99 @@ CK_TEST(attach_images_restates_exactly_what_the_clients_hold) {
         if (const auto* place = std::get_if<ckm::proto::ImagePlace>(&op))
             placed_again = place->id == begin->id && place->cells.x == 2 && place->cells.y == 1;
     CK_CHECK(placed_again);
+}
+
+// --- R8: everything about a terminal that is not its grid --------------------
+
+namespace {
+
+// A bare emulator that may do the three things R8 transports: put text on the
+// clipboard, capture print output, and complain. No PTY, because none of these
+// needs a child — what is on trial is what the SERVER makes of what the
+// emulator holds.
+ckv::term::TerminalEmulator talkative_emulator() {
+    ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
+    profile.cells = ckv::Size{40, 8};
+    profile.cell_pixels = ckv::Size{9, 18};
+    profile.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
+    profile.clipboard_policy = ckv::core::TerminalClipboardPolicy::AllowWrite;
+    profile.printer_policy = ckv::core::TerminalPrinterPolicy::Capture;
+    ckv::term::TerminalSubsessionOptions options;
+    options.max_scrollback_lines = 200;
+    return ckv::term::TerminalEmulator(profile, options);
+}
+
+}  // namespace
+
+CK_TEST(the_kitty_keyboard_flags_a_child_asked_for_travel_in_the_modes_word) {
+    // M-R2. The server answered the child's re-probe with the enhancements ON
+    // while the client, which is what actually encodes the keys, was never
+    // told — so a program that had just switched the legacy fallback off was
+    // sent the legacy encoding for as long as it ran.
+    ckv::term::TerminalEmulator emulator = talkative_emulator();
+    DiffEngine engine;
+    const ckm::proto::TerminalState before = engine.snapshot(1, emulator);
+    CK_CHECK((before.modes & ckm::proto::kKeyboardFlagsMask) == 0u);
+    emulator.clear_damage();
+
+    // `CSI > 1 u`: push "disambiguate escape codes", which is what a program
+    // reading keys rather than text asks for first.
+    emulator.feed_output("\x1b[>1u");
+    const DiffEngine::TerminalTick tick = engine.flush(1, emulator);
+    CK_CHECK(tick.delta.has_value());
+    bool said = false;
+    if (tick.delta.has_value())
+        for (const ckm::proto::GridOp& op : tick.delta->ops)
+            if (const auto* modes = std::get_if<ckm::proto::ModesOp>(&op)) {
+                // The changed mask as well as the value: a delta that carried
+                // the bit without saying it had changed would leave a mirror
+                // that already held a different set exactly as it was.
+                said = (modes->changed_mask & ckm::proto::kKeyboardFlagsMask) != 0u &&
+                       ((modes->values & ckm::proto::kKeyboardFlagsMask) >>
+                        ckm::proto::kKeyboardFlagsShift) == 1u;
+            }
+    CK_CHECK(said);
+
+    // And a client attaching now is given the whole set rather than the change.
+    const ckm::proto::TerminalState after = engine.snapshot(1, emulator);
+    CK_CHECK(((after.modes & ckm::proto::kKeyboardFlagsMask) >>
+              ckm::proto::kKeyboardFlagsShift) == 1u);
+}
+
+CK_TEST(a_snapshot_carries_the_clipboard_watermark_and_the_newest_complaint) {
+    // The two halves of what a reattaching client needs about things that
+    // HAPPENED rather than things that are set. The clipboard text is
+    // deliberately not among them: a write is a live act, and one replayed
+    // minutes later would put a child's text over whatever its reader had
+    // copied since.
+    ckv::term::TerminalEmulator emulator = talkative_emulator();
+    DiffEngine engine;
+    emulator.feed_output("\x1b]52;c;aGVsbG8=\x07");  // "hello", allowed by the profile
+    emulator.feed_output("\x1b]99;x\x07");           // an OSC this terminal does not implement
+
+    const ckm::proto::TerminalState state = engine.snapshot(1, emulator);
+    CK_CHECK(state.clipboard_serial == 1U);
+    CK_CHECK(state.diagnostic_kind == ckm::proto::DiagnosticKind::UnsupportedSequence);
+    CK_CHECK(!state.diagnostic.empty());
+    // The newest one, not the first: the emulator keeps a ring and a view
+    // paints its last entry.
+    emulator.feed_output("\x1b]52;c;?\x07");  // a clipboard READ, refused under every policy
+    const ckm::proto::TerminalState later = engine.snapshot(1, emulator);
+    CK_CHECK(later.diagnostic != state.diagnostic);
+    // A refused read is not a write, so the watermark did not move.
+    CK_CHECK(later.clipboard_serial == 1U);
+}
+
+CK_TEST(a_snapshot_says_whether_the_printer_is_running) {
+    // The one printer fact a reader must be shown: while the controller is on,
+    // the child's output goes to the printer and NOT to the screen, so a
+    // reattaching client that reported "idle" would leave them watching a
+    // terminal that has apparently stopped responding.
+    ckv::term::TerminalEmulator emulator = talkative_emulator();
+    DiffEngine engine;
+    CK_CHECK(engine.snapshot(1, emulator).printer_state == ckm::proto::PrinterState::Idle);
+    emulator.feed_output("\x1b[5i");  // MC: the printer controller on
+    const ckm::proto::TerminalState state = engine.snapshot(1, emulator);
+    CK_CHECK(state.printer_state == ckm::proto::PrinterState::Capturing);
+    CK_CHECK(emulator.damage().printer);  // and the tick has something to say about it
 }
