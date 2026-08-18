@@ -49,6 +49,11 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     ServerSession session([&connection](const proto::Message& message) {
         (void)connection.stream.send(proto::encode(message));
     });
+    // What this display can actually show, said once and carried on every
+    // Attach: the server folds it into the graphics advertisement the
+    // children this client opens are given (WP-16). Read from the probed
+    // capabilities, the same evidence Help ▸ Terminal Report shows.
+    session.set_host_sixel(terminal.capabilities().sixel_graphics);
     // Where the bytes are reassembled into frames. Declared here rather than
     // beside the loop because a reconnection has to start it over: half a frame
     // from a server that has gone is not the beginning of one from its

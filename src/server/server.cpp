@@ -419,6 +419,10 @@ void Server::handle(Client& client, const proto::Message& message) {
         }
         TerminalSpec spec;
         spec.command = request->command;
+        // The opener's own display decides what the child is told about
+        // graphics (WP-16): the reader in front of THIS client is the reader
+        // the picture is for.
+        spec.host_sixel = client.host_sixel;
         // Where a shell opens, and what it is told about its machine. The
         // server is the one that knows both, because it is the process that will
         // hold the child (plans/02) — a client's own environment is its own.
@@ -680,6 +684,7 @@ void Server::attach(Client& client, const proto::Attach& request) {
     client.attached = true;
     client.session = session->id;
     client.dirty_snapshot = false;
+    client.host_sixel = request.host_sixel != 0;
     if (request.columns > 0 && request.rows > 0) {
         client.desktop = ckv::Size{request.columns, request.rows};
         client.cell_pixels = cell_metric_of(request);
@@ -720,6 +725,11 @@ void Server::send_snapshot(Client& client) {
     attached.session = client.session;
     attached.snapshot = std::move(snapshot);
     send(client, attached);
+    // The pictures, after the grid (WP-16): the believed set, exactly what the
+    // clients already watching hold, so every mirror agrees until the next
+    // tick moves them all together.
+    for (const TerminalId id : session != nullptr ? session->terminals : std::vector<TerminalId>{})
+        for (const proto::Message& op : diffs_.attach_images(id)) send(client, op);
     client.dirty_snapshot = false;
 }
 
@@ -778,7 +788,7 @@ void Server::flush_tick() {
         send_snapshot(*client);
     }
 
-    const std::vector<proto::GridDelta> deltas = diffs_.flush(terminals_);
+    const DiffEngine::Tick tick = diffs_.flush(terminals_);
 
     // A terminal that scrolled more in one tick than a delta may carry says so
     // rather than sending it. What the client needs then is the same thing a
@@ -790,7 +800,7 @@ void Server::flush_tick() {
             if (client->attached) client->dirty_snapshot = true;
     }
 
-    if (deltas.empty()) return;
+    if (tick.deltas.empty() && tick.images.empty()) return;
     for (const std::unique_ptr<Client>& client : clients_) {
         // Only the attached client, and only a UI: a CLI utility has no screen,
         // and a connection that has not attached has not asked for one.
@@ -809,13 +819,23 @@ void Server::flush_tick() {
             client->dirty_snapshot = true;
             continue;
         }
-        for (const proto::GridDelta& delta : deltas) {
+        for (const proto::GridDelta& delta : tick.deltas) {
             // A delta for a terminal in another session is not this client's to
             // see: sessions are what a reader has instead of one big desktop.
             if (std::find(watched->terminals.begin(), watched->terminals.end(), delta.term) ==
                 watched->terminals.end())
                 continue;
             send(*client, delta);
+        }
+        // The pictures ride the same gate as the deltas (WP-16): the session
+        // filter, because pixels for another session's terminal are not this
+        // client's to hold, and the backlog mark, because a client that will
+        // be healed by a snapshot gets the believed pictures with it.
+        for (const DiffEngine::ImageOp& op : tick.images) {
+            if (std::find(watched->terminals.begin(), watched->terminals.end(), op.term) ==
+                watched->terminals.end())
+                continue;
+            send(*client, op.message);
         }
     }
 }

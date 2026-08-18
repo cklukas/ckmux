@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +24,7 @@
 
 #include "common/grid_delta.hpp"
 #include "common/proto.hpp"
+#include "cvision/core/image.hpp"
 #include "cvision/core/terminal_subsession.hpp"
 
 namespace ckm::client {
@@ -84,6 +86,21 @@ public:
     std::span<const ckv::Cell> grid() const noexcept;
     std::span<const ckv::Cell> history() const noexcept;
 
+    // The pictures (WP-16), placed by wire id. `place_image` with pixels adds
+    // or restates the placement for `id`; with `image == nullptr` it moves a
+    // placement already held — the server sends a bare Place for a move — and
+    // a move for a picture this mirror never received is ignored, because the
+    // snapshot that heals any gap restates the pictures too.
+    void place_image(std::uint64_t id, std::shared_ptr<const ckv::Image> image,
+                     ckv::Point anchor, ckv::Size cell_extent);
+    void remove_image(std::uint64_t id);
+    std::span<const ckv::core::TerminalRaster> rasters() const noexcept { return rasters_; }
+    // The scene identity every raster of this terminal carries. TerminalView
+    // drops rasters whose id is 0 — an unadopted mirror would show no picture
+    // at all — and the compositor keys placements by it, so the client mints
+    // one per remote terminal (ServerSession::ensure_terminal).
+    void set_raster_identity(int identity) noexcept;
+
     // What changed since the view last said it had caught up. The same contract
     // as the emulator's: reading never clears, `clear_damage()` is the reader's,
     // and it starts full so the first frame after an attach draws everything.
@@ -96,6 +113,13 @@ private:
     void rebuild_history_cache();
 
     GridState state_;
+    // The placed pictures and, parallel to them, the wire id each arrived
+    // under. Two vectors rather than a struct because the raster vector is
+    // exactly what `rasters()` hands the view — the seam's own type, borrowed,
+    // never copied.
+    std::vector<ckv::core::TerminalRaster> rasters_;
+    std::vector<std::uint64_t> raster_wire_ids_;
+    int raster_identity_ = 0;
     // The history as one flat buffer, rebuilt when it changes.
     //
     // The mirror stores lines (a line is the unit `SbPush` carries and capacity

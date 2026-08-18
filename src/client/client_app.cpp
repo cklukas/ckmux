@@ -15,6 +15,7 @@
 #include "cvision/widgets/dialog.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/message_box.hpp"
+#include "cvision/widgets/terminal_report_dialog.hpp"
 #include "cvision/widgets/terminal_scrollbar.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 
@@ -312,6 +313,16 @@ void ClientApp::register_commands() {
                              [this] { options_.detach_from_server(); });
     }
 
+    // The terminal report, claimed for the same sanctioned reason: Desktop's
+    // default handler shows the report without the decoded-SGR-reports line,
+    // because only the host knows its terminal can count them. ckmux's outer
+    // terminal is a POSIX host that can, so the claim adds the one line that
+    // separates "the terminal never sent the click" from "it arrived and
+    // landed somewhere unexpected" — the evidence WP-16's advertisement
+    // decision reads.
+    registry.set_handler(registry.standard().terminal_report,
+                         [this] { show_terminal_report(); });
+
     // The prefix key itself, as a command with a chord.
     //
     // A terminal view consumes every key except the prefix, so this binding can
@@ -389,8 +400,15 @@ void ClientApp::build_chrome() {
     // for the session and left the file saying something else, so a reader who
     // liked Light had to find it again every morning.
     w::MenuBarItem settings_menu{"&Settings", {item(commands::kSettings)}};
+    // The terminal report sits where cksetup keeps it: in Help, beside the
+    // other "what is this thing doing" answers. It reports the OUTER host —
+    // what ckmux itself detected, Sixel included — which is the report a
+    // reader wants when a picture drawn inside a ckmux terminal fails to
+    // appear.
     w::MenuBarItem help_menu{"&Help",
-                             {item(commands::kKeyReference), separator, item(commands::kAbout)}};
+                             {item(commands::kKeyReference),
+                              item(u::std_command_keys::kTerminalReport), separator,
+                              item(commands::kAbout)}};
 
     // The theme the constructor already put on the application, handed
     // straight back: the shell assigns whatever it is given, so naming one
@@ -1043,6 +1061,18 @@ void ClientApp::show_about() {
                                     "\nA terminal multiplexer with a visible interface.\n\n"
                                     "Built on ckVision.",
                                 w::MessageBoxButtons::Ok})));
+}
+
+void ClientApp::show_terminal_report() {
+    if (desktop_ == nullptr) return;
+    // ckVision's own dialog (L-25): the report describes the OUTER host as
+    // this application detected it. The probe is the host's when the host
+    // gave one (main.cpp), and the line is simply absent under a test's
+    // HeadlessTerminal — which has no byte stream to count.
+    ckv::widgets::TerminalReportDialogOptions options;
+    options.mouse_reports_decoded = options_.mouse_reports_probe;
+    pending_dialogs_.push_back(std::make_shared<w::TerminalReportDialogPresentation>(
+        w::present_terminal_report_dialog(*desktop_, app_, roles_, std::move(options))));
 }
 
 void ClientApp::enter_copy_mode() {

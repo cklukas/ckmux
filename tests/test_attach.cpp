@@ -379,3 +379,102 @@ CK_TEST(a_mirror_that_lost_track_asks_for_the_terminal_whole) {
     server.terminals().close_all();
     forget(socket);
 }
+
+// --- WP-16: a picture, end to end ------------------------------------------
+
+CK_TEST(a_picture_a_child_draws_reaches_the_mirror_with_its_pixels) {
+    const std::filesystem::path socket = private_socket("sixel-transport");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    // A child that draws one red 8x12 picture at row 2, column 3 and stays
+    // alive. The spec's host_sixel default (true) advertises graphics, so the
+    // child's DCS is decoded rather than dropped.
+    ckm::server::Terminal& terminal = server.open_terminal(
+        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30"));
+    (void)terminal;
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.set_host_sixel(true);
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    const std::vector<std::uint64_t> ids = watcher.session.terminal_ids();
+    CK_CHECK(ids.size() == 1U);
+    if (ids.empty()) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
+    CK_CHECK(mirrored != nullptr);
+    CK_CHECK(run_until(server, clock, watcher, [&] { return !mirrored->rasters().empty(); }));
+
+    if (!mirrored->rasters().empty()) {
+        const ckv::core::TerminalRaster& raster = mirrored->rasters().front();
+        // A raster whose id stayed 0 would be dropped by TerminalView, so the
+        // minted identity is part of the promise, not a detail.
+        CK_CHECK(raster.id != 0);
+        CK_CHECK(raster.anchor.x == 2);
+        CK_CHECK(raster.anchor.y == 1);
+        CK_CHECK(raster.image != nullptr);
+        if (raster.image != nullptr) {
+            CK_CHECK(raster.image->width() == 8);
+            CK_CHECK(raster.image->height() == 12);
+            const ckv::Image::Rgba pixel = raster.image->pixel(0, 0);
+            CK_CHECK(pixel.r >= 200);
+            CK_CHECK(pixel.g == 0);
+            CK_CHECK(pixel.a == 255);
+        }
+    }
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_host_that_shows_no_graphics_opens_children_that_are_told_not_to_draw) {
+    // plans/04: `sixel = auto` advertises what the host can show. The client
+    // said its host cannot (Attach.host_sixel = 0), so the terminal IT opens
+    // is launched without the advertisement, and the child's Sixel is dropped
+    // at the emulator with a diagnostic — nothing is transported to a client
+    // that could never show it.
+    const std::filesystem::path socket = private_socket("sixel-off");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.set_host_sixel(false);
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    ckm::proto::NewTerminal request;
+    request.command = "printf '\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30";
+    watcher.session.request(request);
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return !watcher.session.terminal_ids().empty(); }));
+
+    const std::vector<std::uint64_t> ids = watcher.session.terminal_ids();
+    if (ids.empty()) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    ckm::server::Terminal* opened = server.terminals().find(ids.front());
+    CK_CHECK(opened != nullptr);
+    if (opened != nullptr) {
+        // The refusal is said out loud where a debugger looks for it.
+        CK_CHECK(run_until(server, clock, watcher,
+                           [&] { return !opened->session().diagnostics().empty(); }));
+    }
+    ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
+    CK_CHECK(mirrored != nullptr);
+    if (mirrored != nullptr) CK_CHECK(mirrored->rasters().empty());
+    server.terminals().close_all();
+    forget(socket);
+}

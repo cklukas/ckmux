@@ -102,6 +102,11 @@ struct ClientOptions {
     // fixed moment. Empty means no clock at all: one that has to guess the
     // time is worse than none.
     std::function<LocalMoment()> local_now;
+    // How many SGR mouse reports the outer terminal's decoder recognized in
+    // the byte stream — the host's count, for the Help ▸ Terminal Report
+    // dialog to show beside what dispatch delivered. Empty (a test's
+    // headless terminal) simply omits that line of the report.
+    std::function<std::size_t()> mouse_reports_probe;
     // Where a terminal comes from.
     //
     // Unset launches one in this process, which is M1 and what a reader gets
@@ -297,6 +302,9 @@ private:
     // selection index means a session.
     std::vector<std::uint64_t> attach_choice_;
     void show_about();
+    // The ckVision terminal report over the OUTER host's capabilities, with
+    // ckmux's decoded-SGR-reports probe added (options.mouse_reports_probe).
+    void show_terminal_report();
     // Drops a calendar out of the menu-bar clock, the way a menu title drops
     // its menu.
     void open_calendar();

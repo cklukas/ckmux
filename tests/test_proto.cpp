@@ -60,7 +60,7 @@ std::vector<Message> every_message() {
     messages.emplace_back(Pong{0xFEEDFACECAFEBEEDull});
     messages.emplace_back(ListSessions{});
     messages.emplace_back(NewSession{"work", 1, "/bin/zsh"});
-    messages.emplace_back(Attach{7, 120, 40, 1080, 720});
+    messages.emplace_back(Attach{7, 120, 40, 1080, 720, 1});
     messages.emplace_back(Detach{});
     messages.emplace_back(ClientResize{80, 24, 720, 432});
     messages.emplace_back(RenameSession{9, "renamed"});

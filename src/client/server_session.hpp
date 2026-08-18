@@ -29,6 +29,7 @@
 
 #include "client/remote_terminal.hpp"
 #include "common/proto.hpp"
+#include "cvision/core/image.hpp"
 
 namespace ckm::client {
 
@@ -106,12 +107,30 @@ public:
     void set_profile(ckv::term::TerminalCapabilityProfile profile) {
         profile_ = std::move(profile);
     }
+    // Whether this client's OUTER terminal reported Sixel, carried on every
+    // `Attach` (WP-16): the server folds it into what the children this
+    // client opens are told they may draw. Set once by the client, from the
+    // host terminal's own capability report.
+    void set_host_sixel(bool reported) noexcept { host_sixel_ = reported; }
 
 private:
     RemoteTerminalSubsession& ensure_terminal(std::uint64_t id);
 
+    // A picture whose pixels are still arriving (WP-16): AddBegin opened it,
+    // chunks fill it in order, End completes it into `completed_images_`,
+    // where the Place that follows collects it. Ids are global to the
+    // connection, so the store is here rather than in any one mirror.
+    struct PendingImage {
+        std::uint16_t width = 0;
+        std::uint16_t height = 0;
+        std::uint32_t next_seq = 0;
+        std::string bytes;
+    };
+
     Send send_;
     std::map<std::uint64_t, std::unique_ptr<RemoteTerminalSubsession>> terminals_;
+    std::map<std::uint64_t, PendingImage> pending_images_;
+    std::map<std::uint64_t, std::shared_ptr<const ckv::Image>> completed_images_;
     ckv::term::TerminalCapabilityProfile profile_;
     std::size_t history_limit_ = 0;
     std::uint64_t session_ = 0;
@@ -120,6 +139,12 @@ private:
     std::uint64_t resnapshots_ = 0;
     std::uint64_t attachments_ = 0;
     bool attached_ = false;
+    bool host_sixel_ = false;
+    // The scene identity a remote terminal's rasters carry. Minted per
+    // terminal, well away from Application's own adopted-subsession counter
+    // (which starts at 1'000'000), because the compositor keys picture
+    // placements by it and two terminals must never share one.
+    int next_raster_identity_ = 2'000'000;
 };
 
 }  // namespace ckm::client

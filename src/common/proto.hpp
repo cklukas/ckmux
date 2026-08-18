@@ -44,7 +44,10 @@ namespace ckm::proto {
 // Bumped on ANY wire change, pre-1.0, because there is nothing finer to bump.
 // A mismatch is answered with `Refuse` and the remedy in words, since an
 // upgrade leaves old servers running and this message will be seen.
-inline constexpr std::uint32_t kProtocolVersion = 1;
+//
+// v2: `Attach.host_sixel` — the client's outer terminal reported Sixel, so
+// the server may advertise it to the children this client opens (WP-16).
+inline constexpr std::uint32_t kProtocolVersion = 2;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
 // `kProtocolVersion` is the only thing that decides whether two ends can talk —
@@ -418,6 +421,12 @@ struct Attach {
     // XTWINOPS 14/16 replies. Zero is honest ignorance, not a size.
     std::uint16_t pixel_width = 0;
     std::uint16_t pixel_height = 0;
+    // Whether the client's OUTER terminal reported Sixel graphics. The
+    // server folds it into the advertisement a child of this client's
+    // terminals is given (plans/04: "ckmux decides sixel per host
+    // capabilities and reflects the choice in the child's profile").
+    // Nonzero is yes; zero is no or unknown, which advertise alike.
+    std::uint8_t host_sixel = 0;
     friend bool operator==(const Attach&, const Attach&) = default;
 };
 

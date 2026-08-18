@@ -224,6 +224,12 @@ right end of the menu bar, where the calendar can hang from it.
   buttons stay against the bottom edge.
 - Menu `Help → All Keybindings…` shows the full registry grouped by context,
   with the user's rebindings applied and marked.
+- Menu `Help → Terminal Report` opens ckVision's terminal report dialog
+  (`ckv.app.terminal_report`, L-56): the probed capabilities of the OUTER
+  host — Sixel included — plus mouse-dispatch diagnostics, with ckmux's
+  decoded-SGR-reports probe supplying the byte-stream count. It is the same
+  dialog cksetup shows, because evidence about one terminal must not depend
+  on which suite application is asked for it.
 - First-run experience: on a brand-new server with zero sessions, the picker
   shows a one-paragraph orientation ("ckmux keeps programs running after you
   leave — create a session to start") — help without a manual.

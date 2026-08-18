@@ -2,6 +2,7 @@
 #include "client/server_session.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 #include <variant>
 
@@ -27,6 +28,7 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
         static_cast<std::uint16_t>(std::max(0, desktop.width) * std::max(0, cell_pixels.width));
     request.pixel_height =
         static_cast<std::uint16_t>(std::max(0, desktop.height) * std::max(0, cell_pixels.height));
+    request.host_sixel = host_sixel_ ? 1 : 0;
     send_(request);
 }
 
@@ -35,6 +37,11 @@ RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     if (found != terminals_.end()) return *found->second;
     auto terminal = std::make_unique<RemoteTerminalSubsession>(id, profile_, send_);
     terminal->mirror().set_history_limit(history_limit_);
+    // The scene identity its pictures will carry. Assigned here because a
+    // mirror is never adopted by the Application (whose counter serves the
+    // subsessions it launches itself), and a raster whose id stayed 0 would
+    // be dropped by TerminalView as not-yet-identified (WP-16).
+    terminal->set_raster_identity(next_raster_identity_++);
     RemoteTerminalSubsession& reference = *terminal;
     terminals_.emplace(id, std::move(terminal));
     if (on_terminal_opened) on_terminal_opened(reference);
@@ -125,6 +132,68 @@ bool ServerSession::handle(const proto::Message& message) {
     }
     if (const auto* sessions = std::get_if<proto::SessionList>(&message)) {
         if (on_sessions) on_sessions(sessions->sessions);
+        return true;
+    }
+    // The pictures (WP-16). Pixels arrive by global id — begin, chunks in
+    // order, end — and only a Place binds them to a terminal. A restated id
+    // (every snapshot restates the pictures) simply starts the assembly over.
+    if (const auto* begin = std::get_if<proto::ImageAddBegin>(&message)) {
+        PendingImage pending;
+        pending.width = begin->width;
+        pending.height = begin->height;
+        pending_images_[begin->id] = std::move(pending);
+        return true;
+    }
+    if (const auto* chunk = std::get_if<proto::ImageChunk>(&message)) {
+        const auto pending = pending_images_.find(chunk->id);
+        if (pending == pending_images_.end()) return true;  // never begun: stale
+        // Out of order, or more bytes than the announced size can hold: the
+        // assembly is wrong and the honest answer is no picture rather than a
+        // scrambled one. The snapshot path restates what was lost.
+        const std::size_t total = static_cast<std::size_t>(pending->second.width) *
+                                  static_cast<std::size_t>(pending->second.height) * 4U;
+        if (chunk->seq != pending->second.next_seq ||
+            pending->second.bytes.size() + chunk->bytes.size() > total) {
+            pending_images_.erase(pending);
+            return true;
+        }
+        pending->second.bytes += chunk->bytes;
+        ++pending->second.next_seq;
+        return true;
+    }
+    if (const auto* end = std::get_if<proto::ImageEnd>(&message)) {
+        const auto pending = pending_images_.find(end->id);
+        if (pending == pending_images_.end()) return true;
+        const std::size_t total = static_cast<std::size_t>(pending->second.width) *
+                                  static_cast<std::size_t>(pending->second.height) * 4U;
+        if (total != 0 && pending->second.bytes.size() == total) {
+            auto image = std::make_shared<ckv::Image>(pending->second.width,
+                                                      pending->second.height);
+            std::memcpy(image->data(), pending->second.bytes.data(), total);
+            completed_images_[end->id] = std::move(image);
+        }
+        pending_images_.erase(pending);
+        return true;
+    }
+    if (const auto* place = std::get_if<proto::ImagePlace>(&message)) {
+        RemoteTerminalSubsession* terminal = this->terminal(place->term);
+        std::shared_ptr<const ckv::Image> image;
+        if (const auto completed = completed_images_.find(place->id);
+            completed != completed_images_.end()) {
+            image = std::move(completed->second);
+            // One id is one placed picture (the server mints per placement),
+            // so the store hands the pixels over exactly once and stays small.
+            completed_images_.erase(completed);
+        }
+        if (terminal != nullptr)
+            terminal->mirror().place_image(
+                place->id, std::move(image), ckv::Point{place->cells.x, place->cells.y},
+                ckv::Size{place->cells.width, place->cells.height});
+        return true;
+    }
+    if (const auto* remove = std::get_if<proto::ImageRemove>(&message)) {
+        if (RemoteTerminalSubsession* terminal = this->terminal(remove->term))
+            terminal->mirror().remove_image(remove->id);
         return true;
     }
     if (std::holds_alternative<proto::Pong>(message)) return true;

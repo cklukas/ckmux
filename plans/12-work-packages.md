@@ -91,7 +91,7 @@ take first.
 | 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
 | 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
-| 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | Blocked | WP-6 |
+| 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
 | 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | Blocked | WP-6 |
 | 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | Blocked | WP-6, U0-c |
 | 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | Blocked | WP-6 |

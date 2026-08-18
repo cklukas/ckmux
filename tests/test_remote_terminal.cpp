@@ -63,8 +63,8 @@ struct FakeServer {
     // What the child printed, as the messages a client would receive.
     std::vector<ckm::proto::GridDelta> tick() {
         std::vector<ckm::proto::GridDelta> deltas;
-        if (std::optional<ckm::proto::GridDelta> delta = engine.flush(id, terminal))
-            deltas.push_back(std::move(*delta));
+        ckm::server::DiffEngine::TerminalTick flushed = engine.flush(id, terminal);
+        if (flushed.delta.has_value()) deltas.push_back(std::move(*flushed.delta));
         return deltas;
     }
 

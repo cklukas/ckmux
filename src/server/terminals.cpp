@@ -69,7 +69,10 @@ ckv::term::TerminalLaunchSpec launch_spec_for(const Settings& settings, const Te
     launch.profile.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
     launch.profile.mouse_reporting = settings.mouse;
     launch.profile.alternate_scroll = settings.alternate_scroll;
-    launch.profile.sixel = settings.sixel == SixelMode::Auto;
+    // `sixel = auto` means "advertise what the host can show" (plans/04,
+    // plans/08): the setting opens the door, the opening client's own host
+    // capability decides whether anything is behind it.
+    launch.profile.sixel = settings.sixel == SixelMode::Auto && spec.host_sixel;
     launch.profile.clipboard_policy = settings.osc52 ? ckv::core::TerminalClipboardPolicy::AllowWrite
                                                      : ckv::core::TerminalClipboardPolicy::Deny;
     launch.profile.printer_policy = settings.printer_mode == PrinterMode::Off

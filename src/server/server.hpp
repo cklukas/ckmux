@@ -134,6 +134,10 @@ private:
         // to any one terminal.
         ckv::Size desktop{0, 0};
         ckv::Size cell_pixels{0, 0};
+        // Whether this client's OUTER terminal reported Sixel, from `Attach`
+        // (WP-16). Consulted when this client opens a terminal, because the
+        // child's advertisement should say what the reader can actually see.
+        bool host_sixel = false;
         // The client's queue went over its high-water mark, so deltas stopped
         // being queued for it. What clears it is not the missing deltas — those
         // are gone — but a fresh snapshot once the queue has drained: repairing

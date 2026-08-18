@@ -56,11 +56,12 @@ public:
     void clear_damage() noexcept override { mirror_.clear_damage(); }
     std::span<const ckv::Cell> cells() const noexcept override { return mirror_.grid(); }
     std::span<const ckv::Cell> scrollback() const noexcept override { return mirror_.history(); }
-    // Pictures arrive as their own messages and are placed by id (plans/05,
-    // WP-16). Until that lands a mirror has none, and saying so is better than
-    // an empty span that pretends to be an answer: a reader whose Sixel does not
-    // appear should find it recorded here as not-yet-carried.
-    std::span<const ckv::core::TerminalRaster> rasters() const noexcept override { return {}; }
+    // Pictures arrive as their own messages and are placed by id (WP-16);
+    // the mirror holds them exactly as it holds the grid, and the view draws
+    // them the same way it draws a local terminal's.
+    std::span<const ckv::core::TerminalRaster> rasters() const noexcept override {
+        return mirror_.rasters();
+    }
     std::span<const ckv::core::TerminalDiagnostic> diagnostics() const noexcept override {
         return {};
     }
@@ -97,7 +98,13 @@ public:
     // this is only the message.
     void close() noexcept override;
 
-    void set_raster_identity(int identity) noexcept override { raster_identity_ = identity; }
+    void set_raster_identity(int identity) noexcept override {
+        raster_identity_ = identity;
+        // Into the mirror, because the mirror is what builds the rasters the
+        // view reads — an identity held only here would leave them at 0, and
+        // TerminalView drops a raster whose id is 0.
+        mirror_.set_raster_identity(identity);
+    }
     int raster_identity() const noexcept { return raster_identity_; }
 
 private:

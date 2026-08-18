@@ -127,7 +127,7 @@ CK_TEST(a_client_that_saw_only_the_deltas_holds_what_the_terminal_holds) {
 
     const auto pump_tick = [&] {
         terminals.drain(32 * 1024);
-        for (const ckm::proto::GridDelta& delta : engine.flush(terminals)) client.receive(delta);
+        for (const ckm::proto::GridDelta& delta : engine.flush(terminals).deltas) client.receive(delta);
     };
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4000);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -176,15 +176,15 @@ CK_TEST(forty_writes_between_two_ticks_cost_one_delta) {
         (void)::usleep(5000);
     }
 
-    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals);
+    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals).deltas;
     CK_CHECK(deltas.size() == 1U);
     if (deltas.size() == 1U) {
         CK_CHECK(deltas.front().seq == 1U);
         CK_CHECK(deltas.front().term == terminal.id());
     }
     // And nothing at all on a tick where the child said nothing.
-    CK_CHECK(engine.flush(terminals).empty());
-    CK_CHECK(engine.flush(terminals).empty());
+    CK_CHECK(engine.flush(terminals).deltas.empty());
+    CK_CHECK(engine.flush(terminals).deltas.empty());
 }
 
 CK_TEST(the_sequence_is_monotonic_with_no_gaps_however_the_terminals_behave) {
@@ -213,7 +213,7 @@ CK_TEST(the_sequence_is_monotonic_with_no_gaps_however_the_terminals_behave) {
             engine.forget(doomed_id);
             terminals.close(doomed_id);
         }
-        for (const ckm::proto::GridDelta& delta : engine.flush(terminals)) {
+        for (const ckm::proto::GridDelta& delta : engine.flush(terminals).deltas) {
             ++deltas_seen;
             const std::uint32_t previous = last.count(delta.term) ? last[delta.term] : 0;
             if (delta.seq == previous) ++repeats;
@@ -236,7 +236,7 @@ CK_TEST(the_sequence_is_monotonic_with_no_gaps_however_the_terminals_behave) {
     (void)engine.snapshot(chatty.id(), chatty.session());
     CK_CHECK(engine.sequence_for(chatty.id()) == 0U);
     CK_CHECK(pump_until(terminals, [&] { return chatty.damage().any(); }, 2000));
-    const std::vector<ckm::proto::GridDelta> after = engine.flush(terminals);
+    const std::vector<ckm::proto::GridDelta> after = engine.flush(terminals).deltas;
     bool saw_chatty = false;
     for (const ckm::proto::GridDelta& delta : after)
         if (delta.term == chatty.id()) {
@@ -254,11 +254,11 @@ CK_TEST(a_resize_costs_the_whole_grid_and_the_mirror_still_matches) {
     CK_CHECK(pump_until(
         terminals, [&] { return screen_text(terminal).find("before the resize") != std::string::npos; }));
     client.attach(engine.snapshot(terminal.id(), terminal.session()));
-    for (const ckm::proto::GridDelta& delta : engine.flush(terminals)) client.receive(delta);
+    for (const ckm::proto::GridDelta& delta : engine.flush(terminals).deltas) client.receive(delta);
 
     terminal.resize(60, 12, 60 * 9, 12 * 18);
     terminals.drain(32 * 1024);
-    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals);
+    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals).deltas;
     CK_CHECK(deltas.size() == 1U);
     if (deltas.empty()) return;
 
@@ -324,7 +324,7 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
         for (int tick = 0; tick < ticks; ++tick) {
             emulator.feed_output("\x1b[5;1H status: frame " + std::to_string(tick) + " of a line a "
                                  "program rewrites every frame ");
-            if (engine.flush(1, emulator).has_value()) ++deltas;
+            if (engine.flush(1, emulator).delta.has_value()) ++deltas;
         }
         *out_cost = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
                         .count() /
@@ -381,7 +381,7 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
                 "\x1b[7;1H frame " + std::to_string(tick) + " on a busy server ");
             if (fleet_engine.flush(static_cast<TerminalId>(index + 1),
                                    *terminals_under_test[static_cast<std::size_t>(index)])
-                    .has_value())
+                    .delta.has_value())
                 ++fleet_deltas;
         }
     const double per_tick = std::chrono::duration<double, std::micro>(
@@ -412,7 +412,7 @@ CK_TEST(the_history_a_child_scrolled_away_reaches_the_client_as_lines) {
     std::string burst;
     for (int line = 0; line < 12; ++line) burst += "scrolled-" + std::to_string(line) + "\r\n";
     terminal.session().feed_output(burst);
-    for (const ckm::proto::GridDelta& delta : engine.flush(terminals)) client.receive(delta);
+    for (const ckm::proto::GridDelta& delta : engine.flush(terminals).deltas) client.receive(delta);
 
     CK_CHECK(client.refusals == 0);
     CK_CHECK(client.gaps == 0);
@@ -444,7 +444,7 @@ CK_TEST(a_scrolling_child_costs_a_scroll_op_on_the_live_path_too) {
     (void)engine.snapshot(terminal.id(), terminal.session());
 
     terminal.session().feed_output("one more line\r\n");
-    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals);
+    const std::vector<ckm::proto::GridDelta> deltas = engine.flush(terminals).deltas;
     CK_CHECK(deltas.size() == 1U);
     if (deltas.empty()) return;
     int scrolls = 0;
@@ -455,4 +455,107 @@ CK_TEST(a_scrolling_child_costs_a_scroll_op_on_the_live_path_too) {
     }
     CK_CHECK(scrolls == 1);
     CK_CHECK(cell_ops <= 2);
+}
+
+// --- WP-16: pictures on the wire -------------------------------------------
+
+namespace {
+
+// An 8x12 pure-red picture at row 2, column 3 (so the anchor is not the
+// origin), drawn the way a child draws one.
+constexpr std::string_view kRedSixelAt23 = "\x1b[2;3H\x1bPq#0;2;100;0;0!8~-!8~\x1b\\";
+
+ckv::term::TerminalEmulator sixel_emulator() {
+    ckv::term::TerminalSubsessionOptions options;
+    return ckv::term::TerminalEmulator(ckv::term::embedded_xterm_sixel_profile(), options);
+}
+
+}  // namespace
+
+CK_TEST(a_picture_the_child_draws_travels_as_image_ops_and_only_once) {
+    ckv::term::TerminalEmulator emulator = sixel_emulator();
+    DiffEngine engine;
+    emulator.feed_output(kRedSixelAt23);
+
+    DiffEngine::TerminalTick tick = engine.flush(1, emulator);
+    // Begin, at least one chunk, end, place — in that order.
+    CK_CHECK(tick.images.size() >= 4U);
+    if (tick.images.size() < 4U) return;
+    const auto* begin = std::get_if<ckm::proto::ImageAddBegin>(&tick.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+    CK_CHECK(begin->width == 8U);
+    CK_CHECK(begin->height == 12U);
+
+    std::size_t pixel_bytes = 0;
+    bool ended = false;
+    const ckm::proto::ImagePlace* place = nullptr;
+    for (const ckm::proto::Message& op : tick.images) {
+        if (const auto* chunk = std::get_if<ckm::proto::ImageChunk>(&op))
+            pixel_bytes += chunk->bytes.size();
+        if (std::holds_alternative<ckm::proto::ImageEnd>(op)) ended = true;
+        if (const auto* placed = std::get_if<ckm::proto::ImagePlace>(&op)) place = placed;
+    }
+    CK_CHECK(ended);
+    CK_CHECK(pixel_bytes == static_cast<std::size_t>(begin->width) * begin->height * 4U);
+    CK_CHECK(place != nullptr);
+    if (place == nullptr) return;
+    CK_CHECK(place->term == 1U);
+    CK_CHECK(place->id == begin->id);
+    CK_CHECK(place->cells.x == 2);
+    CK_CHECK(place->cells.y == 1);
+
+    // Said once: a tick where the pictures did not change says nothing about
+    // them, however often it is taken.
+    CK_CHECK(engine.flush(1, emulator).images.empty());
+    CK_CHECK(engine.flush(1, emulator).images.empty());
+}
+
+CK_TEST(clearing_the_screen_removes_the_picture_from_the_wire) {
+    ckv::term::TerminalEmulator emulator = sixel_emulator();
+    DiffEngine engine;
+    emulator.feed_output(kRedSixelAt23);
+    const DiffEngine::TerminalTick placed = engine.flush(1, emulator);
+    const auto* begin = placed.images.empty()
+                            ? nullptr
+                            : std::get_if<ckm::proto::ImageAddBegin>(&placed.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+    const std::uint64_t placed_id = begin->id;
+
+    emulator.feed_output("\x1b[2J");
+    const DiffEngine::TerminalTick cleared = engine.flush(1, emulator);
+    bool removed = false;
+    for (const ckm::proto::Message& op : cleared.images)
+        if (const auto* remove = std::get_if<ckm::proto::ImageRemove>(&op))
+            removed = remove->term == 1U && remove->id == placed_id;
+    CK_CHECK(removed);
+}
+
+CK_TEST(attach_images_restates_exactly_what_the_clients_hold) {
+    ckv::term::TerminalEmulator emulator = sixel_emulator();
+    DiffEngine engine;
+    emulator.feed_output(kRedSixelAt23);
+    const DiffEngine::TerminalTick tick = engine.flush(1, emulator);
+    const auto* begin = tick.images.empty()
+                            ? nullptr
+                            : std::get_if<ckm::proto::ImageAddBegin>(&tick.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+
+    // A late attacher is handed the same picture under the SAME id, so the
+    // clients already watching and the one arriving agree about every
+    // placement without renumbering anybody.
+    const std::vector<ckm::proto::Message> restated = engine.attach_images(1);
+    CK_CHECK(restated.size() == tick.images.size());
+    const auto* restated_begin =
+        restated.empty() ? nullptr : std::get_if<ckm::proto::ImageAddBegin>(&restated.front());
+    CK_CHECK(restated_begin != nullptr);
+    if (restated_begin == nullptr) return;
+    CK_CHECK(restated_begin->id == begin->id);
+    bool placed_again = false;
+    for (const ckm::proto::Message& op : restated)
+        if (const auto* place = std::get_if<ckm::proto::ImagePlace>(&op))
+            placed_again = place->id == begin->id && place->cells.x == 2 && place->cells.y == 1;
+    CK_CHECK(placed_again);
 }

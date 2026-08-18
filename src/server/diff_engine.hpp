@@ -25,11 +25,13 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "common/grid_delta.hpp"
 #include "common/proto.hpp"
+#include "cvision/core/image.hpp"
 #include "server/terminals.hpp"
 
 namespace ckm::server {
@@ -91,6 +93,33 @@ public:
     // number and no PTY in the way.
     std::optional<proto::GridDelta> flush(TerminalId id, const ckv::core::TerminalSubsession& source);
 
+    // The picture ops for this tick (WP-16): what has to be said so a mirror's
+    // rasters match the terminal's. Same reading discipline as flush() — a pure
+    // read, damage cleared by the engine afterwards — and the same belief
+    // model: what the clients hold is what this differ last emitted.
+    //
+    // Change detection is object identity, and it is exact BECAUSE the belief
+    // retains each placed image's shared_ptr: the emulator copies-on-write into
+    // any image somebody else still holds (terminal_emulator.cpp,
+    // damage_rasters), so pixels that changed always arrive as a new object,
+    // and an unchanged pointer really is unchanged pixels. Wire ids are minted
+    // per PLACEMENT from the engine-wide counter — the proto's Add/Place/Remove
+    // carry no placement id of their own, so one id must mean one placed
+    // picture. The same image placed twice therefore ships its pixels twice;
+    // the emulator's decode cache makes that rare, and ambiguity would be
+    // worse than repetition.
+    std::vector<proto::Message> flush_images(TerminalId id,
+                                             const ckv::core::TerminalSubsession& source,
+                                             std::uint64_t& next_image_id);
+
+    // The pictures a client attaching NOW must be given: the believed set,
+    // exactly as the clients already watching hold it — not the terminal's
+    // current set, which everyone learns together at the next tick. Emitted
+    // per attach; ids stay stable across snapshots, so a second client's
+    // attach re-sends ids the first already holds, which the mirror treats as
+    // the restatement it is.
+    std::vector<proto::Message> attach_images(TerminalId id) const;
+
     // Everything a client attaching now has to be told about this terminal,
     // and the reset of the sequence that goes with it: the deltas that follow
     // start again at 1, so a client's continuity check works from its first
@@ -110,11 +139,24 @@ public:
     const GridState& believed() const noexcept { return believed_; }
 
 private:
+    // One placed picture as the clients are believed to hold it. The retained
+    // shared_ptr is load-bearing twice over: it is the change detector (see
+    // flush_images), and it is what attach_images serializes — which is the
+    // pixels the watching clients were sent, not whatever the emulator has
+    // erased into since.
+    struct BelievedRaster {
+        std::shared_ptr<const ckv::Image> image;
+        std::uint64_t wire_id = 0;
+        ckv::Point anchor;
+        ckv::Size cell_extent;
+    };
+
     // The server's belief carries no history: it never diffs against one (the
     // lines that entered it come from the damage report), and holding a copy
     // per terminal would be the memory U0-b was about. The client keeps the
     // history, because the client is what a reader pages through.
     GridState believed_;
+    std::vector<BelievedRaster> believed_rasters_;
     std::uint32_t sequence_ = 0;
     bool needs_snapshot_ = false;
     bool history_diverged_ = false;
@@ -123,9 +165,30 @@ private:
 // Every terminal the server owns, diffed at the flush tick.
 class DiffEngine {
 public:
-    // One tick. Returns a delta per terminal that had news, in terminal-id
-    // order so the sequence a client sees is the order the server produced.
-    std::vector<proto::GridDelta> flush(Terminals& terminals);
+    // A picture op with the terminal it belongs to. Add/Chunk/End name only a
+    // global image id, so the terminal has to travel beside them for the
+    // server's session filter to know whose client may see the pixels.
+    struct ImageOp {
+        TerminalId term = 0;
+        proto::Message message;
+    };
+    // One terminal's tick: the grid delta, if the grid had news, and the
+    // picture ops, if the pictures did. Either can be empty; both read the
+    // same damage, which the engine clears once after both have read.
+    struct TerminalTick {
+        std::optional<proto::GridDelta> delta;
+        std::vector<proto::Message> images;
+    };
+    // One tick over every terminal.
+    struct Tick {
+        std::vector<proto::GridDelta> deltas;
+        std::vector<ImageOp> images;
+    };
+
+    // One tick. Deltas and image ops per terminal that had news, in
+    // terminal-id order so the sequence a client sees is the order the server
+    // produced.
+    Tick flush(Terminals& terminals);
 
     // One terminal, for a caller holding the seam directly rather than a
     // collection — and the reason this exists at all: the differ's `flush` is a
@@ -134,10 +197,12 @@ public:
     // this file walked into on its first day (a differ read in a loop with
     // nothing clearing damage re-copied the whole history every tick, and the
     // measurement was forty times slower than it should have been).
-    std::optional<proto::GridDelta> flush(TerminalId id, ckv::core::TerminalSubsession& source);
+    TerminalTick flush(TerminalId id, ckv::core::TerminalSubsession& source);
 
     // The attach path, per terminal.
     proto::TerminalState snapshot(TerminalId id, const ckv::core::TerminalSubsession& source);
+    // The believed pictures for the same path, sent right after the snapshot.
+    std::vector<proto::Message> attach_images(TerminalId id) const;
 
     // A terminal that has closed. Its id is never reused (WP-3), so forgetting
     // it cannot be confused with a new terminal arriving.
@@ -151,6 +216,9 @@ private:
     // whatever a hash happened to do. A client cannot tell, but a test can,
     // and a test that cannot tell is a test that cannot check the sequence.
     std::map<TerminalId, TerminalDiffer> differs_;
+    // Engine-wide, never reused, never zero: a wire image id names one placed
+    // picture for the whole connection's life, whichever terminal placed it.
+    std::uint64_t next_image_id_ = 1;
 };
 
 }  // namespace ckm::server

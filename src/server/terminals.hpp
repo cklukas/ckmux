@@ -53,6 +53,13 @@ struct TerminalSpec {
     // than a size.
     int pixel_width = 0;
     int pixel_height = 0;
+    // Whether the opening client's OUTER terminal reported Sixel (WP-16).
+    // Folded into the child's advertisement together with `[terminal] sixel`:
+    // a child told "yes" draws a picture the reader can actually see, and a
+    // child told "no" draws its text fallback instead of pixels nobody could.
+    // True when no client said otherwise, so a terminal opened without a UI
+    // client (a respawn, a future CLI) follows the setting alone.
+    bool host_sixel = true;
 };
 
 // One terminal: a PTY, the program in it, and the emulator that reads it.

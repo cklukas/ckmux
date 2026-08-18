@@ -44,6 +44,12 @@ void TerminalMirror::adopt(const proto::TerminalState& state) {
 
     history_cache_valid_ = false;
     damage_ = everything(state_.cells);
+    // The pictures are restated after every snapshot (the server's
+    // attach_images follows the Attached), so whatever was held goes the same
+    // way the grid did.
+    rasters_.clear();
+    raster_wire_ids_.clear();
+    damage_.rasters = true;
     // A snapshot is what a lost sequence is cured by, so taking one is what
     // makes the mirror current again — and the count starts over, which is why
     // the next delta's seq of 1 means something (plans/05).
@@ -189,6 +195,45 @@ void TerminalMirror::note_row(int row, int first, int last) {
 
 void TerminalMirror::note_every_row() {
     for (int row = 0; row < state_.cells.height; ++row) note_row(row, 0, state_.cells.width);
+}
+
+void TerminalMirror::place_image(std::uint64_t id, std::shared_ptr<const ckv::Image> image,
+                                 ckv::Point anchor, ckv::Size cell_extent) {
+    for (std::size_t index = 0; index < raster_wire_ids_.size(); ++index) {
+        if (raster_wire_ids_[index] != id) continue;
+        rasters_[index].anchor = anchor;
+        rasters_[index].cell_extent = cell_extent;
+        if (image != nullptr) rasters_[index].image = std::move(image);
+        damage_.rasters = true;
+        return;
+    }
+    // A bare move for a picture this mirror never received: ignored, because
+    // the snapshot that heals whatever gap caused it restates the pictures.
+    if (image == nullptr) return;
+    ckv::core::TerminalRaster raster;
+    raster.id = raster_identity_;
+    raster.anchor = anchor;
+    raster.cell_extent = cell_extent;
+    raster.image = std::move(image);
+    raster.fallback = "[sixel]";
+    rasters_.push_back(std::move(raster));
+    raster_wire_ids_.push_back(id);
+    damage_.rasters = true;
+}
+
+void TerminalMirror::remove_image(std::uint64_t id) {
+    for (std::size_t index = 0; index < raster_wire_ids_.size(); ++index) {
+        if (raster_wire_ids_[index] != id) continue;
+        rasters_.erase(rasters_.begin() + static_cast<std::ptrdiff_t>(index));
+        raster_wire_ids_.erase(raster_wire_ids_.begin() + static_cast<std::ptrdiff_t>(index));
+        damage_.rasters = true;
+        return;
+    }
+}
+
+void TerminalMirror::set_raster_identity(int identity) noexcept {
+    raster_identity_ = identity;
+    for (ckv::core::TerminalRaster& raster : rasters_) raster.id = identity;
 }
 
 }  // namespace ckm::client

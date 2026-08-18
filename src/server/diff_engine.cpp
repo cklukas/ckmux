@@ -2,6 +2,8 @@
 #include "server/diff_engine.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <span>
 #include <utility>
 
 namespace ckm::server {
@@ -202,26 +204,151 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
     return state;
 }
 
-std::optional<proto::GridDelta> DiffEngine::flush(TerminalId id,
-                                                 ckv::core::TerminalSubsession& source) {
-    std::optional<proto::GridDelta> delta = differs_[id].flush(id, source);
+namespace {
+
+// AddBegin, the pixel chunks, End — the whole picture on the wire. RGBA rows
+// exactly as `Image` holds them (stride == width * 4, no padding), split at
+// the chunk cap the codec enforces.
+void append_image_payload(std::vector<proto::Message>& ops, std::uint64_t wire_id,
+                          const ckv::Image& image) {
+    proto::ImageAddBegin begin;
+    begin.id = wire_id;
+    begin.width = static_cast<std::uint16_t>(std::max(0, image.width()));
+    begin.height = static_cast<std::uint16_t>(std::max(0, image.height()));
+    ops.push_back(begin);
+    const std::size_t total =
+        static_cast<std::size_t>(image.stride()) * static_cast<std::size_t>(image.height());
+    const char* const bytes = reinterpret_cast<const char*>(image.data());
+    std::uint32_t seq = 0;
+    for (std::size_t offset = 0; offset < total; offset += proto::kMaxChunkPayloadBytes) {
+        proto::ImageChunk chunk;
+        chunk.id = wire_id;
+        chunk.seq = seq++;
+        chunk.bytes.assign(bytes + offset,
+                           std::min<std::size_t>(proto::kMaxChunkPayloadBytes, total - offset));
+        ops.push_back(std::move(chunk));
+    }
+    proto::ImageEnd end;
+    end.id = wire_id;
+    ops.push_back(end);
+}
+
+proto::ImagePlace place_of(TerminalId id, std::uint64_t wire_id, ckv::Point anchor,
+                           ckv::Size cell_extent) {
+    proto::ImagePlace place;
+    place.term = id;
+    place.id = wire_id;
+    place.cells = proto::Rect{static_cast<std::int16_t>(anchor.x),
+                              static_cast<std::int16_t>(anchor.y),
+                              static_cast<std::uint16_t>(std::max(0, cell_extent.width)),
+                              static_cast<std::uint16_t>(std::max(0, cell_extent.height))};
+    return place;
+}
+
+}  // namespace
+
+std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
+                                                         const ckv::core::TerminalSubsession& source,
+                                                         std::uint64_t& next_image_id) {
+    const std::span<const ckv::core::TerminalRaster> current = source.rasters();
+    if (current.empty() && believed_rasters_.empty()) return {};
+
+    // Match every current raster to a believed placement by pixel-object
+    // identity, one to one. The pass is written to say the removes first, so
+    // a client's picture memory shrinks before it grows.
+    std::vector<bool> kept(believed_rasters_.size(), false);
+    std::vector<std::size_t> matched(current.size(), SIZE_MAX);
+    for (std::size_t index = 0; index < current.size(); ++index) {
+        if (current[index].image == nullptr) continue;
+        for (std::size_t believed = 0; believed < believed_rasters_.size(); ++believed) {
+            if (kept[believed]) continue;
+            if (believed_rasters_[believed].image.get() == current[index].image.get()) {
+                kept[believed] = true;
+                matched[index] = believed;
+                break;
+            }
+        }
+    }
+
+    std::vector<proto::Message> ops;
+    for (std::size_t believed = 0; believed < believed_rasters_.size(); ++believed) {
+        if (kept[believed]) continue;
+        proto::ImageRemove remove;
+        remove.term = id;
+        remove.id = believed_rasters_[believed].wire_id;
+        ops.push_back(remove);
+    }
+
+    std::vector<BelievedRaster> next;
+    next.reserve(current.size());
+    for (std::size_t index = 0; index < current.size(); ++index) {
+        const ckv::core::TerminalRaster& raster = current[index];
+        if (raster.image == nullptr) continue;
+        if (matched[index] != SIZE_MAX) {
+            BelievedRaster entry = believed_rasters_[matched[index]];
+            const bool moved = entry.anchor.x != raster.anchor.x ||
+                               entry.anchor.y != raster.anchor.y ||
+                               entry.cell_extent.width != raster.cell_extent.width ||
+                               entry.cell_extent.height != raster.cell_extent.height;
+            if (moved) {
+                entry.anchor = raster.anchor;
+                entry.cell_extent = raster.cell_extent;
+                ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
+            }
+            next.push_back(std::move(entry));
+            continue;
+        }
+        BelievedRaster entry;
+        entry.image = raster.image;
+        entry.wire_id = next_image_id++;
+        entry.anchor = raster.anchor;
+        entry.cell_extent = raster.cell_extent;
+        append_image_payload(ops, entry.wire_id, *entry.image);
+        ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
+        next.push_back(std::move(entry));
+    }
+    believed_rasters_ = std::move(next);
+    return ops;
+}
+
+std::vector<proto::Message> TerminalDiffer::attach_images(TerminalId id) const {
+    std::vector<proto::Message> ops;
+    for (const BelievedRaster& entry : believed_rasters_) {
+        append_image_payload(ops, entry.wire_id, *entry.image);
+        ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
+    }
+    return ops;
+}
+
+DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSubsession& source) {
+    TerminalDiffer& differ = differs_[id];
+    TerminalTick tick;
+    tick.delta = differ.flush(id, source);
+    tick.images = differ.flush_images(id, source, next_image_id_);
     // Sent: the host saying it has caught up. Here rather than inside the
     // differ, so that a terminal with several clients watching it has its
     // damage cleared once, after all of them have read — not by whichever one
     // looked first.
     source.clear_damage();
-    return delta;
+    return tick;
 }
 
-std::vector<proto::GridDelta> DiffEngine::flush(Terminals& terminals) {
-    std::vector<proto::GridDelta> deltas;
+DiffEngine::Tick DiffEngine::flush(Terminals& terminals) {
+    Tick tick;
     for (const TerminalId id : terminals.ids()) {
         Terminal* terminal = terminals.find(id);
         if (terminal == nullptr) continue;
-        std::optional<proto::GridDelta> delta = flush(id, terminal->session());
-        if (delta.has_value()) deltas.push_back(std::move(*delta));
+        TerminalTick per_terminal = flush(id, terminal->session());
+        if (per_terminal.delta.has_value()) tick.deltas.push_back(std::move(*per_terminal.delta));
+        for (proto::Message& message : per_terminal.images)
+            tick.images.push_back(ImageOp{id, std::move(message)});
     }
-    return deltas;
+    return tick;
+}
+
+std::vector<proto::Message> DiffEngine::attach_images(TerminalId id) const {
+    const TerminalDiffer* differ = differ_for(id);
+    return differ == nullptr ? std::vector<proto::Message>{} : differ->attach_images(id);
 }
 
 proto::TerminalState DiffEngine::snapshot(TerminalId id,

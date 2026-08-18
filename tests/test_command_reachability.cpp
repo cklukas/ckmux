@@ -162,4 +162,50 @@ CK_TEST(the_window_list_shows_the_windows_and_not_an_empty_box) {
     CK_CHECK(rows_naming_a_terminal >= static_cast<int>(terminals));
 }
 
+CK_TEST(terminal_report_shows_the_hosts_evidence_with_the_decoded_count) {
+    // Help ▸ Terminal Report (plans/07 L-56): ckVision's dialog over the
+    // OUTER host's capabilities, with ckmux's claimed handler adding the
+    // decoded-SGR-reports line only a host can count. The check is the
+    // reader's: the words, on the screen, inside the dialog's rectangle.
+    ClientOptions options = test_options();
+    options.mouse_reports_probe = [] { return std::size_t{412}; };
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client{app, std::move(options)};
+
+    const ckv::ui::CommandId report = app.commands().standard().terminal_report;
+    CK_CHECK(app.commands().has_handler(report));
+    CK_CHECK(app.command_available(report));
+    CK_CHECK(app.execute_command(report));
+    app.step(clock.now_nanos());
+
+    ckv::widgets::Window* dialog = nullptr;
+    for (ckv::widgets::Window* window : client.desktop().windows())
+        if (window->title() == "Terminal report") dialog = window;
+    CK_CHECK(dialog != nullptr);
+    if (dialog == nullptr) return;
+
+    ckv::term::VirtualDisplay display(Size{100, 30});
+    (void)display.write(terminal.written_bytes());
+    bool decoded_line = false;
+    bool capability_row = false;
+    const ckv::Rect area = dialog->bounds();
+    for (int y = area.y + 1; y < area.y + area.height - 1 && y < 30; ++y) {
+        std::string row;
+        for (int x = area.x + 1; x < area.x + area.width - 1 && x < 100; ++x) {
+            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            if (!cell.is_continuation()) row += cell.grapheme();
+        }
+        if (row.find("Mouse reports decoded") != std::string::npos &&
+            row.find("412") != std::string::npos)
+            decoded_line = true;
+        // The first capability entries sit at the top of the table, so they
+        // are on screen however small the desktop clamps the dialog.
+        if (row.find("Cell grid") != std::string::npos) capability_row = true;
+    }
+    CK_CHECK(decoded_line);
+    CK_CHECK(capability_row);
+}
+
 #endif  // !_WIN32

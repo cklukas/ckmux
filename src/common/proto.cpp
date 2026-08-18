@@ -381,6 +381,7 @@ void write(Writer& w, const Attach& m) {
     w.u16(m.rows);
     w.u16(m.pixel_width);
     w.u16(m.pixel_height);
+    w.u8(m.host_sixel);
 }
 void read(Reader& r, Attach& m) {
     m.session = r.u64();
@@ -388,6 +389,7 @@ void read(Reader& r, Attach& m) {
     m.rows = r.u16();
     m.pixel_width = r.u16();
     m.pixel_height = r.u16();
+    m.host_sixel = r.u8();
 }
 
 void write(Writer& w, const ClientResize& m) {
