@@ -344,6 +344,23 @@ void Server::serve(Client& client) {
 void Server::handle(Client& client, const proto::Message& message) {
     const proto::MessageType type = proto::type_of(message);
 
+    // A CLI client already told a version mismatch to run this exact request,
+    // and now has nothing left to say but the request itself: `KillServer`
+    // needs no protocol agreement (no payload; its frame is the eight-byte
+    // header alone), so it is the one message honoured without a completed
+    // handshake. Anything else — a second Hello, an ordinary command, silence
+    // past the deadline `flush_tick` enforces — ends the connection exactly as
+    // an ordinary mismatch would.
+    if (client.awaiting_kill_from_mismatched_cli) {
+        if (std::holds_alternative<proto::KillServer>(message)) {
+            std::fprintf(stderr, "ckmux server: stopping at a client's request (protocol mismatch)\n");
+            running_ = false;
+            return;
+        }
+        drop(client, "spoke another version of the protocol and did not ask to kill the server");
+        return;
+    }
+
     if (!client.greeted) {
         // Every connection says Hello first. A connection that says anything
         // else is either a much older client or not a client at all, and in
@@ -367,6 +384,16 @@ void Server::handle(Client& client, const proto::Message& message) {
                                ". They are the same program, so one of them is from before an "
                                "upgrade: end the running server with `ckmux kill-server` (every "
                                "terminal in it is lost) or keep using the client that matches it."});
+            // A UI client has nothing safe to do with a server it cannot
+            // understand and is dropped exactly as before. A CLI client is
+            // given one bounded chance to be the `kill-server` this refusal
+            // just told somebody to run — which is the ordinary reason a CLI
+            // client is the one connecting to a server it does not match.
+            if (hello->client_kind == proto::ClientKind::Cli) {
+                client.awaiting_kill_from_mismatched_cli = true;
+                client.mismatch_kill_deadline_nanos = clock_.now_nanos() + 2'000'000'000;
+                return;
+            }
             drop(client, "speaks another version of the protocol");
             return;
         }
@@ -1349,6 +1376,14 @@ void Server::flush_tick() {
     // later tick late, and a server that was suspended does not owe a thousand
     // ticks when it wakes.
     next_tick_nanos_ = now + period;
+
+    // A mismatched CLI client that never sent the `KillServer` its own
+    // refusal invited it to send does not hold a connection open forever.
+    for (const std::unique_ptr<Client>& client : clients_) {
+        if (!client->awaiting_kill_from_mismatched_cli || client->closing) continue;
+        if (now >= client->mismatch_kill_deadline_nanos)
+            drop(*client, "did not ask to kill the server within the mismatch window");
+    }
 
     for (const TerminalId id : terminals_.ids())
         if (Terminal* terminal = terminals_.find(id)) terminal->observe_exit();

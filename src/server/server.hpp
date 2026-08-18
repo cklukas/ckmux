@@ -128,6 +128,17 @@ private:
         proto::FrameReader reader;
         bool greeted = false;
         proto::ClientKind kind = proto::ClientKind::Ui;
+        // A CLI client's Hello named a protocol version this server does not
+        // speak, so its Refuse carries the words "end the running server with
+        // `ckmux kill-server`" — but killing a mismatched server needs a
+        // connection to still be open to receive that request on. `KillServer`
+        // is the one message with nothing to agree on: no payload, and its
+        // encoding is the eight-byte frame header alone, which has not changed
+        // and has no reason to. Bounded rather than held open indefinitely — a
+        // connection that says anything else, or nothing, in the meantime is
+        // dropped exactly as an ordinary mismatch would be.
+        bool awaiting_kill_from_mismatched_cli = false;
+        std::int64_t mismatch_kill_deadline_nanos = 0;
         // Attached to the session, and therefore the one client being sent
         // deltas. At most one at a time (plans/03: takeover — the latest client
         // always wins), which is also why one belief per terminal is the whole

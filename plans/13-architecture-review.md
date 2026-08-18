@@ -93,6 +93,26 @@ supporting both.
   two-process reproduction (`test_core_promise.cpp`'s pattern: a forked
   server, a real socket, a real host terminal or a recorded one) rather than
   the synthetic harnesses used here.
+- **`ckmux kill-server` could not reach a mismatched server — confirmed,
+  fixed.** Chasing the staleness theory above surfaced this directly: the
+  running server was `./build/ckmux` last built at 12:05, hours before the
+  protocol v3 bump; `ckmux kill-server` against it printed the refusal
+  ("end the running server with `ckmux kill-server`") and then exited —
+  the fix the message named was the one thing it made unreachable.
+  `main.cpp`'s `kill_server()` already had a comment saying "a server of
+  another version can still be killed — that is usually exactly why
+  somebody is running this," but the code `return 1;`'d right after
+  printing the refusal instead of falling through to send `KillServer`,
+  and even if it had, `server.cpp` called `drop(client, ...)` immediately
+  after sending `Refuse`, closing the connection before any further message
+  could arrive. Fixed on both ends: the server gives a CLI-kind client
+  (never a UI client) one bounded 2-second window after a version-mismatch
+  refusal to send exactly `KillServer` — no payload, nothing to agree on —
+  and honours it; the CLI's own `kill_server()` now sends `KillServer`
+  regardless of whether it was refused, instead of giving up. Two tests in
+  `tests/test_server_lifecycle.cpp`: the successful kill, and that a
+  mismatched CLI connection that asks for anything else (or nothing) is
+  still dropped within the window rather than held open indefinitely.
 
 ## Critical findings
 

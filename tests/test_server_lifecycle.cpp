@@ -144,10 +144,12 @@ struct WireClient {
     }
 
     // Says Hello at `version` and returns what came back.
-    bool greet(ckm::proto::Message& answer, std::uint32_t version = ckm::proto::kProtocolVersion) {
+    bool greet(ckm::proto::Message& answer, std::uint32_t version = ckm::proto::kProtocolVersion,
+              ckm::proto::ClientKind kind = ckm::proto::ClientKind::Ui) {
         ckm::proto::Hello hello;
         hello.proto_version = version;
         hello.build = "a test";
+        hello.client_kind = kind;
         say(hello);
         return hear(answer);
     }
@@ -369,6 +371,69 @@ CK_TEST(a_client_of_another_protocol_version_is_refused_with_the_remedy_in_words
 
     // The server is unharmed: one refused client is not a reason to stop
     // serving the others.
+    WireClient ordinary;
+    CK_CHECK(ordinary.connect(socket));
+    ckm::proto::Message greeting;
+    CK_CHECK(ordinary.greet(greeting));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+
+    end_server(server);
+    forget(socket);
+}
+
+CK_TEST(kill_server_can_still_reach_a_server_of_another_protocol_version) {
+    // Reported live (2026-08-18): a reader upgraded ckmux and could not run
+    // `ckmux kill-server` against the old server this refusal names, because
+    // the CLI's own Hello was refused and dropped before `KillServer` could
+    // ever be sent — the fix this refusal names was the one thing it made
+    // unreachable. `KillServer` carries no payload and needs no protocol
+    // agreement, so a CLI client gets one bounded chance to send exactly that
+    // after a mismatch, and the server acts on it.
+    const std::filesystem::path socket = private_socket("kill-mismatch");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_foreground_server(socket);
+    CK_CHECK(wait_for_socket(socket, 4000));
+
+    WireClient cli;
+    CK_CHECK(cli.connect(socket));
+    ckm::proto::Message answer;
+    CK_CHECK(cli.greet(answer, ckm::proto::kProtocolVersion + 1, ckm::proto::ClientKind::Cli));
+    CK_CHECK(std::get_if<ckm::proto::Refuse>(&answer) != nullptr);
+
+    // Held open rather than dropped — the whole point of this test is that
+    // the connection survives the mismatch long enough to carry one more
+    // message.
+    cli.say(ckm::proto::KillServer{});
+    CK_CHECK(reap_within(server, 4000));
+    forget(socket);
+}
+
+CK_TEST(a_mismatched_cli_that_does_not_ask_to_kill_is_dropped_within_the_window) {
+    // The other half of the same fix: the exception is for `KillServer`
+    // specifically, not a general amnesty for a CLI client's version. A
+    // connection that says nothing else, or asks for something else, does not
+    // hold a slot open indefinitely — bounded and dropped, exactly as an
+    // ordinary mismatch is (m-plat: no unbounded connection is free just
+    // because nobody asked to close it).
+    const std::filesystem::path socket = private_socket("kill-mismatch-silent");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_foreground_server(socket);
+    CK_CHECK(wait_for_socket(socket, 4000));
+
+    WireClient cli;
+    CK_CHECK(cli.connect(socket));
+    ckm::proto::Message answer;
+    CK_CHECK(cli.greet(answer, ckm::proto::kProtocolVersion + 1, ckm::proto::ClientKind::Cli));
+    CK_CHECK(std::get_if<ckm::proto::Refuse>(&answer) != nullptr);
+
+    // Nothing sent. Past the server's own bounded window, the connection ends
+    // on its own — the reader gets EOF, not an indefinite hang — and the
+    // server is still standing to prove the wait did not cost it anything.
+    ckm::proto::Message nothing;
+    CK_CHECK(!cli.hear(nothing, 3000));
+
     WireClient ordinary;
     CK_CHECK(ordinary.connect(socket));
     ckm::proto::Message greeting;

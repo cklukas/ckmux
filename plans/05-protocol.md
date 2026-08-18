@@ -56,6 +56,17 @@ change; mismatch → `Refuse` with both versions and the remedy in the text
 ([02](02-architecture.md)) but upgrades leave old servers running — this
 message will be seen, so it is designed, not an afterthought.
 
+**The remedy the refusal names has to still be reachable.** A UI client with
+a mismatched `Hello` is dropped immediately — it has nothing safe to do with
+a server it cannot understand. A CLI client is given one bounded chance
+(2 seconds) to send exactly `KillServer` after the refusal, and the server
+honours it: no payload, no protocol to agree on, just the eight-byte frame
+header. Reported live (2026-08-18) — before this, `ckmux kill-server`
+against a mismatched server was refused and dropped before `KillServer`
+could ever be sent, so the refusal's own remedy was the one thing it made
+unreachable. Anything else sent in that window, or nothing at all, ends the
+connection exactly as an ordinary mismatch does.
+
 ## Message catalog
 
 **The `Today` column is the catalogue's liveness, and it is evidence rather

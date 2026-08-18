@@ -117,9 +117,10 @@ int kill_server(const std::filesystem::path& socket) {
     if (const auto* refuse = std::get_if<ckm::proto::Refuse>(&answer)) {
         // A server of another version can still be killed — that is usually
         // exactly why somebody is running this — but it is worth saying which
-        // one they are talking to.
+        // one they are talking to. Printed, not fatal: the server kept this
+        // connection open for exactly one more message on the strength of that
+        // sentence, and `KillServer` is that message.
         std::fprintf(stderr, "ckmux: %s\n", refuse->reason.c_str());
-        return 1;
     }
     (void)stream.send(ckm::proto::encode(ckm::proto::KillServer{}));
     (void)stream.flush();
