@@ -27,14 +27,18 @@ htop, mc — with full color, mouse support, and Sixel graphics.
 It is built on [ckVision](../ckvision), a windowed terminal-UI framework, and
 is developed together with it.
 
-## Status: M1
+## Status: M2 in progress
 
-Early. The client interface is real and usable — menu bar with a clock and its
-drop-down calendar, footer, floating terminal windows, the prefix and its
-which-key popup, window management, context help, and themes chosen in
-`Settings ▸ General…` — but terminals still run in the client process and do
-**not** yet survive quitting. The detached server that makes them persistent is
-M2. See [plans/10-roadmap.md](plans/10-roadmap.md).
+The core promise works: terminals run in a detached server, survive the
+client quitting, and reattach exactly where they left off — a test forks a
+real server, kills the client mid-count, and proves the program kept running
+unwatched. Sessions are plural, named, and killable; the interface — menu bar
+with clock and calendar, footer, floating terminal windows, the prefix and its
+which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
+`Settings ▸ General…` — is real and usable. Not every M2 edge is closed yet:
+the open items live in [plans/12-work-packages.md](plans/12-work-packages.md)
+and [plans/13-architecture-review.md](plans/13-architecture-review.md). See
+[plans/10-roadmap.md](plans/10-roadmap.md) for what each milestone means.
 
 ## Build
 

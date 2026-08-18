@@ -39,6 +39,7 @@ and is scheduled inside the ckmux milestones in [10-roadmap.md](10-roadmap.md).
 | 10 | [Roadmap, Risks & Open Questions](10-roadmap.md) | Milestones M0–M5 with acceptance criteria, parking lot, risk table, questions to answer at M0 |
 | 11 | [Engineering Conventions](11-conventions.md) | Inherited ckVision discipline: style, determinism, provenance rule, workflow, definition of done |
 | 12 | [Work Packages](12-work-packages.md) | **The queue.** Numbered packages, one state each, and the rule for picking the next one |
+| 13 | [Architecture Review Findings](13-architecture-review.md) | The 2026-08-18 review: verified findings and their remediation state |
 
 Suggested reading order: 01 → 02 → 03 → 07 → 04 → 05 → 06 → 08 → 09 → 10 → 11.
 
