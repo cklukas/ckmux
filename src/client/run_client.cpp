@@ -13,6 +13,7 @@
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
+#include "cvision/core/assert.hpp"
 #include "cvision/core/clock.hpp"
 #include "cvision/term/terminal.hpp"
 #include "cvision/ui/application.hpp"
@@ -45,10 +46,18 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         return 1;
     }
 
-    ckv::ui::Application app(terminal, clock);
+    // The session is declared BEFORE the application, and the order is the
+    // point. `Application` owns the desktop, its windows and their
+    // `TerminalView`s; the session owns the mirrors those views borrow, and a
+    // view borrows its subsession for as long as it exists (ckVision's
+    // lifetime rule). Locals are destroyed in reverse, so with the application
+    // first the mirrors were freed and the views were then destroyed reading
+    // them. Declaring the session first makes the end of this function
+    // provably safe rather than accidentally so.
     ServerSession session([&connection](const proto::Message& message) {
         (void)connection.stream.send(proto::encode(message));
     });
+    ckv::ui::Application app(terminal, clock);
     // What this display can actually show, said once and carried on every
     // Attach: the server folds it into the graphics advertisement the
     // children this client opens are given (WP-16). Read from the probed
@@ -59,11 +68,30 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // from a server that has gone is not the beginning of one from its
     // successor.
     proto::FrameReader reader;
+    // The client, once it exists. Declared here because the teardown below has
+    // to reach both halves of what this loop holds.
+    ClientApp* client = nullptr;
+    // Everything this client was showing of a server that is no longer there.
+    //
+    // Windows first, then mirrors, and never the other way round: a
+    // `TerminalView` borrows the subsession it draws, so dropping the mirrors
+    // first leaves every view on the desktop pointing at freed memory — and
+    // the next repaint, or the window's own destructor, reads it.
+    // `connection_lost()` also forgets which terminals the window layer was
+    // told about, which is right here: there are none left to tell it about.
+    const auto stop_showing_this_server = [&client, &session]() {
+        if (client != nullptr) {
+            client->forget_terminals();
+            client->set_attached_session(0, {});
+        }
+        session.connection_lost();
+    };
     // A server ends with its last session (plans/03), so losing the connection
     // is an ordinary thing that happens to a client whose reader ended their
     // work — not a failure. The next request that needs a server starts one,
     // exactly as the first one did.
-    const auto ensure_connected = [&connection, &session, &reader, &options]() -> bool {
+    const auto ensure_connected = [&connection, &reader, &options,
+                                   &stop_showing_this_server]() -> bool {
         if (connection.stream.open()) return true;
         ServerConnection fresh =
             connect_to_server(options.socket, options.executable, proto::ClientKind::Ui);
@@ -72,14 +100,28 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         reader = proto::FrameReader{};
         // Nothing this client held survives: the mirrors were of terminals in
         // another process, and the attachment was to a session that server had.
-        session.connection_lost();
+        stop_showing_this_server();
         return true;
     };
     session.set_history_limit(static_cast<std::size_t>(options.client.settings.scrollback));
+    // What the VIEWS over this server's terminals may draw, from the reader's
+    // own configuration (plans/08). The child's advertisement is the server's
+    // to decide — it runs the emulator, and `Attach.host_sixel` is this
+    // client's half of that — but the profile a `TerminalView` reads is the
+    // client's, and left at the built-in default a reader's `[terminal]`
+    // settings reached the server and never the window they were looking at.
+    {
+        ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
+        profile.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
+        profile.mouse_reporting = options.client.settings.mouse;
+        profile.alternate_scroll = options.client.settings.alternate_scroll;
+        profile.sixel = options.client.settings.sixel == SixelMode::Auto;
+        profile.clipboard_policy = options.client.settings.osc52
+                                       ? ckv::core::TerminalClipboardPolicy::AllowWrite
+                                       : ckv::core::TerminalClipboardPolicy::Deny;
+        session.set_profile(std::move(profile));
+    }
 
-    // Windows follow terminals, and terminals belong to the server. A window is
-    // opened when the server says a terminal exists, which is also what makes a
-    // reattach draw what is already running rather than starting something new.
     // Windows follow the server's terminals. A window opens when a terminal is
     // announced — which covers both a reader asking for a new one and every
     // terminal that was already running when this client attached, and is why a
@@ -89,18 +131,37 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // application: a mirror has no descriptors to wait on and nothing to drain,
     // so adoption would buy nothing and would split the ownership of the very
     // thing the routing looks up by id.
-    ClientApp* client = nullptr;
     std::vector<RemoteTerminalSubsession*> pending;
     options.client.terminal_source =
         [&pending](TerminalRequest request) -> ckv::term::TerminalSubsession& {
+        // The launch spec is composed and then dropped, and that is the honest
+        // answer for a terminal that is not launched here: what a child runs,
+        // where, and what it is told it can draw are the SERVER's, because the
+        // server is the process that holds the child (plans/02). The one part
+        // of it a client keeps — the capability profile its views read — is
+        // set once on the session above, not per window.
         (void)request;
+        // Never empty by construction: the one caller that opens a window for
+        // a remote terminal — `on_terminal_opened` below, which is also where
+        // a reattach's reconciliation arrives — pushes the subsession the
+        // window is FOR immediately before asking for the window. An empty
+        // queue would mean a window opened with no terminal behind it, which
+        // is a routing mistake worth finding rather than a reference worth
+        // inventing.
+        CKV_ASSERT(!pending.empty());
         RemoteTerminalSubsession* ready = pending.front();
         pending.erase(pending.begin());
         return *ready;
     };
-    options.client.request_new_terminal = [&session, &options]() {
+    // What a new terminal runs. Copied out of the options rather than read
+    // through them, because they are MOVED into the client below: every read
+    // after that point is a read of a moved-from object, and this one quietly
+    // became "" — so the server picked the shell and a reader's `[general]
+    // shell` did nothing at all. Filled in once the client has resolved it.
+    std::string shell_for_new_terminals;
+    options.client.request_new_terminal = [&session, &shell_for_new_terminals]() {
         proto::NewTerminal ask;
-        ask.command = options.client.settings.shell;
+        ask.command = shell_for_new_terminals;
         session.request(ask);
         return true;
     };
@@ -137,7 +198,15 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     const auto switch_to = [&session, &client, &terminal, &ensure_connected](std::uint64_t id) {
         if (session.attached() && session.session() == id) return;
         if (!ensure_connected()) return;
-        if (client != nullptr) client->forget_terminals();
+        if (client != nullptr) {
+            client->forget_terminals();
+            // The mirrors live on — this is a client leaving a session, not a
+            // connection going — so the session has to be told that what it
+            // announced is no longer on screen. Without it, coming back to a
+            // session whose mirrors are still held announces nothing and the
+            // reader gets an empty desktop over running programs (C4).
+            session.windows_forgotten();
+        }
         session.attach(id, terminal.size(), terminal.capabilities().cell_pixels);
     };
     options.client.attach_to_session = switch_to;
@@ -199,6 +268,10 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
 
     ClientApp application(app, std::move(options.client));
     client = &application;
+    // Asked of the client rather than of the options it was given: an empty
+    // `[general] shell` is resolved in its constructor, so this is the one
+    // place the answer is complete.
+    shell_for_new_terminals = application.settings().shell;
 
     // What to do with a session list depends on when it arrives. The first one
     // is the startup decision — attach, or ask — and every one after it is a
@@ -284,12 +357,12 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // moment the answer exists.
     bool asked_for_the_first_terminal = false;
     const auto open_one_if_the_session_is_empty = [&session, &asked_for_the_first_terminal,
-                                                   &options]() {
+                                                   &shell_for_new_terminals]() {
         if (asked_for_the_first_terminal || !session.attached()) return;
         asked_for_the_first_terminal = true;
         if (!session.terminal_ids().empty()) return;
         proto::NewTerminal ask;
-        ask.command = options.client.settings.shell;
+        ask.command = shell_for_new_terminals;
         session.request(ask);
     };
 
@@ -341,6 +414,12 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         if (client != nullptr) {
             client->forget_terminals();
             client->set_attached_session(0, {});
+            // The connection is still up and the mirrors are still held: this
+            // client was taken over, not disconnected. Telling the session its
+            // windows are gone is what makes attaching again — to this session
+            // or another — draw the terminals rather than an empty desktop
+            // (C4). It was the takeover case that found this.
+            session.windows_forgotten();
         }
         // What now? A reader whose session was taken from them, or ended under
         // them, is looking at an empty desktop; the list says what else is
@@ -375,15 +454,19 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             // coin toss. The bytes were for nobody; the reconnect throttle
             // below decides what happens next.
             connection.stream.close();
-            session.connection_lost();
-            if (client != nullptr) {
-                client->forget_terminals();
-                client->set_attached_session(0, {});
-            }
+            stop_showing_this_server();
         }
         std::string arrived;
         const bool alive = !connection.stream.open() || connection.stream.receive(arrived);
-        if (!arrived.empty() && !reader.append(arrived)) break;
+        if (!arrived.empty() && !reader.append(arrived)) {
+            // A frame this build cannot hold — too large for the reader's own
+            // limits, or framing that cannot be resynchronised. Said out loud
+            // for the same reason the decode failure below is: an exit status
+            // of 0 with nothing printed is, to a reader and to a script,
+            // indistinguishable from the quit they asked for.
+            farewell = "ckmux: the server sent a frame this build cannot hold";
+            break;
+        }
         for (;;) {
             proto::Message message;
             const proto::DecodeError error = reader.next(message);
@@ -415,11 +498,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             // is one again. Quitting on it would take a reader's whole ckmux
             // away for something they may well have asked for.
             connection.stream.close();
-            session.connection_lost();
-            if (client != nullptr) {
-                client->forget_terminals();
-                client->set_attached_session(0, {});
-            }
+            stop_showing_this_server();
         }
         // A reader who was waiting for a session list still is, connection or
         // no connection. Asking again starts a server, which is what makes

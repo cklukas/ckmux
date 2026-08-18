@@ -19,6 +19,7 @@
 #include <cstring>
 #include <ctime>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -191,9 +192,19 @@ int main(int argc, char** argv) {
 
     // Copying to a helper program forks, which the client deliberately does
     // not do itself — the host supplies the one function that does.
-    options.clipboard_writer = [](const std::string& command, std::string_view text) {
-        return ckm::platform::write_to_command(command, text);
+    //
+    // The helper's own output is captured and kept beside the call rather than
+    // inherited: ckmux is drawing a screen on this process's stdout and stderr,
+    // and a helper that prints "command not found" would print it into the
+    // frame. The client asks for it when a copy fails, which is the only time
+    // it means anything to a reader.
+    auto clipboard_problem = std::make_shared<std::string>();
+    options.clipboard_writer = [clipboard_problem](const std::string& command,
+                                                   std::string_view text) {
+        clipboard_problem->clear();
+        return ckm::platform::write_to_command(command, text, clipboard_problem.get());
     };
+    options.clipboard_problem = [clipboard_problem] { return *clipboard_problem; };
 
     // The menu-bar clock's time, and the calendar's today. This is the only
     // wall-clock reading ckmux takes, and it is taken here for the same reason

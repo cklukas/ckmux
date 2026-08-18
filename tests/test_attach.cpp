@@ -5,9 +5,11 @@
 // with the loop stepped by hand on a `ManualClock` — the tick has to be owned,
 // not waited for, and the socket has to be real because backpressure is a fact
 // about sockets rather than about queues.
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <system_error>
 #include <variant>
@@ -17,8 +19,10 @@
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
+#include "common/grid_delta.hpp"
 #include "common/proto.hpp"
 #include "platform/socket.hpp"
+#include "server/diff_engine.hpp"
 #include "server/server.hpp"
 
 #include "cvision/core/clock.hpp"
@@ -72,15 +76,27 @@ struct Client {
     ckm::proto::FrameReader reader;
     ckm::client::ServerSession session{nullptr};
     std::vector<ckm::proto::Message> unread;
+    // What this client PUT on the wire, by type. The received side is `unread`;
+    // this is the other direction, and it exists because some of what a client
+    // must not do is a message it must not send — a mirror that answered its
+    // own resize with another resize would work perfectly and never stop.
+    std::map<ckm::proto::MessageType, std::size_t> sent;
 
     bool connect(const std::filesystem::path& socket) {
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
         if (result.status != ckm::platform::ConnectStatus::Connected) return false;
         stream = ckm::platform::Stream(result.fd);
-        session = ckm::client::ServerSession(
-            [this](const ckm::proto::Message& message) { (void)stream.send(ckm::proto::encode(message)); });
+        session = ckm::client::ServerSession([this](const ckm::proto::Message& message) {
+            ++sent[ckm::proto::type_of(message)];
+            (void)stream.send(ckm::proto::encode(message));
+        });
         session.set_history_limit(100);
         return true;
+    }
+
+    std::size_t sent_count(ckm::proto::MessageType type) const {
+        const auto found = sent.find(type);
+        return found == sent.end() ? 0U : found->second;
     }
 
     void greet() {
@@ -221,6 +237,108 @@ CK_TEST(a_second_client_takes_the_session_and_the_first_is_told_why) {
             if (!cell.is_continuation()) text += cell.grapheme();
         CK_CHECK(text.find("a program that outlives its clients") != std::string::npos);
     }
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(reattaching_announces_the_terminals_a_client_stopped_showing) {
+    // C4. The mirrors outlive a detach that is not a disconnection — that is
+    // what makes a takeover cheap — so the terminal a reattaching client needs
+    // a window for is one it is ALREADY holding, and `on_terminal_opened`
+    // fires when a mirror is created. It announced nothing, and the reader who
+    // took their session back got an empty desktop over two running programs.
+    const std::filesystem::path socket = private_socket("reattach-windows");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    // What the window layer would be told, counted the way it is told: one
+    // call per terminal that needs a window.
+    std::vector<std::uint64_t> announced;
+    watcher.session.on_terminal_opened = [&](ckm::client::RemoteTerminalSubsession& remote) {
+        announced.push_back(remote.terminal_id());
+    };
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+    CK_CHECK(announced.size() == 2U);
+
+    // A heal is the same message down the same path, and it must announce
+    // nothing at all: those windows are still on screen, and a second one per
+    // terminal is the other way to get this wrong.
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return watcher.session.attachments() >= 2U; }));
+    CK_CHECK(announced.size() == 2U);
+
+    // Now the client takes its windows down while the attachment lives on —
+    // what it does when it is taken over, and when a reader switches away.
+    watcher.session.windows_forgotten();
+    announced.clear();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return watcher.session.attachments() >= 3U; }));
+
+    // Both of them, so the desktop is the session again.
+    CK_CHECK(announced.size() == 2U);
+    CK_CHECK(std::find(announced.begin(), announced.end(), first.id()) != announced.end());
+    CK_CHECK(std::find(announced.begin(), announced.end(), second.id()) != announced.end());
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_heal_asks_for_one_snapshot_however_many_passes_it_takes_to_arrive) {
+    // M-L3. `needs_snapshot()` stays true until the snapshot arrives and
+    // `heal_if_needed()` runs on every pass of the client's loop, so an
+    // unguarded heal asked for every terminal whole twenty times a second —
+    // and every one of those answers is the whole session to compose and
+    // queue. The counter is the claim: it says how many times this client had
+    // to ask, and it has to mean requests rather than passes.
+    const std::filesystem::path socket = private_socket("heal-once");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+    const std::uint64_t before = watcher.session.resnapshots();
+
+    // A delta that skips a number: something was lost, and the mirror says so
+    // the only way it can (plans/05, the gap rule).
+    ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(terminal.id());
+    CK_CHECK(mirror != nullptr);
+    if (mirror == nullptr) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    ckm::proto::GridDelta lost;
+    lost.term = terminal.id();
+    lost.seq = mirror->mirror().sequence() + 7;
+    CK_CHECK(!mirror->mirror().apply(lost));
+    CK_CHECK(mirror->mirror().needs_snapshot());
+
+    // Ten passes of the client's loop with the mirror still asking. One
+    // request goes out, not ten — and it is answered, which is what lets the
+    // next one ever be sent.
+    for (int pass = 0; pass < 10; ++pass) watcher.session.heal_if_needed();
+    CK_CHECK(watcher.session.resnapshots() == before + 1U);
+    // The mirror itself, not a fresh lookup: a snapshot re-adopts the one that
+    // is already there, so the pointer stays good and nothing here has to
+    // guess whether the terminal is still in the map.
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return !mirror->mirror().needs_snapshot(); }));
+    CK_CHECK(watcher.session.resnapshots() == before + 1U);
     server.terminals().close_all();
     forget(socket);
 }
@@ -376,6 +494,103 @@ CK_TEST(a_mirror_that_lost_track_asks_for_the_terminal_whole) {
         ckm::client::RemoteTerminalSubsession* mirror = client.session.terminal(terminal.id());
         return mirror != nullptr && !mirror->mirror().needs_snapshot();
     }));
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_resize_over_the_wire_reaches_the_mirror_both_ways) {
+    // C3, end to end. A `GridDelta` carried no geometry, so a repaint of a
+    // SMALLER terminal passed every bounds check against a larger mirror: the
+    // rows and columns past the new edge kept whatever the last program had
+    // drawn there, and no counter anywhere fired. The size now LEADS any delta
+    // that changes it (`ResizeOp`, protocol version 3), so one message resizes
+    // the mirror and repaints it — there is no `TermMeta` in this path, and
+    // nothing that could arrive in the wrong order.
+    const std::filesystem::path socket = private_socket("resize");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::TerminalSpec spec = spec_running("sleep 30");
+    spec.columns = 100;
+    spec.rows = 30;
+    spec.pixel_width = 100 * 9;
+    spec.pixel_height = 30 * 18;
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec);
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{100, 30}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(terminal.id());
+    CK_CHECK(mirror != nullptr);
+    if (mirror == nullptr) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    CK_CHECK((mirror->mirror().cells() == ckv::Size{100, 30}));
+
+    // Everything settled, so the two ends are compared when neither has
+    // anything left to say. Agreement one message early is not agreement.
+    const auto settle = [&] {
+        for (int pass = 0; pass < 3; ++pass) {
+            clock.advance(34'000'000);
+            CK_CHECK(server.step());
+            watcher.pump();
+        }
+    };
+    // The server's belief against the client's mirror, which is the one check
+    // that says the belief is not a story the server tells itself: the mirror
+    // was built from the wire alone.
+    const auto both_ends_agree = [&] {
+        const ckm::server::TerminalDiffer* differ = server.diffs().differ_for(terminal.id());
+        CK_CHECK(differ != nullptr);
+        return differ != nullptr && ckm::same_state(differ->believed(), mirror->mirror().state());
+    };
+    settle();
+    CK_CHECK(both_ends_agree());
+
+    // Smaller. A view laid out at a new size resizes its subsession, which is
+    // a REQUEST: the server owns the PTY, so what changes the child's window is
+    // the server acting on it, and what changes this mirror is the delta that
+    // comes back (WP-3).
+    const std::size_t asked_once = watcher.sent_count(ckm::proto::MessageType::MoveResize) + 1;
+    mirror->resize(ckv::Size{60, 20}, ckv::Size{9, 18});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once);
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return mirror->mirror().cells() == ckv::Size{60, 20}; }));
+    // The grid is the new size, cell for cell — not a 100×30 buffer being read
+    // as though it were smaller, which is exactly what C3 looked like.
+    CK_CHECK(mirror->mirror().grid().size() == 60U * 20U);
+    settle();
+    CK_CHECK(both_ends_agree());
+    // And no echo. A mirror that answered its own change of size with another
+    // `MoveResize` would work perfectly and never stop: the server would resize,
+    // the delta would come back, and the mirror would ask again. The count is
+    // the guard, because the loop would be invisible in a screenshot.
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once);
+
+    // Bigger, and it is the same code both ways — a shrink and a grow differ
+    // only in which numbers are larger, so a test that only shrank would leave
+    // half of the op untested.
+    mirror->resize(ckv::Size{100, 30}, ckv::Size{9, 18});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once + 1);
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return mirror->mirror().cells() == ckv::Size{100, 30}; }));
+    CK_CHECK(mirror->mirror().grid().size() == 100U * 30U);
+    settle();
+    CK_CHECK(both_ends_agree());
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once + 1);
+    // Nothing was lost on the way. A resize is a repaint the mirror can take,
+    // not a delta it has to give up on — and a refusal would have healed
+    // itself through a snapshot and left every size above looking right, so
+    // the counters are what tell those two apart.
+    CK_CHECK(!mirror->mirror().needs_snapshot());
+    CK_CHECK(mirror->mirror().gaps() == 0U);
+    CK_CHECK(watcher.session.resnapshots() == 0U);
     server.terminals().close_all();
     forget(socket);
 }

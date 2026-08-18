@@ -90,6 +90,29 @@ bool child_is_live(w::Window* window) {
     return state == State::Ready || state == State::Running;
 }
 
+// The file every configuration warning came from, when they all came from one
+// and it looks like a path. Empty means "do not lift it out": one warning about
+// the file itself and one about a line in another would both lose their
+// subject, and a dialog that names the wrong file is worse than a wordy one.
+std::string common_config_file(const std::vector<std::string>& warnings) {
+    if (warnings.empty()) return {};
+    const std::size_t colon = warnings.front().find(':');
+    if (colon == std::string::npos) return {};
+    const std::string prefix = warnings.front().substr(0, colon);
+    if (prefix.empty() || prefix.find('/') == std::string::npos) return {};
+    for (const std::string& warning : warnings)
+        if (warning.size() <= colon || warning.compare(0, colon + 1, prefix + ":") != 0) return {};
+    return prefix;
+}
+
+// One warning with that file struck off the front: "4: unknown key 'shel'".
+std::string without_prefix(const std::string& warning, const std::string& prefix) {
+    if (prefix.empty() || warning.size() <= prefix.size() + 1) return warning;
+    std::string rest = warning.substr(prefix.size() + 1);
+    while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
+    return rest;
+}
+
 }  // namespace
 
 std::vector<std::pair<std::string, std::string>> default_environment() {
@@ -144,7 +167,7 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     populate_help();
     app_.set_help_provider([this](const std::string& key) {
         if (desktop_ == nullptr) return;
-        pending_dialogs_.push_back(std::make_shared<w::HelpViewerPresentation>(
+        retain_dialog(std::make_shared<w::HelpViewerPresentation>(
             w::present_help_viewer(help_, key, app_, *desktop_, roles_)));
     });
     footer_->set_hint_provider([](const std::string& key) -> std::string {
@@ -285,19 +308,19 @@ void ClientApp::register_commands() {
                 sessions, [this] { return static_cast<bool>(options_.list_sessions); });
         } else if (binding.key == commands::kSendPrefix) {
             declare(binding.key, binding.title, "Terminal", [this] {
-                if (w::TerminalView* const view = terminal_view_of(active_terminal())) {
-                    std::string bytes;
-                    const ckv::KeyChord& p = options_.settings.prefix;
-                    if (p.key == ckv::Key::Char && !p.text.empty() &&
-                        has_modifier(p.modifiers, ckv::Modifier::Ctrl)) {
-                        const char letter = p.text[0];
-                        const char upper = (letter >= 'a' && letter <= 'z')
-                                               ? static_cast<char>(letter - 'a' + 'A')
-                                               : letter;
-                        bytes.push_back(static_cast<char>(upper - 'A' + 1));
-                    }
-                    if (!bytes.empty()) view->session().send_input(bytes);
-                }
+                // The view encodes it, because the view is what encodes every
+                // other key this terminal receives — same modifiers, same
+                // keyboard protocol, same everything (ckVision `send_key`,
+                // which delivers a synthesized key without claiming the parent
+                // escape it would otherwise intercept).
+                //
+                // ckmux used to spell the bytes itself, and could only spell
+                // Ctrl+letter: a reader whose `prefix = F5` or `prefix = A-a`
+                // was offered "send the prefix" in the menu, in the footer and
+                // in the which-key popup, pressed it, and nothing whatever
+                // happened. A chord ckmux advertises has to arrive.
+                if (w::TerminalView* const view = terminal_view_of(active_terminal()))
+                    (void)view->send_key(ckv::KeyEvent{options_.settings.prefix});
             });
         } else if (binding.key == commands::kFocusByNumber) {
             // Display-only: the digits carry a value, so they are dispatched
@@ -708,10 +731,29 @@ void ClientApp::forget_terminals() {
     refresh_footer();
 }
 
+void ClientApp::prune_pending_dialogs() {
+    // Called when another dialog is opened, which is the one moment no
+    // completion handler is running: an answered dialog's handler holds its own
+    // reference to the presentation while it runs (that is what the captures in
+    // every handler below are for), so dropping the vector's reference here can
+    // never free something mid-call.
+    std::vector<PendingDialog> live;
+    live.reserve(pending_dialogs_.size());
+    for (PendingDialog& pending : pending_dialogs_)
+        if (!pending.completed || !pending.completed()) live.push_back(std::move(pending));
+    pending_dialogs_ = std::move(live);
+}
+
 void ClientApp::close_window_for_terminal(const ckv::term::TerminalSubsession& terminal) {
     const auto found = terminal_windows_.find(&terminal);
     if (found == terminal_windows_.end() || desktop_ == nullptr) return;
     w::Window* const window = found->second;
+    // Copy mode is a surface over THIS window's history, and the window is
+    // about to stop existing. `forget_terminals` has always taken it down
+    // first; this path did not, and left the surface standing over a destroyed
+    // window with the title poll writing a caption through the pointer several
+    // times a second.
+    if (copy_mode_ != nullptr && copy_mode_window_ == window) leave_copy_mode();
     // The terminal is already gone, so nothing is asked and nothing is sent:
     // this window is being taken down because the server said its terminal
     // ended, and asking the server to end it again would be an error frame.
@@ -856,8 +898,13 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
         // not want to be asked. Honoured here rather than by suppressing the
         // dialog later, so "no confirmation" really is no round trip.
         if (!options_.settings.confirm_kill) return true;
-        if (confirmed_close_ == terminal_window) {
+        // The address AND the identity: an answer given about a window that has
+        // since been destroyed must not be handed to whatever the allocator
+        // put at that address next, which would be a terminal closing without
+        // ever asking its reader.
+        if (confirmed_close_ == terminal_window && !confirmed_close_alive_.expired()) {
             confirmed_close_ = nullptr;
+            confirmed_close_alive_.reset();
             return true;
         }
         confirm_then_close(terminal_window);
@@ -879,7 +926,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
             refresh_footer();
         });
     };
-    titles_[terminal_window] = TerminalTitle{fallback_title, {}};
+    titles_[terminal_window] = TerminalTitle{fallback_title, {}, number};
     desktop_->add_window(std::move(window));
     app_.set_focus(terminal_view);
     refresh_footer();
@@ -977,10 +1024,11 @@ void ClientApp::confirm_then_close(w::Window* window) {
                 // and the program declined, which is what the dialog said.
             } else {
                 confirmed_close_ = answered;
+                confirmed_close_alive_ = answered->lifetime_token();
                 answered->close();
             }
         });
-    pending_dialogs_.push_back(std::move(presentation));
+    retain_dialog(presentation);
 }
 
 void ClientApp::show_move_terminal_dialog(ckv::term::TerminalSubsession* terminal) {
@@ -1042,7 +1090,7 @@ void ClientApp::show_move_terminal_dialog(ckv::term::TerminalSubsession* termina
             // The window leaves when the server says the terminal left; a
             // window taken down here would vanish even when the move failed.
         });
-    pending_dialogs_.push_back(std::move(presentation));
+    retain_dialog(presentation);
 }
 
 ckv::widgets::Window* ClientApp::window_showing(const ckv::term::TerminalSubsession* terminal) const {
@@ -1099,6 +1147,27 @@ void ClientApp::refresh_terminal_titles() {
 
 void ClientApp::focus_active_terminal() {
     if (w::TerminalView* const view = terminal_view_of(active_terminal())) app_.set_focus(view);
+}
+
+void ClientApp::focus_terminal_number(int number) {
+    if (desktop_ == nullptr) return;
+    // The number a reader can SEE wins. Window captions carry ckmux's own
+    // terminal number, and the desktop's 1-9 convention is an index into
+    // insertion order (ckVision Desktop::select_by_number); the two agree until
+    // a window in the middle closes, and after that `^B 2` focused the window
+    // captioned "Terminal 3" while "Terminal 2" sat there being ignored.
+    //
+    // The desktop's own order is still the answer when no window carries the
+    // number — a caption a child has renamed, or a terminal past nine — because
+    // plans/06 promises "1-9 focus window" and a digit that does nothing at all
+    // would be a worse answer than the conventional one.
+    for (w::Window* const window : desktop_->windows()) {
+        const auto title = titles_.find(window);
+        if (title == titles_.end() || title->second.number != number) continue;
+        desktop_->activate(window);
+        return;
+    }
+    desktop_->select_by_number(number);
 }
 
 Context ClientApp::context() const {
@@ -1205,7 +1274,7 @@ void ClientApp::resolve_prefix(const std::string& chord) {
         // spelling at startup, so a reader's rebinding — of it, or of the
         // chord — is honoured here like anywhere else.
         if (const int index = digit_chord(chord); index != 0) {
-            desktop_->select_by_number(index);
+            focus_terminal_number(index);
             focus_active_terminal();
         } else if (const KeyBinding* const binding = keymap_.find(chord)) {
             app_.execute_command(binding->command);
@@ -1223,7 +1292,7 @@ void ClientApp::show_key_reference() { app_.execute_command(app_.commands().stan
 
 void ClientApp::show_about() {
     if (desktop_ == nullptr) return;
-    pending_dialogs_.push_back(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Info, "About ckmux",
                                 std::string("ckmux ") + kVersion +
@@ -1240,7 +1309,7 @@ void ClientApp::show_terminal_report() {
     // HeadlessTerminal — which has no byte stream to count.
     ckv::widgets::TerminalReportDialogOptions options;
     options.mouse_reports_decoded = options_.mouse_reports_probe;
-    pending_dialogs_.push_back(std::make_shared<w::TerminalReportDialogPresentation>(
+    retain_dialog(std::make_shared<w::TerminalReportDialogPresentation>(
         w::present_terminal_report_dialog(*desktop_, app_, roles_, std::move(options))));
 }
 
@@ -1268,6 +1337,10 @@ void ClientApp::enter_copy_mode() {
     };
     copy_mode_ = desktop_->add_popup(std::move(surface));
     copy_mode_window_ = window;
+    // Beside the pointer, the proof it is still this window: the caption
+    // refresh below runs on a timer, and the window can be taken down under it
+    // by a server that ends the terminal while its reader is reading.
+    copy_mode_window_alive_ = window->lifetime_token();
     copy_mode_->set_bounds(window->content_rect());
     app_.set_focus(copy_mode_);
     refresh_copy_mode_caption();
@@ -1279,13 +1352,17 @@ void ClientApp::leave_copy_mode() {
     CopyModeView* const surface = copy_mode_;
     copy_mode_ = nullptr;
     desktop_->remove_popup(surface);
-    if (copy_mode_window_ != nullptr) {
+    // The caption goes back only if there is still a window to put it on: copy
+    // mode outlives its window whenever the server ends the terminal underneath
+    // it, and an expired token is the proof of exactly that.
+    if (copy_mode_window_ != nullptr && !copy_mode_window_alive_.expired()) {
         const auto title = titles_.find(copy_mode_window_);
         if (title != titles_.end())
             copy_mode_window_->set_title(title->second.child.empty() ? title->second.fallback
                                                                      : title->second.child);
     }
     copy_mode_window_ = nullptr;
+    copy_mode_window_alive_.reset();
     focus_active_terminal();
     refresh_footer();
 }
@@ -1296,6 +1373,11 @@ void ClientApp::refresh_copy_mode_caption() {
     // back (plans/06). Restored on exit from the same store the title poll
     // reads, so a caption cannot be left saying COPY.
     if (copy_mode_ == nullptr || copy_mode_window_ == nullptr) return;
+    // Nothing is written through a window that has been destroyed. This runs on
+    // the title timer, so "the window went while copy mode was up" is not a
+    // hypothetical race — it is a tenth of a second wide, every tenth of a
+    // second, for as long as a reader stays in copy mode.
+    if (copy_mode_window_alive_.expired()) return;
     const auto title = titles_.find(copy_mode_window_);
     const std::string base = title == titles_.end() ? copy_mode_window_->title()
                              : title->second.child.empty() ? title->second.fallback
@@ -1311,6 +1393,11 @@ void ClientApp::copy_to_targets(std::string text) {
     // anything outside this process would accept the text, which over SSH is
     // the ordinary case.
     internal_clipboard_ = text;
+    // The targets that would not take it. A copy that silently reaches nothing
+    // is the failure a reader discovers later, in another program, by pasting
+    // something else entirely — so the ones that refused are collected and
+    // said once, at the moment they refused.
+    std::vector<std::string> refused;
     for (const ClipboardTarget& target : options_.settings.clipboard) {
         switch (target.kind) {
             case ClipboardTarget::Kind::Osc52:
@@ -1319,13 +1406,49 @@ void ClientApp::copy_to_targets(std::string text) {
                 app_.set_clipboard_text(text);
                 break;
             case ClipboardTarget::Kind::Pbcopy:
-                if (options_.clipboard_writer) options_.clipboard_writer("pbcopy", text);
+                if (options_.clipboard_writer && !options_.clipboard_writer("pbcopy", text))
+                    refused.emplace_back("pbcopy");
                 break;
             case ClipboardTarget::Kind::Exec:
-                if (options_.clipboard_writer) options_.clipboard_writer(target.command, text);
+                if (options_.clipboard_writer && !options_.clipboard_writer(target.command, text))
+                    refused.push_back(target.command);
                 break;
         }
     }
+    if (!refused.empty()) report_clipboard_problem(refused);
+}
+
+void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused) {
+    if (desktop_ == nullptr || refused.empty()) return;
+    std::string body;
+    if (refused.size() == 1) {
+        body = "The copy did not reach " + refused.front() + ".";
+    } else {
+        body = "The copy did not reach these clipboard helpers:";
+        for (const std::string& one : refused) body += "\n  " + one;
+    }
+    // What the helper itself said, which is the difference between "a copy
+    // failed" and "xclip is not installed". It is captured rather than
+    // inherited precisely so it can be shown here instead of landing in the
+    // middle of a drawn frame (platform/clipboard.hpp).
+    if (options_.clipboard_problem) {
+        const std::string said = options_.clipboard_problem();
+        if (!said.empty()) body += "\n\n" + said;
+    }
+    // The part that stops this being only bad news: the text is not lost. The
+    // chord comes from the one table every surface reads, so a reader who
+    // rebound paste is told the key they actually have.
+    std::string paste_chord;
+    for (const KeyBinding& binding : keymap_.bindings())
+        if (binding.key == commands::kPaste && !binding.chord.empty())
+            paste_chord = binding_label(options_.settings.prefix, binding);
+    body += paste_chord.empty()
+                ? "\n\nckmux kept it — Terminal ▸ Paste puts it into a terminal."
+                : "\n\nckmux kept it — " + paste_chord + " pastes it into a terminal.";
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Copy", std::move(body),
+                                w::MessageBoxButtons::Ok})));
 }
 
 void ClientApp::paste_into_terminal() {
@@ -1448,7 +1571,7 @@ void ClientApp::show_settings() {
                      stored;
             if (!stored) report_settings_not_saved();
         });
-    pending_dialogs_.push_back(std::move(presentation));
+    retain_dialog(presentation);
 }
 
 bool ClientApp::apply_login_shell(bool login_shell) {
@@ -1507,7 +1630,7 @@ bool ClientApp::apply_theme(Theme theme) {
 void ClientApp::report_settings_not_saved() {
     if (desktop_ == nullptr) return;
     const std::filesystem::path path = ckm::platform::config_file_path();
-    pending_dialogs_.push_back(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{
             w::MessageBoxKind::Warning, "Settings not saved",
@@ -1522,9 +1645,20 @@ void ClientApp::report_config_warnings() {
     // Said once, at the start, naming the lines. A reader who mistyped a key
     // otherwise gets a ckmux that quietly ignores what they wrote — which
     // looks exactly like a ckmux that does not have the setting at all.
-    std::string body = "ckmux started, but part of your configuration was not understood:\n";
-    for (const std::string& warning : options_.config_warnings) body += "\n  " + warning;
-    pending_dialogs_.push_back(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    //
+    // The file is named once, in the sentence, and struck off the entries
+    // underneath. Each warning carries its whole path so that a reader with a
+    // `$CKMUX_CONFIG` beside their real file can tell two "ckmux.conf:4"s
+    // apart (config.cpp) — right at a terminal, and wrong down the left margin
+    // of a dialog that has to fit a 72-column window, where it spends on the
+    // same path over and over the width each message needs to be readable.
+    const std::string file = common_config_file(options_.config_warnings);
+    std::string body = "ckmux started, but part of ";
+    body += file.empty() ? std::string("your configuration") : file;
+    body += " was not understood:\n";
+    for (const std::string& warning : options_.config_warnings)
+        body += "\n  " + without_prefix(warning, file);
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Configuration", std::move(body),
                                 w::MessageBoxButtons::Ok})));

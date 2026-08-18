@@ -16,6 +16,10 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
     session_ = session;
     desktop_ = desktop;
     cell_pixels_ = cell_pixels;
+    // Whatever heal was in flight is answered by this attach, or superseded by
+    // it: either way the guard starts over, so a reader who switches sessions
+    // while a mirror is asking for a snapshot is not left unable to ask again.
+    snapshot_requested_ = false;
     if (!send_) return;
     proto::Attach request;
     request.session = session;
@@ -44,6 +48,10 @@ RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     terminal->set_raster_identity(next_raster_identity_++);
     RemoteTerminalSubsession& reference = *terminal;
     terminals_.emplace(id, std::move(terminal));
+    // Told to the window layer, and remembered as told. The set is what keeps
+    // a reattach from announcing the terminals a client is already showing,
+    // and what makes it announce the ones it is not (see `handle`).
+    announced_.insert(id);
     if (on_terminal_opened) on_terminal_opened(reference);
     return reference;
 }
@@ -51,16 +59,41 @@ RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
 void ServerSession::connection_lost() {
     attached_ = false;
     session_ = 0;
+    snapshot_requested_ = false;
     // No `on_terminal_closed`: the client takes its own windows down when it is
     // told the connection went, and calling back from here would have it doing
     // it twice for terminals nobody can close anyway.
     terminals_.clear();
+    announced_.clear();
+}
+
+void ServerSession::windows_forgotten() {
+    // The windows went; the attachment and its mirrors did not. Said out loud
+    // rather than inferred, because the two states that look identical from
+    // here — a client healing mid-session and a client that has just taken its
+    // windows down — need opposite answers from the next snapshot.
+    announced_.clear();
+}
+
+void ServerSession::request_snapshot() {
+    // One request at a time. `needs_snapshot()` stays true until the snapshot
+    // arrives and `heal_if_needed()` runs on every pass of the client's poll
+    // loop, so an unguarded heal asked the server for every terminal whole
+    // twenty times a second — and each of those answers is every screen and
+    // every scrollback in the session, composed and queued again.
+    if (snapshot_requested_) return;
+    ++resnapshots_;
+    attach(session_, desktop_, cell_pixels_);
+    // After the attach, which clears it: this is the one caller that wants the
+    // guard set rather than reset.
+    snapshot_requested_ = true;
 }
 
 bool ServerSession::handle(const proto::Message& message) {
     if (const auto* attached = std::get_if<proto::Attached>(&message)) {
         attached_ = true;
         ++attachments_;
+        snapshot_requested_ = false;  // whatever was asked for has arrived
         session_ = attached->session;
         // Every terminal in the snapshot, whole. This is both the first attach
         // and every healing after one, and it is the same code because it is the
@@ -84,6 +117,31 @@ bool ServerSession::handle(const proto::Message& message) {
         for (const std::uint64_t id : vanished) {
             if (on_terminal_closed) on_terminal_closed(id);
             terminals_.erase(id);
+            announced_.erase(id);
+        }
+        // Every terminal the window layer is not showing, announced now that
+        // its mirror holds the snapshot.
+        //
+        // `ensure_terminal` announces a terminal when it CREATES its mirror,
+        // and the mirrors outlive a detach that is not a disconnection: after a
+        // takeover, or a switch away and back, the client still holds them. So
+        // a reattach created nothing, announced nothing, and left the reader
+        // looking at an empty desktop over a session full of running programs
+        // (C4). Reconciled against what the window layer says it has rather
+        // than announced wholesale, because a mid-session heal arrives down
+        // this same path with every window already on screen — and a second
+        // window per terminal is the other way to get this wrong.
+        //
+        // The ids are collected first: opening a window is the client's work,
+        // and it must not run while this map is being walked.
+        std::vector<std::uint64_t> unannounced;
+        for (const auto& entry : terminals_)
+            if (announced_.find(entry.first) == announced_.end())
+                unannounced.push_back(entry.first);
+        for (const std::uint64_t id : unannounced) {
+            announced_.insert(id);
+            const auto held = terminals_.find(id);
+            if (held != terminals_.end() && on_terminal_opened) on_terminal_opened(*held->second);
         }
         if (on_attached) on_attached(session_);
         return true;
@@ -99,8 +157,7 @@ bool ServerSession::handle(const proto::Message& message) {
         // to invent one: the snapshot is what says which terminals exist, so
         // this asks for one.
         if (terminal == nullptr) {
-            ++resnapshots_;
-            attach(session_, desktop_, cell_pixels_);
+            request_snapshot();
             return true;
         }
         (void)terminal->mirror().apply(*delta);
@@ -129,6 +186,7 @@ bool ServerSession::handle(const proto::Message& message) {
                 // attach, and a stale entry here would swallow the
                 // on_terminal_opened that builds its window.
                 terminals_.erase(closed->term);
+                announced_.erase(closed->term);
             }
         }
         return true;
@@ -215,8 +273,7 @@ void ServerSession::heal_if_needed() {
     if (!needed) return;
     // One request for the whole attachment rather than one per terminal: what a
     // client has lost track of is the stream, and the stream is per attachment.
-    ++resnapshots_;
-    attach(session_, desktop_, cell_pixels_);
+    request_snapshot();
 }
 
 RemoteTerminalSubsession* ServerSession::terminal(std::uint64_t id) {

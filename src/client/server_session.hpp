@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,19 @@ public:
     // be showing a reader a screen from a process that has exited.
     void connection_lost();
 
+    // The window layer has taken its windows down while this attachment lives
+    // on: a client leaving a session it was watching, or one whose session was
+    // taken over. The programs keep running and the mirrors stay; only the
+    // windows go.
+    //
+    // Saying so is not bookkeeping. `on_terminal_opened` fires when a mirror is
+    // CREATED, so a reattach whose mirrors were still held announced nothing
+    // and the reader met an empty desktop over a running session (C4). This is
+    // what makes the next snapshot announce them all again — and what keeps a
+    // mid-session heal, which re-adopts every mirror down the same path, from
+    // opening a second window over each of the ones already on screen.
+    void windows_forgotten();
+
     RemoteTerminalSubsession* terminal(std::uint64_t id);
     // The wire id of one of this session's mirrors, or nothing when the
     // subsession is not one of them. The client's dialogs hold a
@@ -121,6 +135,11 @@ public:
 
 private:
     RemoteTerminalSubsession& ensure_terminal(std::uint64_t id);
+    // Asks for every terminal whole, at most once until the answer arrives.
+    // The heal path and the delta-for-an-unknown-terminal path share it so
+    // that "how many times has this client had to ask?" counts requests that
+    // were actually sent — which is what `resnapshots()` claims to say.
+    void request_snapshot();
 
     // A picture whose pixels are still arriving (WP-16): AddBegin opened it,
     // chunks fill it in order, End completes it into `completed_images_`,
@@ -135,6 +154,10 @@ private:
 
     Send send_;
     std::map<std::uint64_t, std::unique_ptr<RemoteTerminalSubsession>> terminals_;
+    // Which terminals the window layer has been told about. A subset of
+    // `terminals_`, cleared by `windows_forgotten()`; the difference between
+    // the two is exactly the set a snapshot has to announce.
+    std::set<std::uint64_t> announced_;
     std::map<std::uint64_t, PendingImage> pending_images_;
     std::map<std::uint64_t, std::shared_ptr<const ckv::Image>> completed_images_;
     ckv::term::TerminalCapabilityProfile profile_;
@@ -144,6 +167,10 @@ private:
     ckv::Size cell_pixels_{0, 0};
     std::uint64_t resnapshots_ = 0;
     std::uint64_t attachments_ = 0;
+    // Whether a snapshot this client asked for is still on its way. Cleared by
+    // the `Attached` that answers it, by any explicit `attach()`, and by the
+    // connection going.
+    bool snapshot_requested_ = false;
     bool attached_ = false;
     bool host_sixel_ = false;
     // The scene identity a remote terminal's rasters carry. Minted per

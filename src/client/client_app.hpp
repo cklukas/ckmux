@@ -3,11 +3,18 @@
 // The ckmux client: menu bar, desktop of terminal windows, and the permanent
 // context-sensitive footer (plans/06-ui-design.md).
 //
-// M1 scope (plans/10-roadmap.md): the terminals are launched in this process
-// and die with it. Every seam that M2 needs in order to move them behind the
-// detached server — how a terminal is created, how it is titled, how the
-// footer and prefix reach it — is already routed through this class, so the
-// split changes what a terminal IS without changing what the UI does with it.
+// It drives terminals it does not own. Every seam that decides where a
+// terminal comes from, how it is titled, how it is closed, and how the footer
+// and the prefix reach it is a `std::function` in `ClientOptions` — so an
+// attached client substitutes the server for the fork and nothing below that
+// line changes. Unset, those seams still do the M1 thing (launch here, close
+// here), which is what keeps a ckmux with no server a working program and what
+// lets a test drive the whole user interface with no socket in sight.
+//
+// The rule that holds all of it together: this class knows about WINDOWS, and
+// the session layer knows about TERMINALS. Neither reaches into the other —
+// `run_client.cpp` is the one place that has both and is where they are tied
+// together.
 #pragma once
 
 #include <cstddef>
@@ -94,6 +101,15 @@ struct ClientOptions {
     // platform::write_to_command, a test passes a recorder. Empty means no
     // helper target is attempted at all.
     std::function<bool(const std::string& command, std::string_view text)> clipboard_writer;
+    // Why the last helper failed, in its own words, when the host can say.
+    //
+    // A clipboard helper's output must never reach the screen — ckmux is
+    // drawing on those descriptors, and "xclip: command not found" printed
+    // into a window frame stays there until something redraws it — so
+    // `platform::write_to_command` captures it and the host hands it over
+    // here. Unset (a test, a host with nothing to report) simply leaves the
+    // explanation out of what the reader is told.
+    std::function<std::string()> clipboard_problem;
     // What time it is where the reader is — the one wall-clock reading ckmux
     // takes, and injected for the same reason the clipboard writer is: reading
     // the host clock and its time zone is an application's job, never the
@@ -209,6 +225,13 @@ public:
     ckv::widgets::Desktop& desktop() noexcept { return *desktop_; }
     ckv::widgets::StatusLine& footer() noexcept { return *footer_; }
 
+    // What this client is running under: the reader's file over the built-in
+    // defaults, with anything the constructor had to resolve already resolved.
+    // The host loop reads it because the requests it sends the server have to
+    // name the same program this client would have launched — and because it
+    // MOVED its options in here, so its own copy is not an answer any more.
+    const Settings& settings() const noexcept { return options_.settings; }
+
     // Opens a terminal window running the configured shell and focuses it.
     ckv::widgets::Window* new_terminal();
     // Opens a window for a terminal that already exists — what an attached
@@ -308,6 +331,10 @@ private:
     // caller gets back exactly the pointer open_terminal stored.
     ckv::term::TerminalSubsession* terminal_shown_by(ckv::widgets::Window* window) const;
     void focus_active_terminal();
+    // The window a digit chord means. The caption's number first, because that
+    // is the number a reader can see; the desktop's own 1-9 convention when no
+    // window carries it (plans/06: "1-9 focus window").
+    void focus_terminal_number(int number);
     ckv::widgets::Window* active_terminal() const;
     // Applies whatever titles the child programs have asked for since the
     // last frame. Polled rather than pushed: the emulator records the title
@@ -365,6 +392,8 @@ private:
     bool apply_theme(Theme theme);
     void report_settings_not_saved();
     void report_config_warnings();
+    // The copy that did not leave ckmux, and what the helper said about it.
+    void report_clipboard_problem(const std::vector<std::string>& refused);
     void set_theme(ckv::ui::Theme theme);
     void populate_help();
     void dismiss_prefix_overlay();
@@ -389,14 +418,24 @@ private:
     struct TerminalTitle {
         std::string fallback;
         std::string child;
+        // The number in "Terminal 3", kept as a number so that `^B 3` can find
+        // the window a reader is looking at rather than the third one in the
+        // desktop's insertion order. The two agree until a window in the
+        // middle closes, and then only the caption is visible.
+        int number = 0;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
     ckv::widgets::MemoryHelpProvider help_;
     PrefixOverlay* overlay_ = nullptr;
     CopyModeView* copy_mode_ = nullptr;
     // The window whose history copy mode is showing, so its caption can be
-    // put back and the surface can follow it if it moves.
+    // put back and the surface can follow it if it moves — and, beside it, the
+    // proof that this is still that window. The title poll writes a caption
+    // through this pointer several times a second; a terminal the server ends
+    // while its reader is in copy mode takes the window with it, and the write
+    // that follows is into freed memory (ckVision View::lifetime_token).
     ckv::widgets::Window* copy_mode_window_ = nullptr;
+    std::weak_ptr<void> copy_mode_window_alive_;
     // ckmux's own clipboard: what `^B ]` pastes. Separate from the system
     // clipboard because a reader copying inside ckmux over SSH may have no
     // system clipboard that ckmux can reach at all.
@@ -404,12 +443,39 @@ private:
     ckv::ui::Application::TimerId which_key_timer_ = 0;
     ckv::ui::Application::TimerId title_timer_ = 0;
     // The window whose confirmation the reader has already answered, so the
-    // second close() pass does not ask again.
+    // second close() pass does not ask again — as an address AND as an
+    // identity. An address alone is a claim about a window that may have been
+    // destroyed since the reader answered, and the next window allocated at
+    // that address would inherit the answer and close without asking. The
+    // token is what tells those two apart (ckVision View::lifetime_token).
     ckv::widgets::Window* confirmed_close_ = nullptr;
+    std::weak_ptr<void> confirmed_close_alive_;
     std::size_t next_terminal_number_ = 1;
-    // Retained so a dialog's completion handler outlives the command that
-    // opened it (ckVision's non-blocking dialog contract).
-    std::vector<std::shared_ptr<void>> pending_dialogs_;
+    // One dialog whose completion handler must outlive the command that opened
+    // it (ckVision's non-blocking dialog contract), and the way to ask whether
+    // it is finished with. The question is type-erased alongside the pointer
+    // because these are several different presentation types and only the code
+    // that made one knows how to ask it.
+    struct PendingDialog {
+        std::shared_ptr<void> presentation;
+        std::function<bool()> completed;
+    };
+    std::vector<PendingDialog> pending_dialogs_;
+    // Retains one, dropping the ones already answered. Every dialog a reader
+    // opened used to be kept for the life of the client: a session's worth of
+    // Settings boxes and About boxes, each holding its own captured state,
+    // never freed because nothing ever asked whether they were over.
+    //
+    // It takes the `shared_ptr` rather than the presentation itself, because a
+    // completion handler that captured it holds the same object — moving out
+    // from under that handler would leave it watching an emptied one.
+    template <class Presentation>
+    void retain_dialog(std::shared_ptr<Presentation> presentation) {
+        prune_pending_dialogs();
+        std::shared_ptr<Presentation> held = std::move(presentation);
+        pending_dialogs_.push_back(PendingDialog{held, [held] { return held->completed(); }});
+    }
+    void prune_pending_dialogs();
 };
 
 }  // namespace ckm::client
