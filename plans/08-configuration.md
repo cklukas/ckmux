@@ -24,6 +24,27 @@ UTF-8, `#` comments, `[section]` headers, `key = value`, plus repeatable
 `bind`/`unbind` directives. Unknown keys warn (with the line number), never
 abort. Values: string, int, bool (`true/false`), enum.
 
+**One escape, and only one.** `\#` is a literal `#` rather than the start of a
+comment, so that a value which needs one — `exec:my-copy --tag=\#1`, or `#`
+bound as a chord — is not silently cut in half. Every other backslash stands
+for itself, *including one before another backslash*: the values that need the
+escape are shell commands, and a format that rewrote `\\` or `\n` would break
+more commands than the escape saves. The comma in `[terminal] clipboard` is
+that list's separator and has no escape; a copy command that needs a comma
+belongs in a script.
+
+**An unknown `[section]` warns once, at its header, and nothing under it is
+read** — one mistake by the reader deserves one sentence back, not a warning
+at every well-spelled key underneath a misspelled header. **A key its section
+holds twice** is legal and the last line wins; the second one says so, because
+"I changed it and nothing happened" is otherwise unanswerable, and because a
+dialog's write-back has to land on a file that means one thing.
+
+**A key written under the wrong header is told which header it belongs to**
+(`kill-grace-seconds belongs in [general], not [terminal]`) rather than called
+unknown: it is a key this plan documents, and a reader who has clearly read
+about it is helped by being told where it lives.
+
 ```ini
 # ~/.config/ckmux/ckmux.conf — everything below shows the default
 [general]
@@ -35,9 +56,9 @@ theme           = dark         # dark | light | mono (Settings ▸ General…)
 on-exit         = hold-on-error# close | hold | hold-on-error
 confirm-kill    = true         # confirm dialogs for kill/close of live apps
 kill-empty-session = true      # session dies when its last terminal closes
-kill-grace-seconds = 5         # how long End Session gives programs to quit
-                               # before the kill — IF the reader ticked "kill
-                               # anything still running" in that dialog; the
+kill-grace-seconds = 5         # how long End Session and Close Terminal give
+                               # programs to quit before the kill — IF the
+                               # reader ticked the dialog's kill box; the
                                # asking (SIGHUP+SIGTERM) happens regardless
                                # (Settings ▸ Settings…, 0–600)
 clock           = seconds      # seconds | minutes | off — the clock at the
@@ -109,12 +130,22 @@ waits for.
 - **A dialog may write this file back.** Printer settings are edited in
   `Terminal ▸ Printer Settings…` ([06](06-ui-design.md)); `Global` /
   `Save as default` persists them. `login-shell`, `sixel-max-megapixels`,
-  `clock` and `theme` are edited in `Settings ▸ General…`. The write is
-  key-targeted — matching `key = value`
-  lines are rewritten in place, a missing key joins its section, and a
-  missing section is appended — so comments, ordering, inline notes and
-  unrelated keys survive. Everything else in this file stays hand-edited in
-  v1.
+  `clock`, `kill-grace-seconds` and `theme` are edited in
+  `Settings ▸ General…`. The write is key-targeted — matching `key = value`
+  lines are rewritten in place (*every* matching line, since the file is read
+  back last-line-wins and a Save that lands on the losing line is a Save the
+  reader cannot see), a missing key joins its section, and a missing section
+  is appended — so comments, ordering, inline notes and unrelated keys
+  survive. The write is also atomic and durable: a per-process scratch file,
+  flushed, renamed over the target, and the directory entry flushed after it,
+  because a settings dialog that reports success and loses the setting is the
+  one failure it must not have. Everything else in this file stays hand-edited
+  in v1.
+- **A file that cannot be read is not a file that is not there.** No file is
+  the ordinary case and says nothing; a file that exists and cannot be opened
+  warns, naming the path and the reason, because that is the reader's own
+  configuration being ignored wholesale. A write-back into such a file is
+  refused rather than replacing it with the single key being saved.
 
 ## What exists today (WP-12, 2026-08-17)
 
@@ -133,16 +164,29 @@ Three states, and the difference between them is the point:
 | **Unknown** | No such key. Warns with its line, and the rest of the file is still read. |
 
 Honoured today: `prefix`, `shell`, `login-shell`, `scrollback` (including
-`0`), `theme`, `clock`, `confirm-kill`, `kill-grace-seconds`, `term`, `mouse`,
-`alternate-scroll`, `sixel`, `sixel-max-megapixels`, `osc52`, `clipboard`, and
-the whole of `[keys]`.
+`0`), `theme`, `clock`, `confirm-kill`, `kill-grace-seconds`,
+`kill-empty-session`, `term`, `mouse`, `alternate-scroll`, `sixel`,
+`sixel-max-megapixels`, `osc52`, `clipboard`, `[render] max-fps`,
+`[printer] mode` and `[printer] spool-limit`, and the whole of `[keys]`.
 
-Read but not yet honoured: `on-exit` (WP-13), `kill-empty-session` (WP-13,
-with the exit policy that decides when a terminal leaves its session),
-all of `[printer]` (U1-c and PRINT-1…6), and `[render] max-fps` (WP-2). A key
-leaves that list in the commit that wires it up — `[terminal] clipboard` left
-it with WP-17, which is where copying began, and `clock` left it with the
-menu-bar clock.
+Read but not yet honoured: `on-exit` (WP-13), and `[printer]`'s `ask-cache`,
+`save-format`, `save-folder` and `save-ask-name` (PRINT-1…6). A key leaves
+that list in the commit that wires it up — `[terminal] clipboard` left it with
+WP-17, which is where copying began, and `clock` left it with the menu-bar
+clock.
+
+Four keys stayed on that list *after* they were wired up, which is the same
+defect facing the other way: `check-config` told a reader that setting them
+would do nothing while they were quietly doing something. `kill-empty-session`
+reaches the server's session bookkeeping, `[render] max-fps` its output
+coalescing tick, and `[printer] mode` and `spool-limit` the terminal launch
+profile. Corrected 2026-08-18 (plans/13, m-conf), with a test that fails if
+any of the four returns to the list.
+
+The one remaining printer gap is about a *value*, not a key: `mode = off`
+genuinely denies capture, but until PRINT-1…6 lands there is nobody to ask, so
+`mode = ask` captures rather than asking. `keys_not_honoured_yet()` is a list
+of keys nothing reads, so it does not carry that — this paragraph does.
 
 Notes on the parts that are easy to get wrong:
 

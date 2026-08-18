@@ -7,11 +7,14 @@
 // every other key exactly where they were.
 #include "common/config.hpp"
 
+#include <unistd.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <system_error>
 
 #include "cvision/testing/cktest.hpp"
 #include "platform/paths.hpp"
@@ -23,19 +26,37 @@ using ckm::Settings;
 
 namespace {
 
-// Its own directory per test, removed when the test leaves, so nothing here
-// depends on — or disturbs — the machine's real configuration.
+// Its own directory per test, removed when the test leaves however it leaves,
+// so nothing here depends on — or disturbs — the machine's real configuration.
+//
+// The name carries this process's id. A fixed path is shared state between
+// every run of the suite on the machine: two at once (`ctest -j`, a sanitizer
+// build beside a plain one) would each remove_all the other's directory
+// mid-test, and the failure that produces looks like a config bug rather than
+// like the collision it is.
 class ScratchConfig {
 public:
     explicit ScratchConfig(const std::string& name)
-        : directory_(std::filesystem::temp_directory_path() / ("ckmux-config-" + name)) {
-        std::filesystem::remove_all(directory_);
-        std::filesystem::create_directories(directory_);
+        : directory_(std::filesystem::temp_directory_path() /
+                     ("ckmux-config-" + name + "-" +
+                      std::to_string(static_cast<long long>(::getpid())))) {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory_, ignored);
+        std::filesystem::create_directories(directory_, ignored);
     }
-    ~ScratchConfig() { std::filesystem::remove_all(directory_); }
+    ~ScratchConfig() {
+        // A test that took the permissions off the file to make it unreadable
+        // leaves them off; the directory still has to go, on the failing path
+        // as much as on the passing one.
+        std::error_code ignored;
+        std::filesystem::permissions(path(), std::filesystem::perms::owner_read,
+                                     std::filesystem::perm_options::add, ignored);
+        std::filesystem::remove_all(directory_, ignored);
+    }
     ScratchConfig(const ScratchConfig&) = delete;
     ScratchConfig& operator=(const ScratchConfig&) = delete;
 
+    const std::filesystem::path& directory() const { return directory_; }
     std::filesystem::path path() const { return directory_ / "ckmux.conf"; }
 
     void write(const std::string& contents) const {
@@ -53,6 +74,25 @@ public:
 private:
     std::filesystem::path directory_;
 };
+
+// A warning names its file in full and then the line: "…/ckmux.conf:4: …".
+// The whole path, because a reader with a `$CKMUX_CONFIG` beside their real
+// file cannot tell two "ckmux.conf:4"s apart, and cannot paste a basename into
+// an editor.
+bool warns_at(const std::string& text, const std::filesystem::path& path, int line) {
+    return text.rfind(path.string() + ":" + std::to_string(line) + ": ", 0) == 0;
+}
+
+// Takes the permissions off a file, and answers whether that actually made it
+// unreadable. Running as root, or on a filesystem that does not carry
+// permissions, it does not — and the two tests that need an unreadable file
+// then skip rather than assert something untrue about the machine they are on.
+bool make_unreadable(const std::filesystem::path& path) {
+    std::error_code ignored;
+    std::filesystem::permissions(path, std::filesystem::perms::none, ignored);
+    std::ifstream probe(path);
+    return !probe;
+}
 
 // Restores whichever of the location variables a test changes.
 class ScopedEnvironment {
@@ -114,11 +154,18 @@ CK_TEST(comments_blank_lines_and_loose_spacing_are_all_read_through) {
 
 CK_TEST(the_same_key_in_another_section_is_not_this_key) {
     // Sections are what make a one-word key like login-shell safe to have.
+    // The line is not obeyed — and the warning says where the key does live,
+    // because "unknown key 'login-shell'" would be a lie about a key the plan
+    // documents and the reader has clearly read about.
     ScratchConfig scratch("sections");
     scratch.write("[terminal]\nlogin-shell = false\n");
     const ckm::LoadedSettings loaded = load_settings(scratch.path());
     CK_CHECK(loaded.settings.login_shell);  // still the default
     CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 2));
+        CK_CHECK(loaded.warnings[0].find("belongs in [general], not [terminal]") != std::string::npos);
+    }
 }
 
 CK_TEST(an_unknown_key_warns_with_its_line_and_leaves_everything_else_read) {
@@ -135,7 +182,7 @@ CK_TEST(an_unknown_key_warns_with_its_line_and_leaves_everything_else_read) {
     CK_CHECK(!loaded.settings.login_shell);
     CK_CHECK(loaded.warnings.size() == 1U);
     if (loaded.warnings.size() == 1U) {
-        CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") != std::string::npos);
+        CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 2));
         CK_CHECK(loaded.warnings[0].find("shel") != std::string::npos);
     }
 }
@@ -157,7 +204,7 @@ CK_TEST(a_line_that_is_neither_a_section_nor_an_assignment_warns_by_line_number)
     const ckm::LoadedSettings loaded = load_settings(scratch.path());
     CK_CHECK(!loaded.settings.login_shell);
     CK_CHECK(loaded.warnings.size() == 1U);
-    CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") != std::string::npos);
+    if (loaded.warnings.size() == 1U) CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 2));
 }
 
 CK_TEST(the_picture_limit_is_read_from_the_terminal_section) {
@@ -204,13 +251,12 @@ CK_TEST(saving_into_an_absent_file_creates_it_with_its_section) {
 
 CK_TEST(saving_creates_the_directory_the_file_belongs_in) {
     // First run on a machine that has no ~/.config/ckmux yet — which is
-    // every machine, once.
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ckmux-config-mkdir";
-    std::filesystem::remove_all(root);
-    const std::filesystem::path nested = root / "ckmux" / "ckmux.conf";
+    // every machine, once. The scratch directory is the one that cleans up
+    // after itself, including when the check below fails.
+    ScratchConfig scratch("mkdir");
+    const std::filesystem::path nested = scratch.directory() / "ckmux" / "ckmux.conf";
     CK_CHECK(save_setting(nested, "general", "login-shell", bool_setting(true)));
     CK_CHECK(std::filesystem::exists(nested));
-    std::filesystem::remove_all(root);
 }
 
 CK_TEST(saving_rewrites_the_key_in_place_and_leaves_the_rest_of_the_file_alone) {
@@ -289,9 +335,41 @@ CK_TEST(the_picture_limit_round_trips_through_the_file_the_dialog_writes) {
 }
 
 CK_TEST(saving_leaves_no_temporary_file_behind) {
+    // Whatever the scratch file is called — the name carries a process id, so
+    // asking for one spelling would pass by not looking.
     ScratchConfig scratch("atomic");
     CK_CHECK(save_setting(scratch.path(), "general", "login-shell", bool_setting(true)));
-    CK_CHECK(!std::filesystem::exists(scratch.path().string() + ".tmp"));
+    std::size_t files = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(scratch.directory())) {
+        ++files;
+        CK_CHECK(entry.path() == scratch.path());
+    }
+    CK_CHECK(files == 1U);
+}
+
+CK_TEST(two_savers_at_once_do_not_share_one_scratch_file) {
+    // The name of the file save_setting writes beside the target carries this
+    // process's id. Two ckmux clients saving at the same moment would
+    // otherwise write one scratch file between them, and the loser of that
+    // race would rename half of the winner's bytes over the reader's
+    // configuration. The id is what this asserts; the race is what it is for.
+    ScratchConfig scratch("scratch-name");
+    scratch.write("[general]\nlogin-shell = true\n");
+    const std::string mine = std::to_string(static_cast<long long>(::getpid()));
+    // A leftover from a *different* process must not be touched by this one:
+    // it is another client's save in flight.
+    const std::filesystem::path theirs = scratch.path().string() + ".tmp.999999";
+    {
+        std::ofstream out(theirs, std::ios::trunc);
+        out << "not mine\n";
+    }
+    CK_CHECK(save_setting(scratch.path(), "general", "login-shell", bool_setting(false)));
+    CK_CHECK(std::filesystem::exists(theirs));
+    CK_CHECK(!std::filesystem::exists(scratch.path().string() + ".tmp." + mine));
+    CK_CHECK(!load_settings(scratch.path()).settings.login_shell);
+    std::error_code ignored;
+    std::filesystem::remove(theirs, ignored);
 }
 
 // --- Where the file is ------------------------------------------------
@@ -369,6 +447,7 @@ theme = light
 on-exit = hold
 confirm-kill = false
 kill-empty-session = false
+kill-grace-seconds = 30
 clock = minutes
 
 [terminal]
@@ -404,6 +483,7 @@ max-fps = 60
     CK_CHECK(s.on_exit == ckm::ExitPolicy::Hold);
     CK_CHECK(!s.confirm_kill);
     CK_CHECK(!s.kill_empty_session);
+    CK_CHECK(s.kill_grace_seconds == 30);
     CK_CHECK(s.clock == ckm::ClockMode::Minutes);
     CK_CHECK(s.term == "screen-256color");
     CK_CHECK(!s.mouse);
@@ -435,6 +515,7 @@ CK_TEST(the_defaults_are_the_ones_the_plan_prints) {
     CK_CHECK(s.on_exit == ckm::ExitPolicy::HoldOnError);
     CK_CHECK(s.confirm_kill);
     CK_CHECK(s.kill_empty_session);
+    CK_CHECK(s.kill_grace_seconds == 5);
     CK_CHECK(s.clock == ckm::ClockMode::Seconds);
     CK_CHECK(s.term == "auto");
     CK_CHECK(s.mouse);
@@ -455,13 +536,14 @@ CK_TEST(a_bad_value_names_its_line_says_what_it_wanted_and_keeps_the_default) {
     scratch.write("[general]\ntheme = drak\nscrollback = -1\n[render]\nmax-fps = 5000\n");
     const ckm::LoadedSettings loaded = load_settings(scratch.path());
     CK_CHECK(loaded.warnings.size() == 3U);
-    CK_CHECK(loaded.warnings[0].find("ckmux.conf:2") == 0);
+    if (loaded.warnings.size() != 3U) return;
+    CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 2));
     // All four parts: what was wanted, what was written, and what is in force.
     CK_CHECK(loaded.warnings[0].find("dark | light | mono") != std::string::npos);
     CK_CHECK(loaded.warnings[0].find("'drak'") != std::string::npos);
     CK_CHECK(loaded.warnings[0].find("keeping dark") != std::string::npos);
-    CK_CHECK(loaded.warnings[1].find("ckmux.conf:3") == 0);
-    CK_CHECK(loaded.warnings[2].find("ckmux.conf:5") == 0);
+    CK_CHECK(warns_at(loaded.warnings[1], scratch.path(), 3));
+    CK_CHECK(warns_at(loaded.warnings[2], scratch.path(), 5));
     // And nothing was half-applied.
     CK_CHECK(loaded.settings == Settings{});
 }
@@ -521,15 +603,264 @@ CK_TEST(a_key_that_is_read_but_not_yet_acted_on_says_so_rather_than_warning) {
     // plan documents, and accepting one silently so a reader believes it did
     // something. The list is the third answer.
     ScratchConfig scratch("not-yet");
-    scratch.write("[render]\nmax-fps = 60\n");
+    scratch.write("[general]\non-exit = hold\n");
     CK_CHECK(load_settings(scratch.path()).warnings.empty());
     const std::vector<std::string> pending = ckm::keys_not_honoured_yet();
-    bool names_max_fps = false;
-    for (const std::string& entry : pending)
-        if (entry.find("max-fps") != std::string::npos) names_max_fps = true;
-    CK_CHECK(names_max_fps);
+    const auto names = [&pending](const std::string& key) {
+        for (const std::string& entry : pending)
+            if (entry.find(key) != std::string::npos) return true;
+        return false;
+    };
+    CK_CHECK(names("on-exit"));
     // Every entry names the package it waits for, so the list cannot rot into
     // "someday".
-    for (const std::string& entry : pending)
-        CK_CHECK(entry.find('(') != std::string::npos);
+    for (const std::string& entry : pending) CK_CHECK(entry.find('(') != std::string::npos);
+}
+
+CK_TEST(the_not_yet_honoured_list_does_not_claim_a_key_that_is_honoured) {
+    // The list can lie in either direction, and it did: four keys stayed on it
+    // after they were wired up, so `check-config` told a reader that setting
+    // them would do nothing while they were quietly doing something (m-conf).
+    // Each name below is here because something reads it today:
+    //   kill-empty-session  server.cpp forget_session, both call sites
+    //   [printer] mode      terminals.cpp launch profile (`off` denies)
+    //   spool-limit         terminals.cpp max_printer_spool_bytes
+    //   max-fps             server.cpp flush_tick period
+    // A name reappearing here means the list rotted again, in the direction
+    // that is harder to notice.
+    const std::vector<std::string> pending = ckm::keys_not_honoured_yet();
+    for (const std::string& entry : pending) {
+        CK_CHECK(entry.find("kill-empty-session") == std::string::npos);
+        CK_CHECK(entry.find("[printer] mode") == std::string::npos);
+        CK_CHECK(entry.find("spool-limit") == std::string::npos);
+        CK_CHECK(entry.find("max-fps") == std::string::npos);
+    }
+    // And a key that is honoured is still read without complaint.
+    ScratchConfig scratch("honoured");
+    scratch.write("[render]\nmax-fps = 60\n[general]\nkill-empty-session = false\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.max_fps == 60);
+    CK_CHECK(!loaded.settings.kill_empty_session);
+}
+
+// --- kill-grace-seconds lives in [general] (M-T1) -------------------------
+
+CK_TEST(the_grace_period_is_read_from_the_section_the_dialog_writes_it_to) {
+    // The whole round trip the Settings dialog makes, in the order it makes
+    // it. It used to be a circle that did not close: the dialog wrote
+    // [general] kill-grace-seconds, the parser looked for it under [terminal]
+    // only, and the next start warned the reader about a line ckmux had
+    // written itself (M-T1).
+    ScratchConfig scratch("grace");
+    scratch.write("[general]\nlogin-shell = true\n");
+    CK_CHECK(save_setting(scratch.path(), "general", "kill-grace-seconds", std::to_string(20)));
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.kill_grace_seconds == 20);
+}
+
+CK_TEST(the_grace_period_written_under_terminal_is_told_where_it_belongs) {
+    // Silence here would leave two live copies of one setting: the reader's
+    // line under [terminal] doing nothing, and the dialog going on writing to
+    // [general]. The message names the section that would have worked.
+    ScratchConfig scratch("grace-misplaced");
+    scratch.write("[terminal]\nkill-grace-seconds = 20\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.settings.kill_grace_seconds == 5);  // the default stands
+    CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 2));
+        CK_CHECK(loaded.warnings[0].find("kill-grace-seconds belongs in [general], not [terminal]") !=
+                 std::string::npos);
+    }
+}
+
+CK_TEST(a_grace_period_outside_its_range_warns_and_keeps_the_default) {
+    for (const char* const value : {"-1", "601", "ages", "5.5"}) {
+        ScratchConfig scratch("grace-range");
+        scratch.write(std::string("[general]\nkill-grace-seconds = ") + value + "\n");
+        const ckm::LoadedSettings loaded = load_settings(scratch.path());
+        CK_CHECK(loaded.settings.kill_grace_seconds == 5);
+        CK_CHECK(loaded.warnings.size() == 1U);
+        if (loaded.warnings.size() == 1U) {
+            CK_CHECK(loaded.warnings[0].find("between 0 and 600") != std::string::npos);
+            CK_CHECK(loaded.warnings[0].find("keeping 5") != std::string::npos);
+        }
+    }
+}
+
+// --- A file that is there and cannot be read ------------------------------
+
+CK_TEST(a_config_that_cannot_be_read_says_so_instead_of_pretending_it_is_absent) {
+    // The difference between the two silences: no file is an unconfigured
+    // ckmux and says nothing, while an unreadable file is a reader's settings
+    // being ignored wholesale. Behaving identically in both cases is how a
+    // reader spends an evening wondering why their prefix key changed back.
+    ScratchConfig scratch("unreadable");
+    scratch.write("[general]\nlogin-shell = false\n");
+    if (!make_unreadable(scratch.path())) return;  // root, or a permissionless filesystem
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.settings == Settings{});  // the built-in defaults, unchanged
+    CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        // Named in full, and with what is in force instead.
+        CK_CHECK(loaded.warnings[0].rfind(scratch.path().string() + ": ", 0) == 0);
+        CK_CHECK(loaded.warnings[0].find("could not be read") != std::string::npos);
+        CK_CHECK(loaded.warnings[0].find("keeping the built-in settings") != std::string::npos);
+    }
+}
+
+CK_TEST(saving_into_a_config_that_cannot_be_read_refuses_rather_than_replacing_it) {
+    // An unreadable file read as an empty one would be rewritten as the single
+    // key this call was asked to store — the reader's whole configuration
+    // replaced by one line, silently, by a dialog they opened to change one
+    // setting.
+    ScratchConfig scratch("unreadable-save");
+    scratch.write("[general]\nlogin-shell = false\nprefix = C-a\n");
+    if (!make_unreadable(scratch.path())) return;
+    CK_CHECK(!save_setting(scratch.path(), "general", "login-shell", bool_setting(true)));
+    std::error_code ignored;
+    std::filesystem::permissions(scratch.path(), std::filesystem::perms::owner_read,
+                                 std::filesystem::perm_options::add, ignored);
+    CK_CHECK(scratch.read() == "[general]\nlogin-shell = false\nprefix = C-a\n");
+}
+
+// --- A section nobody has ------------------------------------------------
+
+CK_TEST(a_mistyped_section_is_one_warning_at_the_header_not_one_at_every_key) {
+    // The reader made one mistake. Four warnings about four keys that are
+    // perfectly well spelled would send them looking at the wrong four lines.
+    ScratchConfig scratch("bad-section");
+    scratch.write(
+        "[generall]\n"
+        "login-shell = false\n"
+        "theme = light\n"
+        "clock = off\n"
+        "\n"
+        "[terminal]\n"
+        "mouse = false\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 1));
+        CK_CHECK(loaded.warnings[0].find("no such section '[generall]'") != std::string::npos);
+        // A reader who copies a word out of the message gets a header that works.
+        CK_CHECK(loaded.warnings[0].find("general, terminal, printer, render, keys") !=
+                 std::string::npos);
+    }
+    // Nothing under the header was read...
+    CK_CHECK(loaded.settings.login_shell);
+    CK_CHECK(loaded.settings.theme == ckm::Theme::Dark);
+    CK_CHECK(loaded.settings.clock == ckm::ClockMode::Seconds);
+    // ...and the file goes on being read after it.
+    CK_CHECK(!loaded.settings.mouse);
+}
+
+// --- One key, written twice ----------------------------------------------
+
+CK_TEST(a_key_set_twice_says_so_and_the_last_line_wins) {
+    ScratchConfig scratch("duplicate");
+    scratch.write("[general]\nlogin-shell = false\ntheme = light\nlogin-shell = true\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.settings.login_shell);  // the last line
+    CK_CHECK(loaded.settings.theme == ckm::Theme::Light);
+    CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        CK_CHECK(warns_at(loaded.warnings[0], scratch.path(), 4));
+        CK_CHECK(loaded.warnings[0].find("login-shell is set again here") != std::string::npos);
+    }
+}
+
+CK_TEST(saving_a_key_its_section_holds_twice_is_a_save_the_reader_can_see) {
+    // The defect: the dialog rewrote the first line, the file was read back
+    // last-line-wins, and Save did nothing a reader could observe — twice
+    // over, since they would then try again.
+    ScratchConfig scratch("duplicate-save");
+    scratch.write(
+        "[general]\n"
+        "login-shell = true   # from when I set this up\n"
+        "theme = dark\n"
+        "login-shell = true\n");
+    CK_CHECK(save_setting(scratch.path(), "general", "login-shell", bool_setting(false)));
+    // Both lines rewritten, both notes kept, nothing of the reader's deleted.
+    CK_CHECK(scratch.read() ==
+             "[general]\n"
+             "login-shell = false  # from when I set this up\n"
+             "theme = dark\n"
+             "login-shell = false\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(!loaded.settings.login_shell);
+    // Still their duplicate, and still said out loud.
+    CK_CHECK(loaded.warnings.size() == 1U);
+}
+
+// --- The one escape ------------------------------------------------------
+
+CK_TEST(a_hash_inside_a_clipboard_command_is_written_with_a_backslash) {
+    // Without the escape the command was silently cut at the '#' and a reader
+    // got a copy target that ran half of what they wrote.
+    ScratchConfig scratch("escape");
+    scratch.write("[terminal]\nclipboard = exec:my-copy --tag=\\#1, osc52   # my helper\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.clipboard.size() == 2U);
+    if (loaded.settings.clipboard.size() == 2U) {
+        CK_CHECK(loaded.settings.clipboard[0].kind == ckm::ClipboardTarget::Kind::Exec);
+        CK_CHECK(loaded.settings.clipboard[0].command == "my-copy --tag=#1");
+        CK_CHECK(loaded.settings.clipboard[1].kind == ckm::ClipboardTarget::Kind::Osc52);
+    }
+}
+
+CK_TEST(an_unescaped_hash_is_still_a_comment) {
+    // The escape is an addition, not a change of mind: the plan's own annotated
+    // example file is full of trailing comments and has to keep working.
+    ScratchConfig scratch("escape-comment");
+    scratch.write("[terminal]\nclipboard = exec:my-copy # the helper I wrote\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.clipboard.size() == 1U);
+    if (loaded.settings.clipboard.size() == 1U)
+        CK_CHECK(loaded.settings.clipboard[0].command == "my-copy");
+}
+
+CK_TEST(every_other_backslash_in_a_command_is_left_exactly_as_it_was_written) {
+    // The reason `\\` and `\n` are not escapes here: these values are shell
+    // commands, and a format that rewrote them would break more commands than
+    // the escape saves.
+    ScratchConfig scratch("escape-shell");
+    scratch.write("[terminal]\nclipboard = exec:sed -e 's/\\\\n/ /' | my-copy\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.clipboard.size() == 1U);
+    if (loaded.settings.clipboard.size() == 1U)
+        CK_CHECK(loaded.settings.clipboard[0].command == "sed -e 's/\\\\n/ /' | my-copy");
+}
+
+CK_TEST(a_hash_can_be_bound_as_a_chord) {
+    // '#' is a printable character and therefore a chord, so `bind terminal
+    // \# …` has to reach parse_chord rather than being read as the start of a
+    // comment.
+    ScratchConfig scratch("escape-bind");
+    scratch.write("[keys]\nbind terminal \\# menu-bar\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.binds.size() == 1U);
+    if (loaded.settings.binds.size() == 1U) {
+        CK_CHECK(loaded.settings.binds[0].chord == "#");
+        CK_CHECK(loaded.settings.binds[0].action == ckm::Action::MenuBar);
+    }
+}
+
+CK_TEST(a_hash_survives_the_file_a_dialog_writes) {
+    // save_setting escapes what it writes, so that what it wrote is what
+    // load_settings reads. Nothing a dialog writes today contains a '#'; the
+    // round trip should not have to depend on that staying true.
+    ScratchConfig scratch("escape-round-trip");
+    CK_CHECK(save_setting(scratch.path(), "terminal", "clipboard", "exec:my-copy --tag=#1"));
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.clipboard.size() == 1U);
+    if (loaded.settings.clipboard.size() == 1U)
+        CK_CHECK(loaded.settings.clipboard[0].command == "my-copy --tag=#1");
 }

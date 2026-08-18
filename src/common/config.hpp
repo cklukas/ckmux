@@ -15,8 +15,14 @@
 // key" at a key the plan documents — teaches a reader that the file they were
 // handed is wrong, and the one after it (accept silently, do nothing) is the
 // live-looking-and-dead failure this project pins tests against. `Settings`
-// carries every value; `honoured_today()` says which ones currently reach
-// anything, and `check-config` reads it (plans/12 WP-11).
+// carries every value; `keys_not_honoured_yet()` names the ones that do not
+// reach anything yet, and `check-config` prints it (plans/12 WP-11).
+//
+// The format has exactly one escape: `\#` is a literal '#' rather than the
+// start of a comment, so that a `[terminal] clipboard` command may contain
+// one. Every other backslash stands for itself — the values that need the
+// escape are shell commands, and a format that rewrote `\\` or `\n` would
+// break more of them than it saved.
 #pragma once
 
 #include <cstddef>
@@ -181,22 +187,33 @@ struct Settings {
     friend bool operator==(const Settings&, const Settings&) = default;
 };
 
-// Which keys currently reach anything, as key names ("scrollback",
-// "[render] max-fps"). The honest answer to "I set this — why did nothing
-// happen?", and what `check-config` prints. A key leaves this list by being
-// wired up, in the commit that wires it up.
+// Which keys do NOT yet reach anything, as key names with the package each
+// one waits for ("[general] on-exit (WP-13)"). The honest answer to "I set
+// this — why did nothing happen?", and what `check-config` prints.
+//
+// A key leaves this list by being wired up, in the commit that wires it up.
+// The list is as capable of lying in one direction as the other, and has: it
+// named four keys that had since been honoured, so a reader was told nothing
+// would happen and then something did (m-conf). Verify against the code, not
+// against this list, before adding to it.
 std::vector<std::string> keys_not_honoured_yet();
 
 struct LoadedSettings {
     Settings settings;
-    // One entry per problem, each naming its line: "ckmux.conf:4: unknown
-    // key 'shel' in [general]". The caller decides where these go; nothing
-    // here writes to a stream of its own.
+    // One entry per problem, each naming its file and line in full:
+    // "/home/me/.config/ckmux/ckmux.conf:4: unknown key 'shel' in [general]".
+    // The whole path rather than the basename, because a reader with a
+    // `$CKMUX_CONFIG` beside their real file cannot tell two "ckmux.conf:4"s
+    // apart, and cannot paste one into an editor. The caller decides where
+    // these go; nothing here writes to a stream of its own.
     std::vector<std::string> warnings;
 };
 
 // Reads `path`. A file that does not exist yields the defaults and no
-// warnings — that is what an unconfigured ckmux is.
+// warnings — that is what an unconfigured ckmux is. A file that exists and
+// cannot be read is the opposite case and warns, naming the path and the
+// reason: it is a file the reader wrote, and behaving as though they had
+// configured nothing would be ckmux ignoring them in silence.
 LoadedSettings load_settings(const std::filesystem::path& path);
 
 // Writes one key, leaving the rest of the file exactly as it was: comments,
@@ -206,8 +223,22 @@ LoadedSettings load_settings(const std::filesystem::path& path);
 // missing key is added to its section; a missing section is appended. The
 // file and its directory are created if absent.
 //
+// A key its section holds more than once is rewritten at *every* occurrence.
+// The file is read back last-line-wins, so rewriting only the first would
+// leave the dialog's Save with no effect the reader can see. Nothing is
+// deleted: their duplicate line is theirs, and load_settings says out loud
+// that the key is set twice.
+//
+// The write is atomic and durable: a scratch file (named per process, so two
+// clients saving at once cannot share one), flushed to disk, renamed over the
+// target, and the directory entry flushed after it. "Saved" therefore survives
+// a power loss, which is the only kind of promise a settings dialog can make.
+//
 // Returns false if the file could not be written — a full disk, a read-only
 // home — so a dialog can say so rather than silently discarding the change.
+// Also false, and without writing anything, when the file exists and cannot
+// be read: an unreadable file is not an empty one, and treating it as empty
+// would replace the reader's whole configuration with this one key.
 bool save_setting(const std::filesystem::path& path, const std::string& section, const std::string& key,
                   const std::string& value);
 
