@@ -381,7 +381,7 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
                 settings.prefix = *chord;
                 return applied();
             }
-            return refuse(rejected(key, "a chord such as C-b, C-a, F12 or Esc", written,
+            return refuse(rejected(key, "a chord such as ^B, ^A, F12 or Esc", written,
                                    chord_spelling(settings.prefix)));
         }
         if (key == "shell") {

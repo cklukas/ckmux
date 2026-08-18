@@ -46,6 +46,17 @@ constexpr std::array<ContextName, 5> kContexts{{
     {"move-resize", KeyContext::MoveResize},
 }};
 
+bool is_printable_ascii(char c) {
+    return static_cast<unsigned char>(c) > 0x20 && static_cast<unsigned char>(c) < 0x7F;
+}
+
+// ASCII case, done by arithmetic rather than by <cctype>: `tolower` answers in
+// the process's locale, and a chord table whose contents depend on the
+// reader's locale is a table that is not the same table on two machines
+// (plans/11 — determinism is testable or it is not real).
+char lower_ascii(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+char upper_ascii(char c) { return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c; }
+
 template <typename Table>
 std::string join_names(const Table& table) {
     std::string out;
@@ -114,6 +125,21 @@ std::optional<ckv::KeyChord> parse_chord(std::string_view text) {
     }
     if (text.empty()) return std::nullopt;
 
+    // `^B` — the spelling plans/06 shows a reader everywhere a key appears,
+    // and the one chord_spelling emits. Accepted alongside `C-b` because both
+    // are spellings a reader may reasonably write, and because a file written
+    // before this one existed still has to load. A lone `^` is not this rule:
+    // it is a printable character and falls through to be a chord of its own.
+    if (text.size() == 2 && text.front() == '^' && is_printable_ascii(text[1])) {
+        // `A-^X` is not a spelling anybody writes; a chord that mixes the two
+        // conventions is a typo, not a third convention.
+        if (chord.modifiers != ckv::Modifier::None) return std::nullopt;
+        chord.modifiers = ckv::Modifier::Ctrl;
+        chord.key = ckv::Key::Char;
+        chord.text = std::string(1, lower_ascii(text[1]));
+        return chord;
+    }
+
     // `Space` is a named key in this grammar and a printable character in
     // ckVision's key model. It is written as a name because a lone blank in a
     // configuration file is unreadable and, after trimming, unwritable.
@@ -130,11 +156,18 @@ std::optional<ckv::KeyChord> parse_chord(std::string_view text) {
     }
     // One printable character standing for itself. Its case carries Shift, so
     // an explicit `S-` on it would be a second spelling of the same key.
-    if (text.size() == 1 && static_cast<unsigned char>(text.front()) > 0x20 &&
-        static_cast<unsigned char>(text.front()) < 0x7F) {
+    if (text.size() == 1 && is_printable_ascii(text.front())) {
         if (has_modifier(chord.modifiers, ckv::Modifier::Shift)) return std::nullopt;
         chord.key = ckv::Key::Char;
         chord.text = std::string(text);
+        // With Ctrl, the case is NOT the shift, and this is the one place the
+        // rule above stops holding. A terminal sends one C0 byte for Ctrl+b
+        // and for Ctrl+Shift+b alike — the shift is not observable — so `C-B`
+        // and `C-b` cannot be two bindings. They are one, folded here and
+        // spelled `^B`. Before this, `C-B` parsed into a chord no reader could
+        // ever press.
+        if (has_modifier(chord.modifiers, ckv::Modifier::Ctrl))
+            chord.text[0] = lower_ascii(chord.text[0]);
         return chord;
     }
     return std::nullopt;
@@ -142,6 +175,21 @@ std::optional<ckv::KeyChord> parse_chord(std::string_view text) {
 
 std::string chord_spelling(const ckv::KeyChord& chord) {
     if (chord.key == ckv::Key::None) return {};
+    // Ctrl on a printable character is written `^B`: the spelling plans/06
+    // shows in the footer, the menu accelerators, the which-key popup and the
+    // help pages. It is written here rather than at each of those surfaces
+    // because this function is the single spelling authority — a chord
+    // dispatches under exactly the string it returns, so a second caret rule
+    // anywhere else is a key the reader is shown and cannot press.
+    //
+    // Only when Ctrl is the whole modifier set: `A-^X` is not a spelling
+    // anybody writes, so every other chord keeps its `C-`/`A-`/`S-` prefix.
+    // `C-Space` is likewise left alone — Space is a named key in this grammar,
+    // and `^ ` would be an invisible one.
+    if (chord.key == ckv::Key::Char && chord.modifiers == ckv::Modifier::Ctrl &&
+        chord.text.size() == 1 && chord.text != " ")
+        return std::string("^") + upper_ascii(chord.text[0]);
+
     std::string spelling;
     if (has_modifier(chord.modifiers, ckv::Modifier::Ctrl)) spelling += "C-";
     if (has_modifier(chord.modifiers, ckv::Modifier::Alt)) spelling += "A-";

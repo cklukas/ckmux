@@ -292,7 +292,10 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
         CK_CHECK(screen.find("Paste") != std::string::npos);
         CK_CHECK(screen.find("^B ]") != std::string::npos);
         CK_CHECK(screen.find("Send Prefix to Program") != std::string::npos);
-        CK_CHECK(screen.find("^B C-b") != std::string::npos);
+        // One spelling for one key: the accelerator read "^B C-b" while the
+        // two halves are the same chord, because the prefix and the chord
+        // after it were written by two different rules (plans/06 writes ^B).
+        CK_CHECK(screen.find("^B ^B") != std::string::npos);
     }
     reader.press("\x1b");
 

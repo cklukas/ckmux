@@ -102,10 +102,17 @@ bind terminal c new-terminal
 # unbind terminal q
 ```
 
-Chord grammar: `C-x` (Ctrl), `S-x` (Shift), `A-x`/`M-x` (Alt/Meta), `F1`–`F12`,
-named keys (`Enter`, `Esc`, `Space`, `Up`, …). Chords in `[keys]` are the key
-*after* the prefix, except in non-terminal contexts where they bind direct
-keys.
+Chord grammar: `^X` or `C-x` (Ctrl), `S-x` (Shift), `A-x`/`M-x` (Alt/Meta),
+`F1`–`F12`, named keys (`Enter`, `Esc`, `Space`, `Up`, …). Chords in `[keys]`
+are the key *after* the prefix, except in non-terminal contexts where they
+bind direct keys.
+
+A Ctrl chord may be written either way and is one chord; it is *shown* as
+`^B`, which is what [06](06-ui-design.md) writes in the footer, the menu
+accelerators, the which-key popup and the help pages. One spelling out of two
+in, because a chord dispatches under exactly the string it is displayed as —
+when the prefix was shown as `^B` and spelled `C-b`, the Send Prefix menu item
+advertised `^B C-b` for what is one key pressed twice.
 
 Both of the upstream dependencies this table used to carry have landed:
 `scrollback` reaches ckVision's `max_scrollback_lines`, `0` included (U0-c),
@@ -190,12 +197,18 @@ of keys nothing reads, so it does not carry that — this paragraph does.
 
 Notes on the parts that are easy to get wrong:
 
-- **Chords** are `C-`/`S-`/`A-`/`M-` prefixes on a character, an `F1`–`F12`,
-  or a named key (`Enter`, `Esc`, `Space`, `Up`). `M-` and `A-` are one
-  modifier written two ways and are stored as one, so a table cannot hold the
+- **Chords** are `^`/`C-`/`S-`/`A-`/`M-` prefixes on a character, an
+  `F1`–`F12`, or a named key (`Enter`, `Esc`, `Space`, `Up`). `M-` and `A-`
+  are one modifier written two ways, and `^X` and `C-x` are one modifier
+  written two ways, and each pair is stored as one, so a table cannot hold the
   same key twice. On a printable character the case *is* the shift — `T` is
   Shift+t — so `S-t` is refused rather than accepted as a second spelling of
   a key that already has one.
+- **With Ctrl, the case is not the shift.** A terminal sends one byte for
+  Ctrl+b and Ctrl+Shift+b alike, so `C-B` is folded to `C-b` and shown as
+  `^B`, rather than parsing into a second binding no reader could ever press.
+  `C-Space` keeps its long spelling: Space is a named key here, and `^ ` would
+  be an invisible one. A lone `^` is still the character `^`.
 - **Only `terminal` bindings are honoured today.** `desktop`, `copy-mode`,
   `picker` and `move-resize` parse as real context names and are then refused
   *out loud*, because a binding that looks live in a reader's file and does

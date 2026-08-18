@@ -475,7 +475,9 @@ max-fps = 60
     CK_CHECK(loaded.warnings.empty());
 
     const Settings& s = loaded.settings;
-    CK_CHECK(ckm::chord_spelling(s.prefix) == "C-a");
+    // Written `C-a` in the file above, shown and dispatched as `^A`: two
+    // spellings a reader may write, one they are ever shown (plans/06).
+    CK_CHECK(ckm::chord_spelling(s.prefix) == "^A");
     CK_CHECK(s.shell == "/bin/zsh");
     CK_CHECK(!s.login_shell);
     CK_CHECK(s.scrollback == 500);
@@ -507,7 +509,7 @@ max-fps = 60
 CK_TEST(the_defaults_are_the_ones_the_plan_prints) {
     // The empty config, key for key against plans/08's annotated example.
     const Settings s;
-    CK_CHECK(ckm::chord_spelling(s.prefix) == "C-b");
+    CK_CHECK(ckm::chord_spelling(s.prefix) == "^B");
     CK_CHECK(s.shell.empty());  // $SHELL, resolved at launch
     CK_CHECK(s.login_shell);
     CK_CHECK(s.scrollback == 10'000);
@@ -642,6 +644,51 @@ CK_TEST(the_not_yet_honoured_list_does_not_claim_a_key_that_is_honoured) {
     CK_CHECK(loaded.warnings.empty());
     CK_CHECK(loaded.settings.max_fps == 60);
     CK_CHECK(!loaded.settings.kill_empty_session);
+}
+
+// --- The prefix, in either spelling --------------------------------------
+
+CK_TEST(the_prefix_can_be_written_with_a_caret_or_with_c_dash) {
+    // plans/06 writes `^B`, plans/08's example file writes `C-b`, and a reader
+    // may reasonably write either. Both parse, and both come back as the one
+    // spelling every surface shows — so a rebinding cannot become two entries
+    // for one key.
+    for (const char* const written : {"^A", "C-a", "^a"}) {
+        ScratchConfig scratch("prefix-spelling");
+        scratch.write(std::string("[general]\nprefix = ") + written + "\n");
+        const ckm::LoadedSettings loaded = load_settings(scratch.path());
+        CK_CHECK(loaded.warnings.empty());
+        CK_CHECK(ckm::chord_spelling(loaded.settings.prefix) == "^A");
+    }
+}
+
+CK_TEST(a_prefix_that_is_not_a_chord_offers_the_spelling_it_wanted) {
+    ScratchConfig scratch("prefix-bogus");
+    scratch.write("[general]\nprefix = Ctrl+B\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.size() == 1U);
+    if (loaded.warnings.size() == 1U) {
+        // The four things, and the offered spelling is the one a reader will
+        // then see in the footer rather than a second convention.
+        CK_CHECK(loaded.warnings[0].find("^B") != std::string::npos);
+        CK_CHECK(loaded.warnings[0].find("'Ctrl+B'") != std::string::npos);
+        CK_CHECK(loaded.warnings[0].find("keeping ^B") != std::string::npos);
+    }
+    CK_CHECK(ckm::chord_spelling(loaded.settings.prefix) == "^B");
+}
+
+CK_TEST(a_ctrl_binding_is_stored_under_the_spelling_the_reader_is_shown) {
+    // Both spellings in the file, one entry apiece under the canonical
+    // spelling — the property that keeps dispatch and the footer agreeing.
+    ScratchConfig scratch("bind-caret");
+    scratch.write("[keys]\nbind terminal ^X menu-bar\nbind terminal C-y detach\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.binds.size() == 2U);
+    if (loaded.settings.binds.size() == 2U) {
+        CK_CHECK(loaded.settings.binds[0].chord == "^X");
+        CK_CHECK(loaded.settings.binds[1].chord == "^Y");
+    }
 }
 
 // --- kill-grace-seconds lives in [general] (M-T1) -------------------------

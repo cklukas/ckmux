@@ -213,23 +213,18 @@ int digit_chord(std::string_view chord) {
 std::string chord_spelling(const ckv::KeyEvent& event) { return ckm::chord_spelling(event.chord); }
 
 std::string prefix_label(const ckv::KeyChord& prefix) {
-    // Ctrl chords are written the way a terminal reader expects to see them
-    // ("^B"), not the way a GUI would ("Ctrl+B"): this label sits in a
-    // one-line footer next to a dozen others, and every cell counts.
-    if (prefix.key == ckv::Key::Char && has_modifier(prefix.modifiers, ckv::Modifier::Ctrl) &&
-        prefix.text.size() == 1) {
-        const char letter = prefix.text[0];
-        const char upper = (letter >= 'a' && letter <= 'z')
-                               ? static_cast<char>(letter - 'a' + 'A')
-                               : letter;
-        return std::string("^") + upper;
-    }
-    return ckv::format(prefix);
+    // Nothing of its own any more. This used to carry a second caret rule —
+    // "^B" here, "C-b" from chord_spelling — which is exactly how a footer
+    // comes to advertise a key spelled one way and dispatch a key spelled
+    // another. chord_spelling is the single spelling authority (plans/06,
+    // common/keymap.hpp) and now writes the caret itself, so this is one name
+    // for one function rather than a second opinion.
+    return ckm::chord_spelling(prefix);
 }
 
 std::string binding_label(const ckv::KeyChord& prefix, const KeyBinding& binding) {
     if (binding.chord.empty()) return {};
-    return prefix_label(prefix) + " " + binding.chord;
+    return ckm::chord_spelling(prefix) + " " + binding.chord;
 }
 
 }  // namespace ckm::client

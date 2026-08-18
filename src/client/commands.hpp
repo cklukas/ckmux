@@ -170,7 +170,7 @@ private:
 };
 
 // How a key event is spelled for lookup and for display: "c", "T", "?",
-// "C-b", "Esc". The one spelling authority lives in common/keymap.hpp so that
+// "^B", "Esc". The one spelling authority lives in common/keymap.hpp so that
 // a config file, the dispatcher and every surface agree; this is the overload
 // for an event that has just arrived.
 std::string chord_spelling(const ckv::KeyEvent& event);
@@ -179,7 +179,10 @@ using ckm::chord_spelling;
 // 1-9 for a digit chord, otherwise 0.
 int digit_chord(std::string_view chord);
 
-// How the prefix itself is written wherever ckmux shows it ("^B").
+// How the prefix itself is written wherever ckmux shows it ("^B") — which is
+// now just chord_spelling, kept as a name because the call sites read better
+// for it. It carried a second caret rule of its own until the one authority
+// learned to write the caret; there is nothing left here to disagree with.
 std::string prefix_label(const ckv::KeyChord& prefix);
 
 // "^B c" — how a binding is written in the footer and help.

@@ -79,7 +79,7 @@ CK_TEST(key_events_are_spelled_the_same_way_they_are_advertised) {
     CK_CHECK(chord_spelling(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "c"}}) == "c");
     CK_CHECK(chord_spelling(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "T"}}) == "T");
     CK_CHECK(chord_spelling(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Escape, ckv::Modifier::None, ""}}) == "Esc");
-    CK_CHECK(chord_spelling(ckv::KeyEvent{kPrefix}) == "C-b");
+    CK_CHECK(chord_spelling(ckv::KeyEvent{kPrefix}) == "^B");
     // The spelling used for lookup is the spelling shown in the footer, so a
     // key that dispatches is a key the reader was told about.
     const KeyBinding* const found =
@@ -90,9 +90,18 @@ CK_TEST(key_events_are_spelled_the_same_way_they_are_advertised) {
 CK_TEST(the_prefix_is_written_the_way_a_terminal_reader_expects) {
     CK_CHECK(prefix_label(kPrefix) == "^B");
     CK_CHECK(prefix_label(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "a"}) == "^A");
-    // A non-Ctrl prefix falls back to ckVision's own canonical spelling
-    // rather than inventing a second convention.
+    // A non-Ctrl prefix is spelled by the same authority rather than by a
+    // second convention.
     CK_CHECK(prefix_label(ckv::KeyChord{ckv::Key::F12, ckv::Modifier::None, ""}) == "F12");
+    // And that authority is chord_spelling itself — not a caret rule copied
+    // here. Two copies is how a footer comes to advertise "^B c" while the
+    // key that dispatches is spelled "C-b": the reader is shown one key and
+    // presses another.
+    for (const ckv::KeyChord& prefix :
+         {kPrefix, ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "a"},
+          ckv::KeyChord{ckv::Key::F12, ckv::Modifier::None, ""},
+          ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Alt, "x"}})
+        CK_CHECK(prefix_label(prefix) == ckm::chord_spelling(prefix));
 }
 
 CK_TEST(the_footer_shows_high_priority_keys_first_and_the_prefix_popup_shows_all_of_them) {

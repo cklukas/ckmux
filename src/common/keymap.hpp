@@ -82,20 +82,30 @@ std::optional<KeyContext> parse_key_context(std::string_view name);
 std::string action_name_list();
 std::string key_context_name_list();
 
-// The chord grammar of plans/08: `C-x` (Ctrl), `S-x` (Shift), `A-x` / `M-x`
-// (Alt), `F1`–`F12`, named keys (`Enter`, `Esc`, `Space`, `Up`, …), or one
-// printable character standing for itself.
+// The chord grammar of plans/08: `^X` or `C-x` (Ctrl), `S-x` (Shift),
+// `A-x` / `M-x` (Alt), `F1`–`F12`, named keys (`Enter`, `Esc`, `Space`,
+// `Up`, …), or one printable character standing for itself.
 //
 // Shift is only ever written for a named key. On a printable character the
 // case *is* the shift — `T` is Shift+t, and `S-t` would be a second way to
 // spell the same key, which is one way too many for a table that has to look
-// bindings up by their spelling.
+// bindings up by their spelling. Ctrl is the exception: a terminal sends one
+// byte for Ctrl+b and Ctrl+Shift+b alike, so `C-B` folds to `C-b` rather than
+// parsing into a chord nobody can press.
+//
+// `^X` and `C-x` are both accepted and are the same chord. Two spellings in,
+// one spelling out — see chord_spelling.
 std::optional<ckv::KeyChord> parse_chord(std::string_view text);
 
 // The inverse, and the single spelling authority: a chord dispatches under
 // exactly the string this returns, and every surface that shows a key shows
 // this string. Two spellings would mean a binding that dispatches and a
 // binding the reader was shown could differ.
+//
+// Ctrl on a printable character comes out as `^B` — what plans/06 writes, and
+// what a terminal's reader expects to see in a one-line footer. Everything
+// else keeps `C-`/`A-`/`S-`. Nothing outside this function is allowed a caret
+// rule of its own.
 std::string chord_spelling(const ckv::KeyChord& chord);
 
 // One `bind` or `unbind` line, in file order. `action` is empty for `unbind`,

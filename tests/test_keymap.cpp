@@ -20,13 +20,66 @@ using ckm::parse_chord;
 using ckm::parse_key_context;
 
 CK_TEST(a_chord_survives_the_round_trip_it_is_looked_up_by) {
-    const std::string kSpellings[] = {"c",  "T",     "?",   "C-b",   "A-x",        "F1",    "F12",
-                                      "Enter", "Esc", "Space", "Up", "C-A-Delete", "S-Tab"};
+    const std::string kSpellings[] = {"c",     "T",   "?",     "^B", "^A",         "^]",
+                                      "A-x",   "F1",  "F12",   "Enter", "Esc",     "Space",
+                                      "Up",    "C-A-Delete",   "S-Tab", "C-Space", "^"};
     for (const std::string& text : kSpellings) {
         const std::optional<ckv::KeyChord> chord = parse_chord(text);
         CK_CHECK(chord.has_value());
         if (chord) CK_CHECK(chord_spelling(*chord) == text);
     }
+}
+
+CK_TEST(a_ctrl_chord_is_shown_the_way_a_terminal_reader_writes_it) {
+    // plans/06 writes the prefix `^B` in every place a key appears — the
+    // footer, the menu accelerators, the which-key popup, the help pages. The
+    // spelling authority writes it, so all of them do; when it did not, the
+    // Send Prefix menu item advertised "^B C-b" for one key.
+    const std::optional<ckv::KeyChord> prefix = parse_chord("C-b");
+    CK_CHECK(prefix.has_value());
+    if (prefix) CK_CHECK(chord_spelling(*prefix) == "^B");
+    // Both spellings in, one out — so a reader's older file and this one
+    // cannot become two entries for one key.
+    CK_CHECK(parse_chord("^B") == parse_chord("C-b"));
+    CK_CHECK(parse_chord("^b") == parse_chord("C-b"));
+}
+
+CK_TEST(with_ctrl_the_case_of_a_letter_is_not_its_shift) {
+    // The one place the "case IS the shift" rule stops holding. A terminal
+    // sends one byte (0x02) for Ctrl+b and for Ctrl+Shift+b alike — the shift
+    // is not observable — so `C-B` and `C-b` cannot be two bindings. Before
+    // this, `C-B` parsed into a chord no reader could ever press.
+    CK_CHECK(parse_chord("C-B") == parse_chord("C-b"));
+    const std::optional<ckv::KeyChord> upper = parse_chord("C-B");
+    CK_CHECK(upper.has_value());
+    if (upper) {
+        CK_CHECK(upper->text == "b");
+        CK_CHECK(chord_spelling(*upper) == "^B");
+    }
+    // Without Ctrl the rule is unchanged: `t` and `T` stay two bindings,
+    // because the default table uses both (Tile and Cascade).
+    CK_CHECK(parse_chord("t") != parse_chord("T"));
+}
+
+CK_TEST(the_caret_is_for_ctrl_alone_and_never_hides_a_key) {
+    // `A-^X` mixes two conventions; that is a typo, not a third convention.
+    CK_CHECK(!parse_chord("A-^x").has_value());
+    // A lone '^' is a printable character, so it stays a chord of its own —
+    // the caret rule must not swallow the key it is written with.
+    const std::optional<ckv::KeyChord> caret = parse_chord("^");
+    CK_CHECK(caret.has_value());
+    if (caret) {
+        CK_CHECK(caret->modifiers == ckv::Modifier::None);
+        CK_CHECK(chord_spelling(*caret) == "^");
+    }
+    // Space is a named key in this grammar, so Ctrl+Space stays `C-Space`
+    // rather than becoming an invisible `^ `.
+    const std::optional<ckv::KeyChord> ctrl_space = parse_chord("C-Space");
+    CK_CHECK(ctrl_space.has_value());
+    if (ctrl_space) CK_CHECK(chord_spelling(*ctrl_space) == "C-Space");
+    // And a caret with more than one character after it is not a chord.
+    CK_CHECK(!parse_chord("^Bc").has_value());
+    CK_CHECK(!parse_chord("^ ").has_value());
 }
 
 CK_TEST(meta_and_alt_are_one_modifier_written_two_ways) {
