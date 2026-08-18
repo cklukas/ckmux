@@ -110,8 +110,12 @@ public:
 private:
     void note_row(int row, int first, int last);
     void note_every_row();
-    void rebuild_history_cache();
 
+    // The history lives flat inside `state_` (GridState's own shape), so
+    // `history()` is a borrow of the live region and nothing more. It was a
+    // cache once, rebuilt whole whenever a line scrolled away — O(history)
+    // per push, which a flooding child turns into seconds of flattening per
+    // batch and a reader experiences as a client that stopped answering.
     GridState state_;
     // The placed pictures and, parallel to them, the wire id each arrived
     // under. Two vectors rather than a struct because the raster vector is
@@ -120,15 +124,6 @@ private:
     std::vector<ckv::core::TerminalRaster> rasters_;
     std::vector<std::uint64_t> raster_wire_ids_;
     int raster_identity_ = 0;
-    // The history as one flat buffer, rebuilt when it changes.
-    //
-    // The mirror stores lines (a line is the unit `SbPush` carries and capacity
-    // is counted in), and every reader wants a flat span. Keeping both costs a
-    // copy of the history when it changes and saves one on every read — and a
-    // view reads on every repaint while the history changes only when a line
-    // scrolls away.
-    std::vector<ckv::Cell> history_cache_;
-    bool history_cache_valid_ = false;
     ckv::core::TerminalDamage damage_;
     std::uint32_t sequence_ = 0;
     std::uint64_t gaps_ = 0;

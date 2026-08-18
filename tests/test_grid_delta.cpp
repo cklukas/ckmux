@@ -4,6 +4,7 @@
 // mirror, and the mirror compared against what the server holds — which is the
 // only property that matters, because everything a reader sees downstream of
 // M2 is that mirror rather than the terminal itself.
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -18,7 +19,10 @@ using ckm::GridCursor;
 using ckm::GridState;
 using ckm::blank_cell;
 using ckm::blank_state;
+using ckm::push_scrollback_line;
 using ckm::same_state;
+using ckm::scrollback_cells;
+using ckm::scrollback_lines;
 using ckm::proto::CellsOp;
 using ckm::proto::CursorOp;
 using ckm::proto::GridOp;
@@ -91,12 +95,7 @@ std::vector<std::vector<ckv::Cell>> scroll_model(GridState& state, int top, int 
     }
     std::copy(region.begin(), region.end(),
               state.grid.begin() + static_cast<std::ptrdiff_t>(top * width));
-    for (const std::vector<ckv::Cell>& line : pushed) state.scrollback.push_back(line);
-    if (state.scrollback.size() > state.max_scrollback_lines) {
-        const std::size_t excess = state.scrollback.size() - state.max_scrollback_lines;
-        state.scrollback.erase(state.scrollback.begin(),
-                               state.scrollback.begin() + static_cast<std::ptrdiff_t>(excess));
-    }
+    for (const std::vector<ckv::Cell>& line : pushed) push_scrollback_line(state, line);
     return pushed;
 }
 
@@ -244,8 +243,8 @@ CK_TEST(random_edit_scripts_leave_the_mirror_byte_identical) {
     // The script has to have exercised what it claims to: a run where the
     // scroll arm never fired would pass while proving nothing about scrolls.
     CK_CHECK(scroll_rounds > 20);
-    CK_CHECK(!server.scrollback.empty());
-    CK_CHECK(server.scrollback.size() <= server.max_scrollback_lines);
+    CK_CHECK(scrollback_lines(server) != 0);
+    CK_CHECK(scrollback_lines(server) <= server.max_scrollback_lines);
 }
 
 CK_TEST(a_delta_that_does_not_fit_the_mirror_is_refused_rather_than_half_applied) {
@@ -399,7 +398,7 @@ CK_TEST(a_corrupted_delta_is_refused_rather_than_turned_into_a_different_screen)
                 GridState mirror = before;
                 (void)ckm::apply_delta(delta->ops, mirror);  // must refuse or fit; never crash
                 CK_CHECK(mirror.grid.size() == static_cast<std::size_t>(16 * 4));
-                CK_CHECK(mirror.scrollback.size() <= mirror.max_scrollback_lines);
+                CK_CHECK(scrollback_lines(mirror) <= mirror.max_scrollback_lines);
             }
         }
     }
@@ -408,4 +407,61 @@ CK_TEST(a_corrupted_delta_is_refused_rather_than_turned_into_a_different_screen)
     // asserting that the codec rejects everything, which proves nothing about
     // what the mirror does with a delta that got through.
     CK_CHECK(decoded_count > 0);
+}
+
+CK_TEST(a_flood_of_pushed_lines_costs_the_mirror_lines_not_the_history) {
+    // The defect this pins: the mirror once paid O(history) for every push —
+    // a front erase in apply, then a whole-history flatten for the next
+    // reader — so a child flooding a full history cost seconds per delta
+    // batch, and the client stopped answering for as long as output kept
+    // arriving. One `find /` was enough. Now a push costs the line it
+    // pushes, whatever the history's size.
+    //
+    // The flood below applies three histories' worth of lines and reads the
+    // history between batches, which is how a view reads it on every change
+    // notification. The wall budget at the end is generous the same way the
+    // core promise's flood gate is: what is asserted is the complexity
+    // class — the old shape missed this budget by minutes on any machine,
+    // sanitizers or none — not the speed of this host.
+    constexpr std::size_t kCap = 2000;
+    constexpr int kWidth = 120;
+    GridState mirror = blank_state(ckv::Size{kWidth, 4}, kCap);
+
+    const std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+    std::size_t pushed_total = 0;
+    for (int batch = 0; batch < 3000; ++batch) {
+        ckm::proto::ScrollbackPushOp push;
+        for (int line = 0; line < 2; ++line) {
+            std::vector<ckv::Cell> cells(static_cast<std::size_t>(kWidth), blank_cell());
+            const std::string text = "line " + std::to_string(pushed_total);
+            for (std::size_t i = 0; i < text.size() && i < static_cast<std::size_t>(kWidth); ++i)
+                cells[i] = ckv::Cell::from_grapheme(std::string(1, text[i]), ckv::Style{});
+            push.lines.push_back(ckm::proto::to_runs(cells));
+            ++pushed_total;
+        }
+        std::vector<GridOp> ops;
+        ops.emplace_back(std::move(push));
+        CK_CHECK(ckm::apply_delta(ops, mirror));
+        CK_CHECK(scrollback_cells(mirror).size() == scrollback_lines(mirror) * kWidth);
+    }
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+
+    CK_CHECK(scrollback_lines(mirror) == kCap);
+    // The capacity kept the newest lines and dropped the oldest.
+    const auto row_text = [&](std::size_t row, std::size_t length) {
+        const std::span<const ckv::Cell> history = scrollback_cells(mirror);
+        std::string text;
+        for (std::size_t i = 0; i < length; ++i)
+            text += history[row * static_cast<std::size_t>(kWidth) + i].grapheme();
+        return text;
+    };
+    CK_CHECK(row_text(kCap - 1, 9) == "line 5999");
+    CK_CHECK(row_text(0, 9) == "line 4000");
+    // Storage stays within one dead prefix of the kept history — the
+    // amortized reclaim, pinned so the fix cannot quietly regress into
+    // "never reclaim" (unbounded memory) or "reclaim per push" (the old
+    // cost wearing a new face).
+    CK_CHECK(mirror.scrollback.size() <= 2 * kCap * static_cast<std::size_t>(kWidth));
+    CK_CHECK(elapsed < 5.0);
 }

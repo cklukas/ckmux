@@ -133,6 +133,62 @@ GridState blank_state(ckv::Size cells, std::size_t max_scrollback_lines) {
     return state;
 }
 
+namespace {
+
+std::size_t scrollback_width(const GridState& state) {
+    return static_cast<std::size_t>(std::max(1, state.cells.width));
+}
+
+}  // namespace
+
+std::size_t scrollback_lines(const GridState& state) {
+    const std::size_t total = state.scrollback.size() / scrollback_width(state);
+    // An offset past the end reads as empty rather than as an underflow: a
+    // caller that cleared the buffer by hand owes no matching offset reset.
+    return total > state.scrollback_start ? total - state.scrollback_start : 0;
+}
+
+std::span<const ckv::Cell> scrollback_cells(const GridState& state) {
+    const std::size_t lines = scrollback_lines(state);
+    if (lines == 0) return {};
+    const std::size_t width = scrollback_width(state);
+    return std::span<const ckv::Cell>(state.scrollback.data() + state.scrollback_start * width,
+                                      lines * width);
+}
+
+void enforce_scrollback_capacity(GridState& state) {
+    if (state.max_scrollback_lines == 0) {
+        state.scrollback.clear();
+        state.scrollback_start = 0;
+        return;
+    }
+    const std::size_t width = scrollback_width(state);
+    const std::size_t live = scrollback_lines(state);
+    if (live > state.max_scrollback_lines)
+        state.scrollback_start += live - state.max_scrollback_lines;
+    // The dead prefix is reclaimed once it is as large as what is kept: one
+    // erase per history's worth of lines, so each cell moves at most once —
+    // never per push, which is where the previous shape paid O(history) for
+    // every line a flooding child scrolled.
+    if (state.scrollback_start >= scrollback_lines(state) && state.scrollback_start > 0) {
+        state.scrollback.erase(state.scrollback.begin(),
+                               state.scrollback.begin() +
+                                   static_cast<std::ptrdiff_t>(state.scrollback_start * width));
+        state.scrollback_start = 0;
+    }
+}
+
+void push_scrollback_line(GridState& state, std::span<const ckv::Cell> line) {
+    if (state.max_scrollback_lines == 0) return;
+    const std::size_t width = scrollback_width(state);
+    // Padded or cut to the state's width, because every reader indexes the
+    // history as rows of the CURRENT width — the same rule the emulator keeps
+    // when a resize re-lays its history.
+    for (std::size_t column = 0; column < width; ++column)
+        state.scrollback.push_back(column < line.size() ? line[column] : blank_cell());
+    enforce_scrollback_capacity(state);
+}
+
 std::vector<proto::GridOp> diff(const GridState& previous, const GridView& current,
                                 std::span<const std::vector<ckv::Cell>> pushed,
                                 std::span<const RowDamage> damaged) {
@@ -348,16 +404,11 @@ bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror) {
             // against a history, so paying to rebuild one per terminal per tick
             // would be the copy U0-b removed, arriving from the other side.
             if (mirror.max_scrollback_lines == 0) continue;
+            // Capacity is the reader's, counted in lines because a line is
+            // what they scroll past (plans/08 `scrollback`); the push helper
+            // enforces it at O(width) per line, whatever the history's size.
             for (const std::vector<CellRun>& line : push->lines)
-                mirror.scrollback.push_back(proto::from_runs(line));
-            // Capacity is the reader's, and it is counted in lines because a
-            // line is what they scroll past (plans/08 `scrollback`).
-            if (mirror.scrollback.size() > mirror.max_scrollback_lines) {
-                const std::size_t excess = mirror.scrollback.size() - mirror.max_scrollback_lines;
-                mirror.scrollback.erase(mirror.scrollback.begin(),
-                                        mirror.scrollback.begin() +
-                                            static_cast<std::ptrdiff_t>(excess));
-            }
+                push_scrollback_line(mirror, proto::from_runs(line));
             continue;
         }
         if (const auto* scroll = std::get_if<ScrollOp>(&op)) {
@@ -395,14 +446,18 @@ bool apply_delta(std::span<const proto::GridOp> ops, GridState& mirror) {
 bool same_state(const GridState& a, const GridState& b) {
     if (!(a.cells == b.cells) || a.cursor != b.cursor || a.modes != b.modes || a.title != b.title)
         return false;
-    if (a.grid.size() != b.grid.size() || a.scrollback.size() != b.scrollback.size()) return false;
+    if (a.grid.size() != b.grid.size()) return false;
     for (std::size_t index = 0; index < a.grid.size(); ++index)
         if (!same_cell(a.grid[index], b.grid[index])) return false;
-    for (std::size_t line = 0; line < a.scrollback.size(); ++line) {
-        if (a.scrollback[line].size() != b.scrollback[line].size()) return false;
-        for (std::size_t index = 0; index < a.scrollback[line].size(); ++index)
-            if (!same_cell(a.scrollback[line][index], b.scrollback[line][index])) return false;
-    }
+    // The LIVE histories, compared cell for cell. Where each buffer's dead
+    // prefix currently ends is a storage fact, not a terminal fact: two
+    // mirrors that reclaimed at different moments still hold the same
+    // history.
+    const std::span<const ckv::Cell> history_a = scrollback_cells(a);
+    const std::span<const ckv::Cell> history_b = scrollback_cells(b);
+    if (history_a.size() != history_b.size()) return false;
+    for (std::size_t index = 0; index < history_a.size(); ++index)
+        if (!same_cell(history_a[index], history_b[index])) return false;
     return true;
 }
 

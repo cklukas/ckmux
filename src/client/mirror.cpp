@@ -28,21 +28,16 @@ void TerminalMirror::adopt(const proto::TerminalState& state) {
     const std::size_t limit = state_.max_scrollback_lines;
     state_ = blank_state(ckv::Size{state.columns, state.rows}, limit);
     (void)decode_grid(state.grid, state_.cells, state_);
-    state_.scrollback.clear();
-    for (const std::vector<proto::CellRun>& line : state.scrollback)
-        state_.scrollback.push_back(proto::from_runs(line));
-    // The reader's capacity, not the server's: a client that kept more than it
+    // Through the same gate a delta's push uses, so the reader's capacity —
+    // not the server's — bounds what is kept: a client that kept more than it
     // was configured to would hold text its reader asked it to forget.
-    if (limit != 0 && state_.scrollback.size() > limit)
-        state_.scrollback.erase(state_.scrollback.begin(),
-                                state_.scrollback.begin() +
-                                    static_cast<std::ptrdiff_t>(state_.scrollback.size() - limit));
+    for (const std::vector<proto::CellRun>& line : state.scrollback)
+        push_scrollback_line(state_, proto::from_runs(line));
     state_.cursor = GridCursor{state.cursor.column, state.cursor.row, state.cursor.style,
                                state.cursor.visible, state.cursor.blink};
     state_.modes = state.modes;
     state_.title = state.title;
 
-    history_cache_valid_ = false;
     damage_ = everything(state_.cells);
     // The pictures are restated after every snapshot (the server's
     // attach_images follows the Attached), so whatever was held goes the same
@@ -95,7 +90,6 @@ bool TerminalMirror::apply(const proto::GridDelta& delta) {
         }
         if (const auto* push = std::get_if<proto::ScrollbackPushOp>(&op)) {
             damage_.scrollback_pushed += push->lines.size();
-            history_cache_valid_ = false;
             continue;
         }
         if (std::holds_alternative<proto::CursorOp>(op)) damage_.cursor = true;
@@ -108,7 +102,6 @@ bool TerminalMirror::apply(const proto::GridDelta& delta) {
 void TerminalMirror::open(ckv::Size cells) {
     const std::size_t limit = state_.max_scrollback_lines;
     state_ = blank_state(cells, limit);
-    history_cache_valid_ = false;
     damage_ = everything(state_.cells);
     sequence_ = 0;
     needs_snapshot_ = false;
@@ -135,17 +128,7 @@ void TerminalMirror::apply(const proto::TermClosed& closed) {
 
 void TerminalMirror::set_history_limit(std::size_t lines) {
     state_.max_scrollback_lines = lines;
-    if (lines == 0) {
-        state_.scrollback.clear();
-        history_cache_valid_ = false;
-        return;
-    }
-    if (state_.scrollback.size() > lines) {
-        state_.scrollback.erase(state_.scrollback.begin(),
-                                state_.scrollback.begin() +
-                                    static_cast<std::ptrdiff_t>(state_.scrollback.size() - lines));
-        history_cache_valid_ = false;
-    }
+    enforce_scrollback_capacity(state_);
 }
 
 std::span<const ckv::Cell> TerminalMirror::grid() const noexcept {
@@ -153,22 +136,7 @@ std::span<const ckv::Cell> TerminalMirror::grid() const noexcept {
 }
 
 std::span<const ckv::Cell> TerminalMirror::history() const noexcept {
-    if (!history_cache_valid_) const_cast<TerminalMirror*>(this)->rebuild_history_cache();
-    return std::span<const ckv::Cell>(history_cache_.data(), history_cache_.size());
-}
-
-void TerminalMirror::rebuild_history_cache() {
-    const std::size_t width = static_cast<std::size_t>(std::max(1, state_.cells.width));
-    history_cache_.clear();
-    history_cache_.reserve(state_.scrollback.size() * width);
-    for (const std::vector<ckv::Cell>& line : state_.scrollback) {
-        // A line whose width does not match the grid is padded or cut, because
-        // every reader indexes the history as rows of the CURRENT width — the
-        // same rule the emulator keeps when a resize re-lays its history.
-        for (std::size_t column = 0; column < width; ++column)
-            history_cache_.push_back(column < line.size() ? line[column] : blank_cell());
-    }
-    history_cache_valid_ = true;
+    return scrollback_cells(state_);
 }
 
 void TerminalMirror::clear_damage() noexcept {

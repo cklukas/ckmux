@@ -76,8 +76,9 @@ struct Client {
         (void)ckm::decode_grid(state.grid, mirror.cells, mirror);
         mirror.max_scrollback_lines = 200;
         mirror.scrollback.clear();
+        mirror.scrollback_start = 0;
         for (const std::vector<ckm::proto::CellRun>& line : state.scrollback)
-            mirror.scrollback.push_back(ckm::proto::from_runs(line));
+            ckm::push_scrollback_line(mirror, ckm::proto::from_runs(line));
         mirror.cursor = ckm::GridCursor{state.cursor.column, state.cursor.row, state.cursor.style,
                                         state.cursor.visible, state.cursor.blink};
         mirror.modes = state.modes;
@@ -154,6 +155,7 @@ CK_TEST(a_client_that_saw_only_the_deltas_holds_what_the_terminal_holds) {
         // design; the grids are what must agree.
         GridState held = client.mirror;
         held.scrollback.clear();
+        held.scrollback_start = 0;
         held.max_scrollback_lines = 0;
         CK_CHECK(same_state(believed, held));
     }
@@ -416,12 +418,11 @@ CK_TEST(the_history_a_child_scrolled_away_reaches_the_client_as_lines) {
 
     CK_CHECK(client.refusals == 0);
     CK_CHECK(client.gaps == 0);
-    CK_CHECK(!client.mirror.scrollback.empty());
+    CK_CHECK(ckm::scrollback_lines(client.mirror) != 0);
     // The oldest line the child scrolled away is in the client's own history,
     // which is what makes paging and copy mode local (plans/05).
     std::string history;
-    for (const std::vector<ckv::Cell>& line : client.mirror.scrollback)
-        for (const ckv::Cell& cell : line) history += cell.grapheme();
+    for (const ckv::Cell& cell : ckm::scrollback_cells(client.mirror)) history += cell.grapheme();
     CK_CHECK(history.find("starting") != std::string::npos);
     CK_CHECK(history.find("scrolled-0") != std::string::npos);
 

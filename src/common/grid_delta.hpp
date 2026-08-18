@@ -46,10 +46,20 @@ struct GridState {
     ckv::Size cells{0, 0};
     // Row-major, exactly cells.width * cells.height entries.
     std::vector<ckv::Cell> grid;
-    // Oldest line first. Lines rather than a flat buffer, because a line is
-    // the unit capacity is counted in and the unit `SbPush` carries — the
-    // emulator keeps the same invariant for the same reason.
-    std::vector<std::vector<ckv::Cell>> scrollback;
+    // The history, oldest line first, flat — rows of `cells.width` cells —
+    // with the live region beginning `scrollback_start` lines in. One buffer
+    // and an offset rather than a vector of lines, because a history has one
+    // hot operation: a child scrolling at full speed pushes lines for as long
+    // as the reader lets it run. Appending to a flat buffer is O(width) per
+    // line, keeping capacity by advancing the offset is O(1), and the dead
+    // prefix is reclaimed only once it outweighs what is kept — so each cell
+    // moves at most once per history's worth of lines. The previous shape
+    // paid O(history) per push twice over (a front erase here, a flatten in
+    // the mirror for every reader), and one `find /` made a client unusable
+    // for as long as its output kept arriving. The emulator keeps its own
+    // history in exactly this shape, for exactly this reason.
+    std::vector<ckv::Cell> scrollback;
+    std::size_t scrollback_start = 0;  // lines, not cells
     // What the mirror keeps. 0 means no history at all, which is a reader's
     // `scrollback = 0` and not an unset field.
     std::size_t max_scrollback_lines = 0;
@@ -74,6 +84,24 @@ bool same_state(const GridState& a, const GridState& b);
 // whatever of it still differs.
 ckv::Cell blank_cell();
 GridState blank_state(ckv::Size cells, std::size_t max_scrollback_lines);
+
+// The live history: how many lines it holds, and its cells — rows of
+// `cells.width`, oldest first, borrowed. The dead prefix before
+// `scrollback_start` is storage, not history; no reader sees it.
+std::size_t scrollback_lines(const GridState& state);
+std::span<const ckv::Cell> scrollback_cells(const GridState& state);
+
+// Appends one line, padded or cut to the state's width — the width every
+// reader indexes rows by — then enforces capacity. The one gate through
+// which history enters a state: `apply_delta`'s push op and a snapshot
+// adopt both land here, so the capacity rule cannot fork. A state with
+// `max_scrollback_lines == 0` keeps nothing and copies nothing.
+void push_scrollback_line(GridState& state, std::span<const ckv::Cell> line);
+
+// Re-applies the capacity rule after it changed: the offset advances past
+// what a smaller limit no longer keeps, and the dead prefix is reclaimed
+// under the same once-it-outweighs-the-kept rule a push uses.
+void enforce_scrollback_capacity(GridState& state);
 
 // The current side of a diff, borrowed rather than copied.
 //
