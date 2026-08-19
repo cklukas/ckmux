@@ -37,7 +37,14 @@ enum class Action : unsigned char {
     WindowList,
     Zoom,
     MoveResize,
-    Tile,
+    // Three named tilings and no unqualified `tile`. ckVision's own
+    // `ckv.window.tile` produces exactly what tile_vertically produces
+    // (U4-b, checked against `Desktop::tile()`), so a ckmux surface offering
+    // both would be offering one arrangement twice under two names — and a
+    // reader who bound one of them would have no way to tell which they got.
+    TileHorizontally,
+    TileVertically,
+    TileGrid,
     Cascade,
     MenuBar,
     CopyMode,

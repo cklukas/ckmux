@@ -278,9 +278,12 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     CK_CHECK(reader.screen().find("New session") == std::string::npos);
     reader.press("\x1b");
 
-    // ^B t — tiled: both windows on screen at once, side by side, so the two
-    // titles share a row.
-    reader.press("\x02" "t");
+    // ^B v — Tile Vertically: full-height bands side by side, so both windows
+    // are on screen at once and the two titles share a row. This is exactly
+    // the arrangement `^B t` produced before WP-31; what changed is that the
+    // menu and the key now say WHICH tiling a reader is asking for, and the
+    // unqualified one — the same arrangement under a second name — is gone.
+    reader.press("\x02" "v");
     reader.settle(400);
     {
         bool shared_row = false;
@@ -331,6 +334,24 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
         // two halves are the same chord, because the prefix and the chord
         // after it were written by two different rules (plans/06 writes ^B).
         CK_CHECK(screen.find("^B ^B") != std::string::npos);
+    }
+
+    // → the Window menu, which is where the reader looks for the tilings and
+    // where they were plainly missing while ckVision already had them
+    // (WP-31). Three arrangements, three names, three chords — and no fourth
+    // entry offering one of them a second time under the bare word `Tile`,
+    // which is why `^B t` is not among the accelerators on this menu.
+    reader.press("\x1b[C");
+    CK_CHECK(reader.sees("Tile Horizontally"));
+    {
+        const std::string screen = reader.screen();
+        CK_CHECK(screen.find("Tile Vertically") != std::string::npos);
+        CK_CHECK(screen.find("Tile Grid") != std::string::npos);
+        CK_CHECK(screen.find("Cascade") != std::string::npos);
+        CK_CHECK(screen.find("^B h") != std::string::npos);
+        CK_CHECK(screen.find("^B v") != std::string::npos);
+        CK_CHECK(screen.find("^B g") != std::string::npos);
+        CK_CHECK(screen.find("^B t") == std::string::npos);
     }
     reader.press("\x1b");
 

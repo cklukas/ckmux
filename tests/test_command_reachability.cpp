@@ -19,7 +19,9 @@
 #if !defined(_WIN32)
 
 #include <cstdio>
+#include <set>
 #include <string>
+#include <string_view>
 
 #include "client/client_app.hpp"
 #include "client/commands.hpp"
@@ -105,6 +107,67 @@ CK_TEST(deliberately_dark_commands_are_actually_dark) {
         // greys the menu item and stops the key doing nothing in silence.
         CK_CHECK(!fixture.app.command_available(binding.command));
     }
+}
+
+CK_TEST(each_of_the_three_tilings_is_reachable_by_its_own_chord_and_arranges_the_windows) {
+    // WP-31's done-when, stated the way this file states everything: not
+    // "a handler exists" but "the chord a reader is shown reaches a command
+    // something answers, and the windows move". The three commands are
+    // ckVision's; their handlers are Desktop's, installed on attach — which is
+    // exactly the assumption Window List shipped wrong for a whole milestone,
+    // so it is checked rather than trusted.
+    Fixture fixture;
+    fixture.client.new_terminal();
+    fixture.client.new_terminal();  // three windows: a grid of 2 columns, 2 rows
+    fixture.app.step(fixture.clock.now_nanos());
+
+    std::set<std::string> chords;
+    for (const std::string_view key : {ckv::ui::std_command_keys::kTileHorizontally,
+                                       ckv::ui::std_command_keys::kTileVertically,
+                                       ckv::ui::std_command_keys::kTileGrid}) {
+        const ckm::client::KeyBinding* row = nullptr;
+        for (const KeyBinding& binding : fixture.client.keymap().bindings())
+            if (binding.key == key) row = &binding;
+        CK_CHECK(row != nullptr);
+        if (row == nullptr) continue;
+        // Its own chord: three menu entries sharing one key would leave two of
+        // them reachable only by mouse, which is not what the menu says.
+        CK_CHECK(!row->chord.empty());
+        CK_CHECK(chords.insert(row->chord).second);
+        CK_CHECK(fixture.app.commands().has_handler(row->command));
+        CK_CHECK(fixture.app.command_available(row->command));
+        CK_CHECK(fixture.app.execute_command(row->command));
+        fixture.app.step(fixture.clock.now_nanos());
+    }
+
+    // And each arrangement is the one its name promises, measured on the
+    // windows themselves rather than on the fact that a handler ran.
+    const ckv::Rect area = fixture.client.desktop().content_area();
+    const auto windows = fixture.client.desktop().windows();
+    CK_CHECK(windows.size() == 3U);
+
+    CK_CHECK(fixture.app.execute_command(
+        fixture.app.commands().standard().tile_horizontally));
+    fixture.app.step(fixture.clock.now_nanos());
+    // Full-WIDTH bands stacked top to bottom.
+    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().width == area.width);
+
+    CK_CHECK(fixture.app.execute_command(fixture.app.commands().standard().tile_vertically));
+    fixture.app.step(fixture.clock.now_nanos());
+    // Full-HEIGHT bands side by side — the transpose, and the arrangement the
+    // unqualified `Tile` this package retired has always produced.
+    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().height == area.height);
+
+    CK_CHECK(fixture.app.execute_command(fixture.app.commands().standard().tile_grid));
+    fixture.app.step(fixture.clock.now_nanos());
+    // Near-square: three windows are two above and one full-width below, so
+    // neither dimension is any longer the whole content area for all of them.
+    int full_width = 0;
+    for (ckv::widgets::Window* window : windows) {
+        CK_CHECK(window->bounds().height < area.height);
+        if (window->bounds().width == area.width) ++full_width;
+    }
+    CK_CHECK(full_width == 1);
 }
 
 CK_TEST(window_list_opens_a_window_list) {

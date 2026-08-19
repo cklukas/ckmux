@@ -17,7 +17,13 @@ using ckv::ui::std_command_keys::kMenu;
 using ckv::ui::std_command_keys::kNextWindow;
 using ckv::ui::std_command_keys::kPreviousWindow;
 using ckv::ui::std_command_keys::kQuit;
-using ckv::ui::std_command_keys::kTile;
+// `ckv.window.tile` is deliberately absent. It is a standard command other
+// ckVision applications bind, and the library keeps it — but it produces the
+// same arrangement as tile_vertically (U4-b), so listing both in ckmux's own
+// menu and help would offer one behaviour twice under two names.
+using ckv::ui::std_command_keys::kTileGrid;
+using ckv::ui::std_command_keys::kTileHorizontally;
+using ckv::ui::std_command_keys::kTileVertically;
 using ckv::ui::std_command_keys::kWindowList;
 using ckv::ui::std_command_keys::kZoom;
 
@@ -31,8 +37,8 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 24>& default_bindings() {
-    static const std::array<KeyBinding, 24> kBindings{{
+const std::array<KeyBinding, 26>& default_bindings() {
+    static const std::array<KeyBinding, 26> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {".", commands::kMoveTerminal, "&Move to Session…", "move to session", 0,
@@ -45,7 +51,15 @@ const std::array<KeyBinding, 24>& default_bindings() {
         {"w", kWindowList, "&Window List…", "windows", 30, Action::WindowList},
         {"z", kZoom, "&Zoom", "zoom", 20, Action::Zoom},
         {"M", commands::kMoveResize, "&Move / Resize", "move/size", 0, Action::MoveResize},
-        {"t", kTile, "&Tile", "tile", 0, Action::Tile},
+        // Each tiling answers to the first letter of its own name, which is
+        // the whole rule: h, v, g. `t` used to be the unqualified Tile and is
+        // now nothing — `^B v` produces exactly the arrangement `^B t` always
+        // did, under the name that says which one it is. Keeping `t` as a
+        // fourth chord for the same behaviour would put the one thing this
+        // package removes back into the reader's hands.
+        {"h", kTileHorizontally, "Tile &Horizontally", "tile rows", 0, Action::TileHorizontally},
+        {"v", kTileVertically, "Tile &Vertically", "tile columns", 0, Action::TileVertically},
+        {"g", kTileGrid, "Tile &Grid", "tile grid", 0, Action::TileGrid},
         {"T", kCascade, "C&ascade", "cascade", 0, Action::Cascade},
         {"m", kMenu, "&Menu Bar", "menu", 95, Action::MenuBar},
         {"[", commands::kCopyMode, "Cop&y Mode", "copy", 45, Action::CopyMode},
@@ -79,7 +93,9 @@ std::string_view command_for_action(Action action) {
         case Action::WindowList: return kWindowList;
         case Action::Zoom: return kZoom;
         case Action::MoveResize: return commands::kMoveResize;
-        case Action::Tile: return kTile;
+        case Action::TileHorizontally: return kTileHorizontally;
+        case Action::TileVertically: return kTileVertically;
+        case Action::TileGrid: return kTileGrid;
         case Action::Cascade: return kCascade;
         case Action::MenuBar: return kMenu;
         case Action::CopyMode: return commands::kCopyMode;

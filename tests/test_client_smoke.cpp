@@ -239,7 +239,15 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     // commands that arrange them — not under Terminal, where M1 left it.
     CK_CHECK(!menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
-    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTile)));
+    // The three tilings by name (WP-31), and NOT the library's unqualified
+    // Tile: it produces exactly what Tile Vertically produces, so a menu
+    // carrying both would offer one behaviour twice under two names.
+    CK_CHECK(menu_has_command(bar->menus()[2],
+                              id_of(f.app, ckv::ui::std_command_keys::kTileHorizontally)));
+    CK_CHECK(menu_has_command(bar->menus()[2],
+                              id_of(f.app, ckv::ui::std_command_keys::kTileVertically)));
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTileGrid)));
+    CK_CHECK(!menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kTile)));
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckv::ui::std_command_keys::kCascade)));
     CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckm::client::commands::kSettings)));
     CK_CHECK(menu_has_command(bar->menus()[4], id_of(f.app, ckm::client::commands::kAbout)));
@@ -448,10 +456,29 @@ CK_TEST(window_management_commands_arrange_and_cycle_the_terminals) {
     CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kNextWindow)));
     CK_CHECK(f.client.desktop().active_window() == second);
 
-    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTile)));
+    // Vertical bands: equal widths, and each band the full content height.
+    // This is the arrangement ckmux reached through the unqualified `Tile`
+    // until WP-31 named it, and it is unchanged — only what a reader calls it
+    // and which chord reaches it changed.
+    const ckv::Rect area = f.client.desktop().content_area();
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileVertically)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().width ==
              f.client.desktop().windows()[1]->bounds().width);
+    CK_CHECK(f.client.desktop().windows()[0]->bounds().height == area.height);
+    // Horizontal bands are its transpose: full width, stacked top to bottom.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileHorizontally)));
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows()[0]->bounds().width == area.width);
+    CK_CHECK(f.client.desktop().windows()[0]->bounds().y <
+             f.client.desktop().windows()[1]->bounds().y);
+    // And the grid, which for two windows is one row of two columns.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileGrid)));
+    f.app.step(0);
+    CK_CHECK(f.client.desktop().windows()[0]->bounds().height == area.height);
+    CK_CHECK(f.client.desktop().windows()[0]->bounds().x <
+             f.client.desktop().windows()[1]->bounds().x);
+
     CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kCascade)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().x < f.client.desktop().windows()[1]->bounds().x);
@@ -461,6 +488,63 @@ CK_TEST(window_management_commands_arrange_and_cycle_the_terminals) {
     f.app.step(0);
     CK_CHECK(f.client.desktop().active_window()->zoomed());
     CK_CHECK(f.client.desktop().active_window()->bounds() == f.client.desktop().content_area());
+}
+
+CK_TEST(a_terminal_opened_while_another_is_maximized_opens_maximized_too) {
+    // WP-33 (U4-c enabled for ckmux's desktop). A reader working full-screen
+    // who opens a second terminal used to get a small window cascaded on top
+    // of the big one — the arrangement they had just said they did not want.
+    Fixture f;
+    f.app.step(0);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    CK_CHECK(first->zoomed());
+
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
+    f.app.step(0);
+    ckv::widgets::Window* const second = f.client.desktop().active_window();
+    CK_CHECK(second != nullptr && second != first);
+    if (second == nullptr) return;
+    CK_CHECK(second->zoomed());
+    CK_CHECK(second->bounds() == f.client.desktop().content_area());
+    // The one the reader was looking at is left as it was: this places the new
+    // window, it does not rearrange the desktop.
+    CK_CHECK(first->zoomed());
+
+    // And the zoom control on its frame restores it to a real rectangle. A
+    // window maximized straight from an unplaced 0x0 would record 0x0 as the
+    // bounds to come back to, and the reader's first click would make it
+    // vanish rather than shrink.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    CK_CHECK(!second->zoomed());
+    CK_CHECK(second->bounds().width > 0 && second->bounds().height > 0);
+    CK_CHECK(second->bounds() != f.client.desktop().content_area());
+}
+
+CK_TEST(with_nothing_maximized_a_new_terminal_cascades_exactly_as_it_always_did) {
+    // The other half of the same claim: maximize-follows reads the state the
+    // reader put the desktop in, so with no window maximized nothing about
+    // placement changes at all.
+    Fixture f;
+    f.app.step(0);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    CK_CHECK(!first->zoomed());
+    const ckv::Rect first_bounds = first->bounds();
+
+    f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
+    f.app.step(0);
+    ckv::widgets::Window* const second = f.client.desktop().active_window();
+    CK_CHECK(second != nullptr && second != first);
+    if (second == nullptr) return;
+    CK_CHECK(!second->zoomed());
+    CK_CHECK(second->bounds() != f.client.desktop().content_area());
+    // Cascaded down and to the right of the one before it, which is what
+    // stops a second terminal landing exactly on the first.
+    CK_CHECK(second->bounds().x > first_bounds.x);
+    CK_CHECK(second->bounds().y > first_bounds.y);
+    CK_CHECK(first->bounds() == first_bounds);
 }
 
 CK_TEST(a_terminal_resize_resizes_the_child_endpoint) {

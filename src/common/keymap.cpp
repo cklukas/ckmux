@@ -12,7 +12,7 @@ using ContextName = std::pair<std::string_view, KeyContext>;
 // Kebab-case, because that is what the rest of the file is written in
 // (`login-shell`, `kill-empty-session`) and a reader should not have to
 // remember which half of their configuration uses which style.
-constexpr std::array<ActionName, 23> kActions{{
+constexpr std::array<ActionName, 25> kActions{{
     {"new-terminal", Action::NewTerminal},
     {"close-terminal", Action::CloseTerminal},
     {"move-terminal", Action::MoveTerminal},
@@ -21,7 +21,15 @@ constexpr std::array<ActionName, 23> kActions{{
     {"window-list", Action::WindowList},
     {"zoom", Action::Zoom},
     {"move-resize", Action::MoveResize},
-    {"tile", Action::Tile},
+    // Named for the arrangement, not for the axis word: the two words are
+    // used inconsistently across desktops, so `tile-horizontally` is the one
+    // that lays full-WIDTH bands top to bottom and `tile-vertically` the one
+    // that lays full-HEIGHT bands side by side. A file that said `tile`
+    // before this landed is refused by name rather than silently given one of
+    // the three — pre-1.0, ckmux fixes the design and tells the reader.
+    {"tile-horizontally", Action::TileHorizontally},
+    {"tile-vertically", Action::TileVertically},
+    {"tile-grid", Action::TileGrid},
     {"cascade", Action::Cascade},
     {"menu-bar", Action::MenuBar},
     {"copy-mode", Action::CopyMode},

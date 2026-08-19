@@ -51,15 +51,50 @@ CK_TEST(a_chord_resolves_to_the_binding_the_reader_was_shown) {
     CK_CHECK(new_terminal->key == ckm::client::commands::kNewTerminal);
     CK_CHECK(binding_label(kPrefix, *new_terminal) == "^B c");
 
-    // Case matters: tile and cascade differ only by Shift, and confusing them
-    // would rearrange every window instead of one.
-    const KeyBinding* const tile = defaults().find("t");
+    // Case matters: `t` was the unqualified Tile and `T` is Cascade, so a
+    // reader pressing one when they meant the other rearranged every window
+    // instead of restacking them. `t` reaches nothing now (WP-31), and the
+    // shifted chord beside it still does what it always did — which is the
+    // half of that pair a rebinding must not have quietly swallowed.
+    CK_CHECK(defaults().find("t") == nullptr);
     const KeyBinding* const cascade = defaults().find("T");
-    CK_CHECK(tile != nullptr && cascade != nullptr);
-    CK_CHECK(tile->key != cascade->key);
+    CK_CHECK(cascade != nullptr);
+    CK_CHECK(cascade->key == ckv::ui::std_command_keys::kCascade);
 
     CK_CHECK(defaults().find("") == nullptr);
     CK_CHECK(defaults().find("nosuchkey") == nullptr);
+}
+
+CK_TEST(the_three_tilings_are_named_arrangements_and_the_unqualified_one_is_gone) {
+    // WP-31. `ckv.window.tile` produces exactly what tile_vertically produces
+    // (U4-b, measured against Desktop::tile()), so ckmux offers the three
+    // names that say which arrangement they mean and leaves the fourth to the
+    // applications that already bind it. A table carrying both would advertise
+    // one behaviour twice, and a reader choosing between two identical menu
+    // entries is choosing between nothing.
+    const KeyBinding* const horizontal = defaults().find("h");
+    const KeyBinding* const vertical = defaults().find("v");
+    const KeyBinding* const grid = defaults().find("g");
+    CK_CHECK(horizontal != nullptr && vertical != nullptr && grid != nullptr);
+    if (horizontal == nullptr || vertical == nullptr || grid == nullptr) return;
+    CK_CHECK(horizontal->key == ckv::ui::std_command_keys::kTileHorizontally);
+    CK_CHECK(vertical->key == ckv::ui::std_command_keys::kTileVertically);
+    CK_CHECK(grid->key == ckv::ui::std_command_keys::kTileGrid);
+    // Each is one press from the prefix, and each says which one it is: the
+    // hints are what the which-key popup and the help page print.
+    CK_CHECK(std::string(horizontal->hint) != std::string(vertical->hint));
+
+    for (const KeyBinding& binding : defaults().bindings())
+        CK_CHECK(binding.key != ckv::ui::std_command_keys::kTile);
+
+    // And the config vocabulary agrees with the table, because a `bind` line
+    // naming an action resolves through exactly this mapping.
+    CK_CHECK(ckm::client::command_for_action(ckm::Action::TileHorizontally) ==
+             ckv::ui::std_command_keys::kTileHorizontally);
+    CK_CHECK(ckm::client::command_for_action(ckm::Action::TileVertically) ==
+             ckv::ui::std_command_keys::kTileVertically);
+    CK_CHECK(ckm::client::command_for_action(ckm::Action::TileGrid) ==
+             ckv::ui::std_command_keys::kTileGrid);
 }
 
 CK_TEST(digit_chords_are_dispatched_by_value_not_through_the_table) {

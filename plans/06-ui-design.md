@@ -125,7 +125,7 @@ the chord state machine from there (details in
 | `^B ,` | Rename terminal · `^B $` rename session (tmux muscle memory) |
 | `^B z` | Zoom (maximize/restore) focused window |
 | `^B M` | Enter move/resize mode (arrows move, `Shift`+arrows resize, `Enter`/`Esc` done) |
-| `^B t` | Tile windows · `^B T` cascade |
+| `^B h` / `^B v` / `^B g` | Tile horizontally / vertically / grid · `^B T` cascade |
 | `^B [` | Copy mode (scrollback) |
 | `^B ]` | Paste internal clipboard |
 | `^B x` | Close terminal (dialog while the child is alive: quit + optional kill, or move) |
@@ -572,16 +572,31 @@ removes.
 ## Window management details
 
 - New windows cascade from the last created position; `Cascade` restacks.
-  `Tile` arranges all windows in **full-height vertical bands side by side** —
-  this line said "a near-square grid" until 2026-08-19, when implementing
-  U4-b sent someone to read `Desktop::tile()` and find it slicing width alone
-  and handing every window the full content height. The grid was never built;
-  the sentence had simply never been checked against the code, which is the
-  drift class the 2026-08-18 review kept finding. `Tile Vertically` (U4-b)
-  names that existing arrangement honestly, and `Tile Horizontally` adds its
-  transpose: full-width bands stacked top to bottom.
+  `Window ▸` offers **three named tilings** and no unqualified one (WP-31):
+  `Tile Vertically` (`^B v`) arranges every window in full-height vertical
+  bands side by side, `Tile Horizontally` (`^B h`) its transpose — full-width
+  bands stacked top to bottom — and `Tile Grid` (`^B g`) a near-square grid,
+  four windows into two columns by two rows. Each chord is the first letter of
+  its own name; that is the whole rule.
+  This bullet said `Tile` arranges "a near-square grid" until 2026-08-19, when
+  implementing U4-b sent someone to read `Desktop::tile()` and find it slicing
+  width alone and handing every window the full content height. The grid was
+  never built; the sentence had simply never been checked against the code,
+  which is the drift class the 2026-08-18 review kept finding. `Tile
+  Vertically` names that existing arrangement honestly — so `^B v` produces
+  exactly what `^B t` always did — and ckVision's unqualified `ckv.window.tile`
+  stays in the library for the applications that bind it while ckmux's own
+  surface leaves it out: listing it beside `Tile Vertically` would offer one
+  behaviour twice under two names, and `^B t` therefore reaches nothing.
 - Zoom maximizes to the desktop (layout remembered for restore). While any
-  window is zoomed, `^B n/p` cycles zoomed (tmux-like flow).
+  window is zoomed, `^B n/p` cycles zoomed (tmux-like flow). A terminal opened
+  while the active window is maximized **opens maximized too** (WP-33, over
+  ckVision's `Desktop::set_maximize_follows_active`): the reader working
+  full-screen who asks for another terminal is not handed a small window
+  cascaded on top of the big one. Unconditional rather than a setting — the
+  state the reader put the desktop in is the switch, and `^B z` on the new
+  window undoes it for that window alone. Dialogs are exempt upstream, so a
+  confirmation box is never blown up to the whole desktop.
 - Focus policy: click-to-focus + raise; `^B n/p/1-9` keyboard focus.
 - Min terminal size 10×3; windows clamp to the desktop on desktop resize.
 - Exited terminals (`hold` / `hold-on-error` config): dim border, title badge

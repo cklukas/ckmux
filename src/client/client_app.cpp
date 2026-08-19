@@ -445,10 +445,18 @@ void ClientApp::build_chrome() {
     // The window list is a list of WINDOWS — it lives with the other commands
     // that arrange them, not under Terminal, where it sat because M1 had no
     // Window menu yet to put it in.
-    w::MenuBarItem window_menu{"&Window",
-                               {item(u::std_command_keys::kWindowList), separator,
-                                item(commands::kMoveResize), item(u::std_command_keys::kZoom), separator,
-                                item(u::std_command_keys::kTile), item(u::std_command_keys::kCascade)}};
+    //
+    // The three tilings are named for the arrangement each produces, and the
+    // library's unqualified `Tile` is deliberately not among them: it produces
+    // exactly what Tile Vertically produces (U4-b), so a menu carrying both
+    // would offer one behaviour twice under two names — and a reader choosing
+    // between the two entries would be choosing between nothing.
+    w::MenuBarItem window_menu{
+        "&Window",
+        {item(u::std_command_keys::kWindowList), separator, item(commands::kMoveResize),
+         item(u::std_command_keys::kZoom), separator,
+         item(u::std_command_keys::kTileHorizontally), item(u::std_command_keys::kTileVertically),
+         item(u::std_command_keys::kTileGrid), item(u::std_command_keys::kCascade)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
     // Settings menu rather than hiding one per feature area — and the colour
     // theme is a setting, which is why there is no View menu holding three
@@ -482,6 +490,20 @@ void ClientApp::build_chrome() {
                                      // before the first frame.
                                      .always_dock_status_line = true});
     desktop_ = &shell.desktop();
+    // A terminal opened while the reader is working maximized opens maximized
+    // too (U4-c), rather than cascading a small window on top of the full-
+    // screen one they were reading — which is the arrangement they had just
+    // said they did not want. Unconditional, and deliberately not a setting:
+    // it is the state the reader themselves put the desktop in that decides,
+    // so the desktop already carries the answer, and `^B z` on the new window
+    // undoes it for that window alone. A `[general]` key would be a second
+    // place to say the same thing, and Settings ▸ General… is at its 80×24
+    // budget already.
+    //
+    // Dialogs are outside the policy upstream — present_modal/present_modeless
+    // bypass it — so ckmux's confirmations and pickers are unaffected and no
+    // guard of ckmux's own is needed here.
+    desktop_->set_maximize_follows_active(true);
     footer_ = shell.status_line();
     install_clock();
 }
