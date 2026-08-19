@@ -241,6 +241,30 @@ struct Reader {
     }
 };
 
+// Opens Help ▸ Terminal Report from the keyboard, WITHOUT counting keystrokes.
+//
+// The old version pressed five Rights to reach Help and "one more Down" to
+// reach the item, and both counts were positional: a package added a View menu
+// ahead of Window, another added a third Help entry, and this walk quietly
+// landed somewhere else. The failure then arrives disguised as "the terminal
+// report does not open" rather than as "the menu moved".
+//
+// So: walk the bar until the HELP MENU'S OWN CONTENTS are on screen, bounded
+// so a wrong turn ends the loop rather than the run, then press the item's
+// mnemonic — which a dropdown answers by name. Both halves survive a menu
+// being added anywhere.
+bool open_terminal_report(Reader& reader) {
+    reader.press("\x02" "m");   // focus the menu bar
+    reader.press("\x1b[B");     // open the highlighted menu
+    for (int steps = 0; steps < 10; ++steps) {
+        if (reader.screen().find("Terminal Report") != std::string::npos) break;
+        reader.press("\x1b[C");  // on to the next menu, opening it as it passes
+    }
+    if (reader.screen().find("Terminal Report") == std::string::npos) return false;
+    reader.press("t");  // "&Terminal Report" — its own mnemonic, not its index
+    return reader.sees("Terminal report");
+}
+
 }  // namespace
 
 CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
@@ -710,18 +734,7 @@ CK_TEST(a_mouse_click_on_the_terminal_report_close_button_closes_it) {
     CK_CHECK(reader.start(socket));
     CK_CHECK(reader.sees("Terminal 1"));
 
-    // ^B m focuses the menu bar on Session; Down opens it. Five Rights walk
-    // the bar to Help (Session, Terminal, View, Window, Settings, Help),
-    // opening each as they pass it — the same navigation
-    // every_prefix_command_a_reader_can_press_does_what_it_says already
-    // trusts. One more Down reaches Terminal Report under Key Reference;
-    // Enter activates it.
-    reader.press("\x02" "m");
-    reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C\x1b[C");
-    reader.press("\x1b[B");
-    reader.press("\r");
-    CK_CHECK(reader.sees("Terminal report"));
+    CK_CHECK(open_terminal_report(reader));
 
     const std::optional<std::pair<int, int>> close = reader.find_cell("Close");
     CK_CHECK(close.has_value());
@@ -760,12 +773,7 @@ CK_TEST(a_shift_click_on_ckmuxs_own_button_still_activates_it) {
     CK_CHECK(reader.start(socket));
     CK_CHECK(reader.sees("Terminal 1"));
 
-    reader.press("\x02" "m");
-    reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C\x1b[C");
-    reader.press("\x1b[B");
-    reader.press("\r");
-    CK_CHECK(reader.sees("Terminal report"));
+    CK_CHECK(open_terminal_report(reader));
 
     const std::optional<std::pair<int, int>> close = reader.find_cell("Close");
     CK_CHECK(close.has_value());

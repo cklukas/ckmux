@@ -13,6 +13,7 @@
 // class that must wait for the reader).
 #if !defined(_WIN32)
 
+#include <cctype>
 #include <string>
 #include <string_view>
 
@@ -395,6 +396,45 @@ CK_TEST(help_all_keybindings_is_in_the_help_menu_and_opens_the_listing) {
     CK_CHECK(opened != nullptr);
     if (opened == nullptr) return;
     CK_CHECK(f.client.desktop().active_window() == opened);
+}
+
+CK_TEST(no_menu_offers_one_letter_twice) {
+    // A mnemonic collision makes the second item untypeable — the letter opens
+    // the first one every time. It is invisible in a screenshot and invisible
+    // in a click-driven test, and this package nearly shipped one: "&All
+    // Keybindings…" landed in a Help menu that already had "&About ckmux…".
+    //
+    // Checked across every menu rather than the one this package touched,
+    // because the next collision will be somebody else's and will arrive the
+    // same way — by adding a perfectly reasonable item to a menu whose other
+    // letters they did not look at.
+    Fixture f;
+    f.settle();
+    auto* const bar = dynamic_cast<ckv::widgets::MenuBar*>(f.client.desktop().top_dock());
+    CK_CHECK(bar != nullptr);
+    if (bar == nullptr) return;
+
+    for (const ckv::widgets::MenuBarItem& menu : bar->menus()) {
+        std::string seen;
+        for (const ckv::widgets::MenuItem& item : menu.items) {
+            const std::string label = item.label();
+            const std::size_t amp = label.find('&');
+            if (amp == std::string::npos || amp + 1 >= label.size()) continue;
+            const char letter = static_cast<char>(std::tolower(label[amp + 1]));
+            CK_CHECK(seen.find(letter) == std::string::npos);
+            seen += letter;
+        }
+    }
+
+    // And the top-level titles are a menu of their own by the same rule.
+    std::string bar_letters;
+    for (const ckv::widgets::MenuBarItem& menu : bar->menus()) {
+        const std::size_t amp = menu.label.find('&');
+        if (amp == std::string::npos || amp + 1 >= menu.label.size()) continue;
+        const char letter = static_cast<char>(std::tolower(menu.label[amp + 1]));
+        CK_CHECK(bar_letters.find(letter) == std::string::npos);
+        bar_letters += letter;
+    }
 }
 
 #endif  // !defined(_WIN32)

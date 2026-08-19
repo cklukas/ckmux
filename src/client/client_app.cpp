@@ -413,7 +413,9 @@ void ClientApp::register_commands() {
     // No keymap row, so no iteration of the loop above declares it: the
     // complete listing is reached from Help ▸ All Keybindings… and from F1 on
     // a surface with nothing more specific to say (WP-14).
-    declare(commands::kAllKeys, "&All Keybindings…", "Help", [this] { show_all_keys(); });
+    // "A&ll", not "&All": this menu already has "&About ckmux…" on A, and two
+    // items sharing a mnemonic means the second one cannot be typed at all.
+    declare(commands::kAllKeys, "A&ll Keybindings…", "Help", [this] { show_all_keys(); });
 
     // Quitting an attached client DETACHES it.
     //
@@ -548,7 +550,10 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
     // themes of its own. It was one: three menu items that changed the theme
     // for the session and left the file saying something else, so a reader who
     // liked Light had to find it again every morning.
-    w::MenuBarItem settings_menu{"&Settings", {item(commands::kSettings)}};
+    // "Sett&ings", not "&Settings": the bar already answers Alt+S with Session,
+    // and a second S here is a menu a reader cannot reach by its own letter —
+    // silently, because the first one simply opens instead.
+    w::MenuBarItem settings_menu{"Sett&ings", {item(commands::kSettings)}};
     // The terminal report sits where cksetup keeps it: in Help, beside the
     // other "what is this thing doing" answers. It reports the OUTER host —
     // what ckmux itself detected, Sixel included — which is the report a
