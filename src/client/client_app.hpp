@@ -339,15 +339,6 @@ struct ClientOptions {
     std::int64_t switcher_grow_nanos = 1'000'000'000;
     std::int64_t switcher_shrink_nanos = 30'000'000'000;
 
-    // How long a toast stays before it takes itself away (WP-14). Five
-    // seconds: long enough to read one line twice, short enough that a reader
-    // who was not looking has not lost a row of their terminal for a minute.
-    // A notification that must NOT go on a timer says so per-notification
-    // (`persistent`), which is a different question from this one — see
-    // `ClientApp::notify`. Held here so a test can turn expiry off and read
-    // what was posted rather than racing a clock.
-    std::int64_t toast_nanos = 5'000'000'000;
-
     // Tells the server whether this client wants per-terminal process stats
     // (WP-39's View toggles, any of them on). Unset means there is no server
     // to tell — the serverless client samples its own children locally
@@ -377,34 +368,6 @@ public:
     // terminal is minimized; see `sync_window_switcher()`.
     ckv::widgets::WindowSwitcherBar& window_switcher() noexcept { return *switcher_; }
 
-    // What the reader is told without being asked anything (WP-14): a session
-    // taken over, a config file re-read, a detach that happened TO them
-    // rather than one they asked for. Non-modal on purpose — every one of
-    // these is news, and none of them is a question, so none may take the
-    // keyboard away from the program the reader is typing into.
-    //
-    // `persistent` is for the one class that must not be missed: a reader
-    // whose session was taken from them is looking at an empty desktop, and a
-    // line that had already faded would leave them wondering where their work
-    // went. Everything else expires on `ClientOptions::toast_nanos`.
-    // What a reader is told when a detach happened TO them: taken over, the
-    // session ended, the server stopped (WP-14). The wording lives here with
-    // ckmux's other sentences rather than in the host loop, so a test can ask
-    // what a reader would have been shown without standing up a server to
-    // take a session away from it.
-    //
-    // `DetachReason::User` says nothing: a reader who asked to detach knows,
-    // and is already being handed the picker.
-    void report_detached(proto::DetachReason reason, const std::string& text);
-    void notify(std::string text,
-                ckv::widgets::NotificationSeverity severity =
-                    ckv::widgets::NotificationSeverity::Info,
-                bool persistent = false);
-    // The surface itself, or nullptr while nothing has been posted — it is
-    // created on the first notification and removed once the last one goes,
-    // so an idle ckmux carries no notification chrome at all.
-    ckv::widgets::NotificationCenter* notifications() noexcept { return toasts_; }
-
     // Whether ckmux's bottom chrome is collapsed to one row: the footer
     // hidden, the window bar on the last row of the terminal (WP-35).
     //
@@ -422,18 +385,6 @@ public:
     // name the same program this client would have launched — and because it
     // MOVED its options in here, so its own copy is not an answer any more.
     const Settings& settings() const noexcept { return options_.settings; }
-    // One terminal's process-tree cost, from whichever measurer has it — the
-    // server (via ServerSession::on_stats) or this client's own local sampler.
-    // Remembered per subsession and written onto that terminal's window frame
-    // footer, formatted per the View toggles (WP-39).
-    void receive_terminal_stats(const ckv::term::TerminalSubsession& terminal,
-                                const proto::TermStats& stats);
-    // Whether any View readout is on — what a (re)connection tells the server
-    // through `ClientOptions::watch_stats` / `ServerSession::set_stats_watched`.
-    bool stats_watch_wanted() const noexcept {
-        return options_.settings.show_cpu || options_.settings.show_memory_rss ||
-               options_.settings.show_memory_real;
-    }
 
     // Opens a terminal window running the configured shell and focuses it.
     ckv::widgets::Window* new_terminal();
@@ -449,11 +400,6 @@ public:
     // disabled for exactly as long as it stays zero.
     void set_attached_session(std::uint64_t id, std::string name);
     std::uint64_t attached_session() const noexcept { return attached_session_; }
-    // What that session is called, as this client last heard it. Empty when
-    // nothing is attached, or when no list has named it yet — a caller
-    // composing a sentence about it has to handle both, because a session
-    // this client never saw listed can still be taken away from it.
-    const std::string& attached_session_name() const noexcept { return attached_session_name_; }
     // Puts this session's windows back where the reader left them (WP-30) —
     // the other half of `report_layout`, and what the whole layout cluster
     // exists for. Called with the arrangement the ATTACH SNAPSHOT carried, and
@@ -476,6 +422,18 @@ public:
     //     to what fits. The move always happens; the resize is a second step
     //     that is off by default, because a reader's window stays the size they
     //     made it unless they asked otherwise.
+    // One terminal's process-tree cost, from whichever measurer has it — the
+    // server (via ServerSession::on_stats) or this client's own local sampler.
+    // Remembered per subsession and written onto that terminal's window frame
+    // footer, formatted per the View toggles (WP-39).
+    void receive_terminal_stats(const ckv::term::TerminalSubsession& terminal,
+                                const proto::TermStats& stats);
+    // Whether any View readout is on — what a (re)connection tells the server
+    // through `ClientOptions::watch_stats` / `ServerSession::set_stats_watched`.
+    bool stats_watch_wanted() const noexcept {
+        return options_.settings.show_cpu || options_.settings.show_memory_rss ||
+               options_.settings.show_memory_real;
+    }
     //
     // **A window's place is restored once per attachment**, and after that the
     // reader owns it. Not every snapshot is a reattach: a mirror that falls
@@ -498,13 +456,6 @@ public:
     // list rather than held per session: names change, and the list is the
     // only thing that says so.
     std::string session_name(std::uint64_t id) const;
-    // Whether the last list this client saw said somebody was already
-    // watching that session — which, asked at the moment an attach succeeds,
-    // is what makes the attach a TAKEOVER rather than an ordinary one
-    // (WP-14). Read from the list that arrived BEFORE the attach: the fresh
-    // one, requested straight afterwards, will say this client is watching it
-    // and answer a different question.
-    bool session_shows_attached(std::uint64_t id) const;
 
     // A request the server refused, in front of the reader who made it. Every
     // request is answered (plans/05's `Error`), and an answer that reaches only
@@ -571,11 +522,6 @@ private:
     // right-clicking one offers. Called once, from `build_chrome()`, after the
     // bar and the footer have been composed into the docked Column.
     void install_window_switcher(ckv::widgets::WindowSwitcherBar& bar);
-    // Puts the toast surface where it belongs and sizes it to what it holds,
-    // or takes it away once nothing is left on it (WP-14). One place, called
-    // after every change — including the expiries that happen on ckVision's
-    // own timer, which this client would otherwise never hear about.
-    void place_notifications();
     // The windows the bar lists: ckmux's TERMINAL windows, in the desktop's own
     // order. Dialogs, the session picker and the which-key popup are not places
     // a reader switches to.
@@ -657,23 +603,6 @@ private:
     // Which window is showing which terminal, so that a terminal the server
     // has ended takes its window with it.
     std::map<const ckv::term::TerminalSubsession*, ckv::widgets::Window*> terminal_windows_;
-    // The latest cost report per terminal, from the wire or from the local
-    // sampler — a stream's most recent value, never persisted (WP-39). The
-    // CPU baseline exists only for locally sampled terminals; a mirror's rate
-    // was derived on the server.
-    std::unordered_map<const ckv::term::TerminalSubsession*, proto::TermStats> latest_stats_;
-    struct LocalCpuBaseline {
-        std::uint64_t cpu_nanos = 0;
-        std::int64_t at_nanos = 0;
-        // A flag rather than a sentinel value, for WP-38's reason: a clock
-        // may legitimately read zero.
-        bool primed = false;
-    };
-    std::unordered_map<const ckv::term::TerminalSubsession*, LocalCpuBaseline> local_cpu_;
-    // The local sampler's timer, 0 while none is armed (Application's ids
-    // start at 1). Armed while any readout is on; cancelled when the last
-    // goes off, so a client showing no stats spends no wakeups on them.
-    ckv::ui::Application::TimerId stats_timer_ = 0;
     // Set while windows are being taken down for a session this client is
     // leaving, so the close path knows not to ask the server to end anything.
     bool forgetting_terminals_ = false;
@@ -709,6 +638,77 @@ private:
     // started with; both return whether the store succeeded, so a dialog
     // changing two settings at once explains a read-only configuration file
     // once rather than once per setting.
+    bool apply_login_shell(bool login_shell);
+    bool apply_sixel_max_megapixels(int megapixels);
+    bool apply_kill_grace_seconds(int seconds);
+    // Read at the moment a layout is applied rather than at startup, so a
+    // reader who ticks the box and reattaches gets the answer they just chose.
+    bool apply_resize_windows_to_fit(bool resize);
+    // These two also change what is on screen at once — the clock and the
+    // colours are what the reader is looking at while they choose.
+    bool apply_clock_mode(ClockMode mode);
+    bool apply_theme(Theme theme);
+    void report_settings_not_saved();
+    void report_config_warnings();
+    // The copy that did not leave ckmux, and what the helper said about it.
+    void report_clipboard_problem(const std::vector<std::string>& refused);
+    void set_theme(ckv::ui::Theme theme);
+    void populate_help();
+    void dismiss_prefix_overlay();
+
+    ckv::ui::Application& app_;
+    // The latest cost report per terminal, from the wire or from the local
+    // sampler — a stream's most recent value, never persisted (WP-39). The
+    // CPU baseline exists only for locally sampled terminals; a mirror's rate
+    // was derived on the server.
+    std::unordered_map<const ckv::term::TerminalSubsession*, proto::TermStats> latest_stats_;
+    struct LocalCpuBaseline {
+        std::uint64_t cpu_nanos = 0;
+        std::int64_t at_nanos = 0;
+        // A flag rather than a sentinel value, for WP-38's reason: a clock
+        // may legitimately read zero.
+        bool primed = false;
+    };
+    std::unordered_map<const ckv::term::TerminalSubsession*, LocalCpuBaseline> local_cpu_;
+    // The local sampler's timer, 0 while none is armed (Application's ids
+    // start at 1). Armed while any readout is on; cancelled when the last
+    // goes off, so a client showing no stats spends no wakeups on them.
+    ckv::ui::Application::TimerId stats_timer_ = 0;
+    ClientOptions options_;
+    // Built from the defaults with the file's `bind`/`unbind` lines applied,
+    // once, at construction: a rebinding is a startup-time decision (plans/08
+    // — client-side options are read at attach) and every surface reads the
+    // result rather than re-deriving it.
+    Keymap keymap_;
+    ckv::ui::StandardRoles roles_{};
+    ckv::widgets::Desktop* desktop_ = nullptr;
+    ckv::widgets::StatusLine* footer_ = nullptr;
+    // The bottom dock and its upper half (WP-32). The Column is held because
+    // hiding the bar changes the Column's own preferred height, and the desktop
+    // has to be told which docked view that was.
+    ckv::ui::Column* chrome_stack_ = nullptr;
+    ckv::widgets::WindowSwitcherBar* switcher_ = nullptr;
+    // See set_chrome_collapsed. Held rather than read back off the footer's
+    // visibility, because a footer can also be invisible for reasons that are
+    // not this — and because the bar's toggle has to be put back in step with
+    // it when the command is what moved it.
+    bool chrome_collapsed_ = false;
+    // This client's own liveness, for the callbacks the DESKTOP holds.
+    //
+    // The desktop belongs to the `Application` and outlives this object, so a
+    // switcher provider, a bound menu action or a window-change observer that
+    // captured `this` would otherwise be a call into freed storage at shutdown.
+    // The same hazard the menu-bar clock avoids by copying its time provider
+    // instead of reaching through the client — except that these callbacks
+    // genuinely need the client, so they are guarded rather than avoided.
+    // `subscribe_window_change`'s weak-lifetime overload drops its observer on
+    // expiry, which is why nothing cancels one in the destructor.
+    std::shared_ptr<void> alive_ = std::make_shared<char>();
+    // The menu bar's trailing view, owned by the bar. Held because the
+    // calendar hangs from it and has to tell it when it closes again.
+    ckv::widgets::ClockView* clock_ = nullptr;
+    // Per terminal window: the name ckmux gave it, and the last title its
+    // child asked for. The first is what the window falls back to when the
     // --- The View readouts (WP-39) ---------------------------------------
     // One handler behind the three checkable items: flips the settings bool,
     // persists it through the same `save_setting` the Settings dialog's
@@ -734,65 +734,6 @@ private:
     // and the bar's items are values.
     std::vector<ckv::widgets::MenuBarItem> build_menus();
 
-    bool apply_login_shell(bool login_shell);
-    bool apply_sixel_max_megapixels(int megapixels);
-    bool apply_kill_grace_seconds(int seconds);
-    // Read at the moment a layout is applied rather than at startup, so a
-    // reader who ticks the box and reattaches gets the answer they just chose.
-    bool apply_resize_windows_to_fit(bool resize);
-    // These two also change what is on screen at once — the clock and the
-    // colours are what the reader is looking at while they choose.
-    bool apply_clock_mode(ClockMode mode);
-    bool apply_theme(Theme theme);
-    void report_settings_not_saved();
-    void report_config_warnings();
-    // The copy that did not leave ckmux, and what the helper said about it.
-    void report_clipboard_problem(const std::vector<std::string>& refused);
-    void set_theme(ckv::ui::Theme theme);
-    void populate_help();
-    void dismiss_prefix_overlay();
-
-    ckv::ui::Application& app_;
-    ClientOptions options_;
-    // Built from the defaults with the file's `bind`/`unbind` lines applied,
-    // once, at construction: a rebinding is a startup-time decision (plans/08
-    // — client-side options are read at attach) and every surface reads the
-    // result rather than re-deriving it.
-    Keymap keymap_;
-    ckv::ui::StandardRoles roles_{};
-    ckv::widgets::Desktop* desktop_ = nullptr;
-    ckv::widgets::StatusLine* footer_ = nullptr;
-    // The bottom dock and its upper half (WP-32). The Column is held because
-    // hiding the bar changes the Column's own preferred height, and the desktop
-    // has to be told which docked view that was.
-    ckv::ui::Column* chrome_stack_ = nullptr;
-    ckv::widgets::WindowSwitcherBar* switcher_ = nullptr;
-    // The toast surface (WP-14), a desktop popup so it stands above every
-    // window rather than behind whichever one is maximized — the same layer
-    // and the same lifetime rule as the prefix overlay: made when it is
-    // needed, taken down when it is not.
-    ckv::widgets::NotificationCenter* toasts_ = nullptr;
-    // See set_chrome_collapsed. Held rather than read back off the footer's
-    // visibility, because a footer can also be invisible for reasons that are
-    // not this — and because the bar's toggle has to be put back in step with
-    // it when the command is what moved it.
-    bool chrome_collapsed_ = false;
-    // This client's own liveness, for the callbacks the DESKTOP holds.
-    //
-    // The desktop belongs to the `Application` and outlives this object, so a
-    // switcher provider, a bound menu action or a window-change observer that
-    // captured `this` would otherwise be a call into freed storage at shutdown.
-    // The same hazard the menu-bar clock avoids by copying its time provider
-    // instead of reaching through the client — except that these callbacks
-    // genuinely need the client, so they are guarded rather than avoided.
-    // `subscribe_window_change`'s weak-lifetime overload drops its observer on
-    // expiry, which is why nothing cancels one in the destructor.
-    std::shared_ptr<void> alive_ = std::make_shared<char>();
-    // The menu bar's trailing view, owned by the bar. Held because the
-    // calendar hangs from it and has to tell it when it closes again.
-    ckv::widgets::ClockView* clock_ = nullptr;
-    // Per terminal window: the name ckmux gave it, and the last title its
-    // child asked for. The first is what the window falls back to when the
     // child stops asking; the second is what stops us rewriting the caption
     // on every single frame.
     struct TerminalTitle {

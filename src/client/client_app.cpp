@@ -882,72 +882,6 @@ ckv::widgets::MenuBar* ClientApp::menu_bar() {
     if (desktop_ == nullptr) return nullptr;
     return dynamic_cast<w::MenuBar*>(desktop_->top_dock());
 }
-bool ClientApp::session_shows_attached(std::uint64_t id) const {
-    for (const SessionRow& row : last_sessions_)
-        if (row.id == id) return row.attached;
-    return false;
-}
-
-void ClientApp::notify(std::string text, w::NotificationSeverity severity, bool persistent) {
-    if (desktop_ == nullptr || text.empty()) return;
-    if (toasts_ == nullptr) {
-        // Made on demand, exactly as the prefix overlay is, and for the same
-        // reason: a surface that is only ever needed occasionally should not
-        // be a permanent child that every layout pass has to think about.
-        auto centre = std::make_unique<w::NotificationCenter>();
-        centre->set_auto_dismiss(options_.toast_nanos);
-        // Not a focus stop. ckVision's default makes one, which is right for
-        // a centre a reader Tabs to in a form; here it would put the reader's
-        // Tab in a message about something that already happened instead of
-        // in the program they are typing into.
-        centre->set_focus_policy(u::FocusPolicy::None);
-        toasts_ = desktop_->add_popup(std::move(centre));
-        // Re-placed on every change, including the ones this client did not
-        // make: a toast expires on ckVision's timer, and nothing else would
-        // tell us the surface had shrunk or emptied.
-        const std::weak_ptr<void> alive = alive_;
-        toasts_->on_changed = [this, alive] {
-            if (alive.expired()) return;
-            // POSTED, not called. This runs from inside the centre — a click
-            // that dismissed a line, or an expiry firing on its timer — and
-            // the last notification going means this surface is taken down.
-            // Destroying a view from inside its own handler frees the object
-            // whose stack we are standing on; the prefix overlay unwinds
-            // first for exactly this reason.
-            app_.post([this, alive] {
-                if (alive.expired()) return;
-                place_notifications();
-            });
-        };
-    }
-    toasts_->add(w::Notification{severity, std::move(text), persistent});
-    place_notifications();
-}
-
-void ClientApp::place_notifications() {
-    if (toasts_ == nullptr || desktop_ == nullptr) return;
-    // Nothing left to say: the surface goes rather than sitting there as an
-    // empty popup that still takes clicks over the reader's windows.
-    if (toasts_->notifications().empty()) {
-        w::NotificationCenter* const going = toasts_;
-        toasts_ = nullptr;
-        desktop_->remove_popup(going).reset();
-        return;
-    }
-    // Top-right of the desktop's own content area — inside the chrome rather
-    // than over it, so a toast never covers the window bar that a reader may
-    // be reaching for, and clear of the menu bar above.
-    const ckv::Rect area = desktop_->content_area();
-    int width = 0;
-    for (const w::Notification& notification : toasts_->notifications())
-        width = std::max(width, ckv::text::text_width(notification.text));
-    // Two cells for the severity marker the centre draws, and one of margin
-    // either side so the text does not run into the desktop edge.
-    width = std::clamp(width + 4, 12, std::max(12, area.width - 2));
-    const int height = std::min(static_cast<int>(toasts_->notifications().size()), area.height);
-    toasts_->set_bounds(ckv::Rect{area.x + area.width - width, area.y, width, height});
-}
-
 
 void ClientApp::install_clock() {
     // The clock goes at the right end of the menu bar (plans/06): it is where
@@ -1286,8 +1220,6 @@ void ClientApp::set_attached_session(std::uint64_t id, std::string name) {
     // Nothing to notify: the registry asks each command's predicate when it
     // needs the answer, so the menu is right the next time it is drawn.
 }
-    latest_stats_.erase(&terminal);
-    local_cpu_.erase(&terminal);
 
 ckv::widgets::Window* ClientApp::new_terminal() {
     // Attached to a server, this is a request rather than an act: the window is
@@ -1354,6 +1286,8 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     // the window: a picture too large for the window is cut off at its edge.
     ckv::term::TerminalSubsessionOptions subsession;
     subsession.max_image_pixels =
+    latest_stats_.erase(&terminal);
+    local_cpu_.erase(&terminal);
         static_cast<std::size_t>(options_.settings.sixel_max_megapixels) * 1024U * 1024U;
     // How much of what scrolls off the top this terminal keeps ([general]
     // scrollback). Zero is honoured as "remember nothing" rather than as the
@@ -1462,8 +1396,6 @@ void ClientApp::confirm_then_close(w::Window* window) {
     what.label =
         "\"" + window->title() + "\" is still running a program. Closing asks it to quit.";
     descriptor.fields.push_back(std::move(what));
-        latest_stats_.erase(terminal_session);
-        local_cpu_.erase(terminal_session);
 
     std::optional<std::size_t> force_field;
     if (options_.close_terminal_in_session) {
@@ -1530,6 +1462,8 @@ void ClientApp::confirm_then_close(w::Window* window) {
             if (answered == nullptr) return;
             if (options_.close_terminal_in_session) {
                 const bool force = force_field.has_value() &&
+        latest_stats_.erase(terminal_session);
+        local_cpu_.erase(terminal_session);
                                    *force_field < result.checked.size() &&
                                    result.checked[*force_field];
                 options_.close_terminal_in_session(*terminal, force,
@@ -2487,6 +2421,72 @@ bool ClientApp::apply_resize_windows_to_fit(bool resize) {
 }
 
 bool ClientApp::apply_sixel_max_megapixels(int megapixels) {
+    if (options_.settings.sixel_max_megapixels == megapixels) return true;
+    options_.settings.sixel_max_megapixels = megapixels;
+    return ckm::save_setting(ckm::platform::config_file_path(), "terminal", "sixel-max-megapixels",
+                             std::to_string(megapixels));
+}
+
+bool ClientApp::apply_clock_mode(ClockMode mode) {
+    if (options_.settings.clock == mode) return true;
+    options_.settings.clock = mode;
+    // Immediately, unlike the two settings above it: the clock is chrome the
+    // reader is looking at while they choose, so the dialog closing onto an
+    // unchanged bar would read as a setting that did not take.
+    install_clock();
+    return ckm::save_setting(ckm::platform::config_file_path(), "general", "clock",
+                             ckm::clock_setting(mode));
+}
+
+bool ClientApp::apply_theme(Theme theme) {
+    if (options_.settings.theme == theme) return true;
+    options_.settings.theme = theme;
+    switch (theme) {
+        case Theme::Dark: set_theme(u::make_dark_theme(app_.roles(), roles_)); break;
+        case Theme::Light: set_theme(u::make_light_theme(app_.roles(), roles_)); break;
+        case Theme::Mono: set_theme(u::make_mono_theme(app_.roles(), roles_)); break;
+    }
+    // Stored, which is the whole reason this moved out of a View menu: a theme
+    // chosen for one session and forgotten by the next is a theme a reader has
+    // to choose every morning.
+    return ckm::save_setting(ckm::platform::config_file_path(), "general", "theme",
+                             ckm::theme_setting(theme));
+}
+
+void ClientApp::report_settings_not_saved() {
+    if (desktop_ == nullptr) return;
+    const std::filesystem::path path = ckm::platform::config_file_path();
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{
+            w::MessageBoxKind::Warning, "Settings not saved",
+            "The change applies to this session, but could not be written to\n" +
+                (path.empty() ? std::string("a configuration file — no HOME is set.")
+                              : path.string() + "\n\nIt will be back to its old value next time."),
+            w::MessageBoxButtons::Ok})));
+}
+
+void ClientApp::report_config_warnings() {
+    if (desktop_ == nullptr || options_.config_warnings.empty()) return;
+    // Said once, at the start, naming the lines. A reader who mistyped a key
+    // otherwise gets a ckmux that quietly ignores what they wrote — which
+    // looks exactly like a ckmux that does not have the setting at all.
+    //
+    // The file is named once, in the sentence, and struck off the entries
+    // underneath. Each warning carries its whole path so that a reader with a
+    // `$CKMUX_CONFIG` beside their real file can tell two "ckmux.conf:4"s
+    // apart (config.cpp) — right at a terminal, and wrong down the left margin
+    // of a dialog that has to fit a 72-column window, where it spends on the
+    // same path over and over the width each message needs to be readable.
+    const std::string file = common_config_file(options_.config_warnings);
+    std::string body = "ckmux started, but part of ";
+    body += file.empty() ? std::string("your configuration") : file;
+    body += " was not understood:\n";
+    for (const std::string& warning : options_.config_warnings)
+        body += "\n  " + without_prefix(warning, file);
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Configuration", std::move(body),
 void ClientApp::toggle_stats_readout(bool Settings::* field, std::string_view key) {
     options_.settings.*field = !(options_.settings.*field);
     // Persisted the moment it changes, through the same atomic write the
@@ -2588,72 +2588,6 @@ void ClientApp::sample_local_stats() {
     }
 }
 
-    if (options_.settings.sixel_max_megapixels == megapixels) return true;
-    options_.settings.sixel_max_megapixels = megapixels;
-    return ckm::save_setting(ckm::platform::config_file_path(), "terminal", "sixel-max-megapixels",
-                             std::to_string(megapixels));
-}
-
-bool ClientApp::apply_clock_mode(ClockMode mode) {
-    if (options_.settings.clock == mode) return true;
-    options_.settings.clock = mode;
-    // Immediately, unlike the two settings above it: the clock is chrome the
-    // reader is looking at while they choose, so the dialog closing onto an
-    // unchanged bar would read as a setting that did not take.
-    install_clock();
-    return ckm::save_setting(ckm::platform::config_file_path(), "general", "clock",
-                             ckm::clock_setting(mode));
-}
-
-bool ClientApp::apply_theme(Theme theme) {
-    if (options_.settings.theme == theme) return true;
-    options_.settings.theme = theme;
-    switch (theme) {
-        case Theme::Dark: set_theme(u::make_dark_theme(app_.roles(), roles_)); break;
-        case Theme::Light: set_theme(u::make_light_theme(app_.roles(), roles_)); break;
-        case Theme::Mono: set_theme(u::make_mono_theme(app_.roles(), roles_)); break;
-    }
-    // Stored, which is the whole reason this moved out of a View menu: a theme
-    // chosen for one session and forgotten by the next is a theme a reader has
-    // to choose every morning.
-    return ckm::save_setting(ckm::platform::config_file_path(), "general", "theme",
-                             ckm::theme_setting(theme));
-}
-
-void ClientApp::report_settings_not_saved() {
-    if (desktop_ == nullptr) return;
-    const std::filesystem::path path = ckm::platform::config_file_path();
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
-        app_, *desktop_, roles_,
-        w::MessageBoxDescriptor{
-            w::MessageBoxKind::Warning, "Settings not saved",
-            "The change applies to this session, but could not be written to\n" +
-                (path.empty() ? std::string("a configuration file — no HOME is set.")
-                              : path.string() + "\n\nIt will be back to its old value next time."),
-            w::MessageBoxButtons::Ok})));
-}
-
-void ClientApp::report_config_warnings() {
-    if (desktop_ == nullptr || options_.config_warnings.empty()) return;
-    // Said once, at the start, naming the lines. A reader who mistyped a key
-    // otherwise gets a ckmux that quietly ignores what they wrote — which
-    // looks exactly like a ckmux that does not have the setting at all.
-    //
-    // The file is named once, in the sentence, and struck off the entries
-    // underneath. Each warning carries its whole path so that a reader with a
-    // `$CKMUX_CONFIG` beside their real file can tell two "ckmux.conf:4"s
-    // apart (config.cpp) — right at a terminal, and wrong down the left margin
-    // of a dialog that has to fit a 72-column window, where it spends on the
-    // same path over and over the width each message needs to be readable.
-    const std::string file = common_config_file(options_.config_warnings);
-    std::string body = "ckmux started, but part of ";
-    body += file.empty() ? std::string("your configuration") : file;
-    body += " was not understood:\n";
-    for (const std::string& warning : options_.config_warnings)
-        body += "\n  " + without_prefix(warning, file);
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
-        app_, *desktop_, roles_,
-        w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Configuration", std::move(body),
                                 w::MessageBoxButtons::Ok})));
 }
 
