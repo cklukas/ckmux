@@ -100,6 +100,10 @@ take first.
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Done** (2026-08-19) | U4-a ✓ |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
 | 25a | **U4-g** — A dialog too tall for its screen scrolls, buttons pinned | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `6d7172b`) | — |
+| 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Ready** | — |
+| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | Blocked | U4-i |
+| 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | Blocked | U4-i |
+| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | Blocked | U4-i, U4-j |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
@@ -898,6 +902,75 @@ buttons at all times — asserted with numbers, the way ckVision's own
 dock tests assert; a dialog that fits is byte-identical to today,
 including no scrollbar; and focus traversal still reaches every field,
 scrolling it into view rather than leaving the cursor off-screen.
+
+**U4-i — Minimize: window state, the `_` control, and what a hidden window
+does** *(ckVision)*. Reader-directed, 2026-08-19: a third frame control, `_`,
+immediately LEFT of the maximize/restore control, which **hides** the window.
+Checked before writing: ckVision has no notion of a minimized window anywhere
+— this is new state, not a flag being surfaced. `Window` already carries a
+`Control` enum with `point_in_close_control`/`point_in_zoom_control`, so the
+hit-testing follows an existing pattern rather than inventing one.
+
+Minimized is **not** merely `set_visible(false)`. A hidden window must still
+be *listed* (that is how it comes back), so the state has to be legible to a
+switcher bar while being skipped by everything that arranges or cycles
+windows: the three tilings and the grid must not give a hidden window a band,
+`activate_next`/`previous` must step over it, `filled_tile_fractions()` must
+not count it, and `tile()`'s exact-cover arithmetic must divide by the number
+of *visible* windows or it will leave a gap. Each of those is a place the new
+state can be forgotten, which is what the tests are for.
+
+Restoring must put the window back exactly where it was, including its
+z-order and its zoom: a window minimized while maximized comes back maximized.
+*Done when*: minimizing hides the window and leaves it listed; every tiling,
+the grid, the cycle order and the filled query behave as though it is not
+there; restore returns bounds, stack position and zoom; and a desktop whose
+windows are *all* minimized is still a working desktop rather than one with
+an activation pointing at nothing.
+
+**U4-j — Switcher bar: status icons and taskbar click semantics**
+*(ckVision)*. Each entry gains a status icon, one space left of the title:
+**minimized**, **visible but not active**, and **active**. The reader asked
+for rectangles; the implementer picks the exact glyphs and must check them
+against ckVision's own width authority first — `□`/`■` (U+25A1/25A0) are East
+Asian **Ambiguous**, so a host that renders them double-width would silently
+shear every entry's layout. `▯`/`▮` (U+25AF/25AE) and `▄` (U+2584) are
+Neutral and safer; verify rather than assume, and fall back to ASCII if the
+width tables disagree. The glyphs belong in one table beside the roles, not
+inline at the draw site.
+
+Click semantics become the taskbar's, which is what the reader described and
+what the two halves of their request resolve to together: clicking the entry
+of the **active** window minimizes it; of a **visible but inactive** window,
+activates and raises it; of a **minimized** window, restores it. This
+replaces today's always-activate. *Done when*: each of the three transitions
+is driven through a real click and asserted, the icon matches the state after
+each one, and a right-click still opens the menu without changing any state.
+
+**U4-k — The minimize animation** *(ckVision)*. The frame shrinks and flies to
+the entry it will live in, Windows-95 style, and back on restore. ckVision has
+no animation machinery at all today — `Application::start_timer` is the whole
+mechanism — so this package is as much about deciding what animation *is* in
+this toolkit as about one effect.
+
+Constraints that are not negotiable, because a TUI is not a game loop: it must
+never block the event loop, must be interruptible (a keystroke or a second
+minimize during the flight resolves immediately to the end state), must be
+skippable/disable-able, and must degrade honestly on a slow host — if frames
+cannot be delivered on time the window simply arrives. The end state must be
+reached exactly once whether or not the animation ran, so nothing downstream
+can depend on the frames. *Done when*: the end state is identical with the
+animation on and off; interrupting mid-flight leaves a coherent desktop; and
+a host that never gets a timer tick still ends with the window hidden.
+
+**WP-34 — Minimize in ckmux** *(ckmux)*. Consume the three above. The bar's
+visibility rule gains a second clause, reader-directed: it is on screen when
+more than one terminal is open **or when any terminal is minimized** — with
+one window hidden and none visible, the bar is the only way back, so hiding it
+would strand the reader with an empty desktop and no route to their program.
+*Done when*: minimizing the only terminal makes the bar appear and the
+terminal restorable from it; the ckmux menu offers minimize beside zoom; and
+`^B` chords for it, if any, go through the one `Keymap` like everything else.
 
 **WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
 terminal windows into U4-a's bar: the title provider (the same
