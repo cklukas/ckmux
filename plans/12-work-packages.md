@@ -106,6 +106,7 @@ take first.
 | 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | Blocked | U4-i, U4-j |
 | 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Ready** | U4-l |
+| 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
@@ -126,6 +127,8 @@ take first.
 | 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
 | 44 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
 | 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
+| 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
+| 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
 
 Roughly **107–137 focused days**, of which ~19–25 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -905,6 +908,33 @@ dock tests assert; a dialog that fits is byte-identical to today,
 including no scrollbar; and focus traversal still reaches every field,
 scrolling it into view rather than leaving the cursor off-screen.
 
+**U4-n — A resize re-lays the arrangement a reader stated** *(ckVision)*.
+Found while designing WP-34, and not a consequence of it: tiling two windows
+and resizing the terminal one row down and back left them **overlapping**,
+permanently, with no dock, no bar and no minimize anywhere near it. Verified
+by a standalone probe against the built library before any code was written
+— `[A 0,0 80x12][B 0,12 80x12]` becomes `[A 0,0 80x12][B 0,11 80x12]` and
+stays there. `Window::reposition_within` clamps each window independently,
+which cannot preserve a partition even on the way down, and only ever
+shrinks, so growing back never repairs it. The reader loses the filled-tiling
+verdict, the shadow suppression riding on it, and the proportional-restore
+tag ckmux puts on the wire as `TileShare` — for the rest of the session.
+
+This blocked WP-34 rather than the other way round: making the switcher bar
+appear on minimize changes the dock height, which is a content-area change,
+which would have driven this defect on every minimize and restore. The naive
+one-line fix to the reader's reported bug would have corrupted their layout.
+
+*Landed*: the desktop remembers the cells as stated and the area they were
+stated in, and maps from that **original** every pass — rounding to nearest
+is not an involution, so re-deriving at each intermediate size walks a seam
+and never walks it back. Validated against what the last mapping wrote, so a
+reader's own drag invalidates the arrangement rather than being snapped back
+into it. Zoomed and grow-policy windows veto the capture, because
+`filled_tile_fractions()` has no "more than one" gate and an ordinary
+maximized window is a one-cell partition that would otherwise be captured
+and taken out of reach of its own policy. See ckVision D-058.
+
 **U4-l — A paged item strip, and the switcher bar as its first consumer**
 *(ckVision)*. Reader-directed, 2026-08-19, and reader-framed: *"this could
 also be a paging status bar in ckVision, perhaps we need that more often, or
@@ -1114,6 +1144,65 @@ appendix. **WP-25** packaging — `make install` at minimum. **WP-26** the
 license, resolved jointly with ckVision's D-OPEN-1; it blocks publishing, not
 development. **WP-27** the v1 acceptance audit against
 [01-vision.md](01-vision.md)'s success criteria.
+
+### Added after the M3 queue was drawn
+
+**U4-m — Damped switcher-bar entry widths** *(ckVision)*. Reader-directed,
+2026-08-19. `WindowSwitcherBar::set_width_damping(grow, shrink)`: a floor under
+how often one entry's box may change width, measured on the injected `Clock`
+from that entry's own last change in either direction. Off by default. See
+[07](07-ckvision-integration.md) U4-m for the design and for why the damped
+number is the LAYOUT width rather than a drawn one. *Done when*: a caption
+rewritten sixty times over the grow delay costs the layout one width step;
+a deferred change arrives with no further title change to carry it; a window
+the bar has not measured takes its width at once; turning damping off releases
+every held width; and a bar destroyed before its wake-up fires leaves nothing
+to fire into (ASan).
+
+**U4-n — `PagedStrip::press_in_flight()`** *(ckVision)*. The protected
+predicate U4-m needs, landed as ckVision `850711f` by the strip's own author.
+The strip resolves a click by index, so a relayout under a held pointer either
+loses the click or spends it on a window the reader never pointed at. Recorded
+in [07](07-ckvision-integration.md) with the note that this is the **third**
+ckmux consumer to want a fact the library keeps private (see U4-e).
+
+**WP-36 — Rename Terminal** *(ckmux)*. Reader-directed, 2026-08-19. A custom
+title a reader gives one terminal, reached from `Terminal ▸ Rename Terminal…`,
+from `^B ,`, and from `Rename…` on the window bar's context menu — where, like
+every other entry there, it acts on the row that was clicked rather than on the
+window in front.
+
+The design turns on one thing: the name is an **override**, not a second writer
+of the caption. The child goes on claiming titles with OSC 0/2 underneath it
+and is simply not shown, so the dialog's third button, *Use Default Title*,
+hands the caption back to what the program is calling itself **now** rather
+than to whatever it said when the reader pinned it. An empty name asks for the
+same thing, so a reader who clears the field is answered rather than refused —
+the one place this deliberately differs from `rename-session`, where empty
+means "leave it alone".
+
+Session state, so it lives on the server ([03](03-session-model.md)): the
+long-dormant `RenameTerminal` message gets its handler, `TerminalState` and
+`TermMeta` each carry a `custom_title` beside the child's title, and the name
+therefore survives a detach and reaches the other client watching that session.
+An M1 client with no server keeps its own, through the same `ClientOptions`
+seam every other session operation uses.
+
+It also consumes U4-m: the window bar's buttons are damped so a caption that a
+shell rewrites at every prompt stops re-flowing the row — one widening a second
+at most, one narrowing every thirty — while a name the READER gave takes effect
+at once, because damping is for absorbing what a program does and a rename that
+visibly worked half a minute later reads as a command that did not work.
+
+*Done when*: a pinned caption survives the child renaming itself repeatedly;
+*Use Default Title* restores the child's CURRENT title, and `Terminal N` when
+the child has handed its own title back; an empty field does the same; the
+prompt starts from the caption the reader can see; Cancel changes nothing; the
+command is unavailable with no terminal to name; the bar's context-menu entry
+names the row that was clicked; a name given over the wire comes back on
+`TermMeta`, is untouched by the child renaming itself, and is in the snapshot
+the next client attaches with; and naming a terminal that is gone is answered
+with an `Error` rather than ignored.
 
 ## Not in this queue
 
