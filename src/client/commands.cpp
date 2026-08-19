@@ -156,7 +156,12 @@ void Keymap::resolve(const ckv::ui::CommandRegistry& registry) {
     }
 }
 
-Keymap::Keymap() : bindings_(default_bindings().begin(), default_bindings().end()) {}
+Keymap::Keymap() : bindings_(default_bindings().begin(), default_bindings().end()) {
+    // Copied from the table rather than written in it: the default IS the
+    // chord this row starts with, and a second column stating it again is a
+    // second place to get it wrong.
+    for (KeyBinding& binding : bindings_) binding.default_chord = binding.chord;
+}
 
 KeyBinding* Keymap::row_for(Action action) {
     for (KeyBinding& binding : bindings_)
@@ -213,7 +218,12 @@ void Keymap::set_default_chord(Action action, std::string chord) {
     if (row == nullptr || chord.empty()) return;
     for (KeyBinding& binding : bindings_)
         if (binding.chord == chord) binding.chord.clear();
-    row->chord = std::move(chord);
+    row->chord = chord;
+    // The DEFAULT moves with it, not just the current chord: this row's
+    // sensible default depends on a setting the reader chose (the prefix), and
+    // a help page that marked `^B ^B` as "rebound" would be telling them their
+    // file says something it does not.
+    row->default_chord = std::move(chord);
 }
 
 const KeyBinding* Keymap::find(std::string_view chord) const {

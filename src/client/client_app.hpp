@@ -405,6 +405,12 @@ public:
     // so an idle ckmux carries no notification chrome at all.
     ckv::widgets::NotificationCenter* notifications() noexcept { return toasts_; }
 
+    // The help pages, so a caller can read what a reader would be shown
+    // without presenting a viewer and scraping it — and so that a help key
+    // named by some surface can be checked against the topics that exist,
+    // which is the difference between F1 answering and F1 apologising.
+    const ckv::widgets::MemoryHelpProvider& help() const noexcept { return help_; }
+
     // Whether ckmux's bottom chrome is collapsed to one row: the footer
     // hidden, the window bar on the last row of the terminal (WP-35).
     //
@@ -651,6 +657,9 @@ private:
     // because maximizing is not a rect a window is set to but a state it enters.
     ckv::Rect restored_bounds(const WindowPlacement& placed, ckv::Rect area) const;
     void show_key_reference();
+    // The complete listing, on the page rather than for the surface in front
+    // of the reader — Help ▸ All Keybindings… (WP-14).
+    void show_all_keys();
     // The name the New Session prompt offers, from the sessions last seen.
     std::string suggested_session_name() const;
     std::vector<SessionRow> last_sessions_;

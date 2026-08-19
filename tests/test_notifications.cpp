@@ -66,6 +66,18 @@ struct Fixture {
     }
 };
 
+// The same client, with settings a test wants to change first — a `bind`
+// line, say, so the help pages have a rebinding to mark.
+struct ConfiguredFixture {
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client;
+
+    explicit ConfiguredFixture(ClientOptions options) : client{app, std::move(options)} {}
+    void settle() { app.step(clock.now_nanos()); }
+};
+
 }  // namespace
 
 // --- What a detach says ----------------------------------------------------
@@ -241,6 +253,140 @@ CK_TEST(a_toast_never_takes_the_keyboard_from_the_program) {
     CK_CHECK(centre != nullptr);
     if (centre == nullptr) return;
     CK_CHECK(centre->focus_policy() == ckv::ui::FocusPolicy::None);
+}
+
+
+// --- The help pages (WP-14) ------------------------------------------------
+//
+// "Everything is in the menu, and every menu entry shows the key that reaches
+// it" is only half a promise: the other half is that F1 lands on a page about
+// what the reader is actually doing, and that the page listing the keys is
+// generated from the same table that dispatches them — including the reader's
+// own rebindings, marked rather than silently applied.
+
+namespace {
+
+bool topic_exists(const ClientApp& client, const std::string& key) {
+    // MemoryHelpProvider answers an unknown key with a "Not Found" topic
+    // rather than failing, so the check is whether the page is real.
+    const ckv::widgets::HelpTopic topic = client.help().topic(key);
+    return !topic.body.empty() && topic.title != "Not Found";
+}
+
+}  // namespace
+
+CK_TEST(every_surface_that_names_a_help_page_has_one) {
+    // A help key with no topic behind it is an F1 that apologises. These are
+    // the keys ckmux names — on views (`set_help_context_key`), on menu items
+    // (`with_help`), and from `show_all_keys`.
+    Fixture f;
+    f.settle();
+    for (const char* key : {"ckmux.terminal", "ckmux.prefix", "ckmux.keys", "ckmux.keys.all",
+                            "ckmux.switcher", "ckmux.copy", "ckmux.picker", "ckmux.move",
+                            "ckmux.notice"}) {
+        CK_CHECK(topic_exists(f.client, key));
+    }
+    // And the negative partner, so this test cannot pass by the provider
+    // having become generous: a key nothing declares is still not a page.
+    CK_CHECK(!topic_exists(f.client, "ckmux.no.such.page"));
+}
+
+CK_TEST(the_complete_listing_covers_chorded_and_menu_only_commands) {
+    Fixture f;
+    f.settle();
+    const std::string body = f.client.help().topic("ckmux.keys.all").body;
+
+    // A chorded one, with its chord.
+    CK_CHECK(body.find("^B c") != std::string::npos);
+    CK_CHECK(body.find("new term") != std::string::npos);
+    // One this package added, which is how the page proves it is generated
+    // rather than written: nobody edited this text when WP-34 landed.
+    CK_CHECK(body.find("^B _") != std::string::npos);
+    CK_CHECK(body.find("minimize") != std::string::npos);
+    // And a command no key reaches, listed under its own heading rather than
+    // left out — "everything is in the menu" is a promise about these.
+    CK_CHECK(body.find("In the menus only") != std::string::npos);
+    CK_CHECK(body.find("settings") != std::string::npos);
+    // With nothing rebound, the page says so rather than showing an empty
+    // "Changed by your configuration" heading.
+    CK_CHECK(body.find("Changed by your configuration") == std::string::npos);
+    CK_CHECK(body.find("ckmux's own default") != std::string::npos);
+}
+
+CK_TEST(a_rebinding_is_marked_with_what_it_replaced) {
+    // The reader whose muscle memory stopped working needs to be told that
+    // their own file is why, and told it here.
+    ClientOptions options = test_options();
+    // An `unbind` is a directive with no action; this is the ordinary form —
+    // "make ^B C open a terminal" — which moves the chord off ^B c.
+    options.settings.binds.push_back(
+        ckm::BindDirective{ckm::KeyContext::Terminal, "C", ckm::Action::NewTerminal});
+    ConfiguredFixture f{std::move(options)};
+    f.settle();
+    const std::string body = f.client.help().topic("ckmux.keys.all").body;
+
+    CK_CHECK(body.find("Changed by your configuration") != std::string::npos);
+    // Both halves: what it is now, and what it was.
+    CK_CHECK(body.find("new term: now ^B C, was ^B c") != std::string::npos);
+    // And the listing above shows the chord that now works, not the default.
+    CK_CHECK(body.find("^B C") != std::string::npos);
+}
+
+CK_TEST(the_window_bar_page_describes_the_bar_as_it_now_behaves) {
+    // The page went stale the moment WP-34 and WP-35 landed: it said the row
+    // appears only with more than one terminal, and its right-click list
+    // predated Minimize, Show and Rename. A help page that describes last
+    // month's application is worse than none, because a reader believes it.
+    Fixture f;
+    f.settle();
+    const std::string body = f.client.help().topic("ckmux.switcher").body;
+
+    CK_CHECK(body.find("put away") != std::string::npos);
+    CK_CHECK(body.find("only way back") != std::string::npos);
+    CK_CHECK(body.find("Minimize or Show") != std::string::npos);
+    CK_CHECK(body.find("Rename") != std::string::npos);
+    CK_CHECK(body.find("status bar") != std::string::npos);
+    // The three marks are named from the widget's own table rather than
+    // spelled again here, so a glyph change cannot leave the page lying.
+    for (const auto status : {ckv::widgets::WindowSwitcherBar::Status::Active,
+                              ckv::widgets::WindowSwitcherBar::Status::Visible,
+                              ckv::widgets::WindowSwitcherBar::Status::Minimized}) {
+        CK_CHECK(body.find(std::string(
+                     ckv::widgets::WindowSwitcherBar::status_glyph(status))) != std::string::npos);
+    }
+}
+
+CK_TEST(help_all_keybindings_is_in_the_help_menu_and_opens_the_listing) {
+    Fixture f;
+    f.settle();
+    auto* const bar = dynamic_cast<ckv::widgets::MenuBar*>(f.client.desktop().top_dock());
+    CK_CHECK(bar != nullptr);
+    if (bar == nullptr) return;
+    const ckv::ui::CommandId all =
+        f.app.commands().id_for(ckm::client::commands::kAllKeys).value_or(ckv::ui::kInvalidCommand);
+    CK_CHECK(all != ckv::ui::kInvalidCommand);
+    bool in_help_menu = false;
+    for (const ckv::widgets::MenuItem& item : bar->menus().back().items)
+        if (item.command() == all) in_help_menu = true;
+    CK_CHECK(in_help_menu);
+
+    // And it opens something the reader can read, rather than declaring a
+    // command nothing answers. NOT modal, deliberately: help is consulted
+    // WHILE doing the thing it explains (plans/06), so the viewer is a window
+    // the reader can leave standing rather than one that locks them out of
+    // the terminal behind it.
+    const std::size_t before = f.client.desktop().windows().size();
+    CK_CHECK(f.app.execute_command(all));
+    f.settle();
+    f.settle();
+    CK_CHECK(!f.app.is_modal());
+    CK_CHECK(f.client.desktop().windows().size() == before + 1U);
+    // Showing the complete listing rather than whatever page the focused
+    // surface would have answered with.
+    const ckv::widgets::Window* const opened = f.client.desktop().windows().back();
+    CK_CHECK(opened != nullptr);
+    if (opened == nullptr) return;
+    CK_CHECK(f.client.desktop().active_window() == opened);
 }
 
 #endif  // !defined(_WIN32)

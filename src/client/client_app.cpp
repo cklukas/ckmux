@@ -410,6 +410,11 @@ void ClientApp::register_commands() {
         }
     }
 
+    // No keymap row, so no iteration of the loop above declares it: the
+    // complete listing is reached from Help ▸ All Keybindings… and from F1 on
+    // a surface with nothing more specific to say (WP-14).
+    declare(commands::kAllKeys, "&All Keybindings…", "Help", [this] { show_all_keys(); });
+
     // Quitting an attached client DETACHES it.
     //
     // ckVision's standard quit sweeps the windows first and lets any of them
@@ -550,7 +555,7 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
     // reader wants when a picture drawn inside a ckmux terminal fails to
     // appear.
     w::MenuBarItem help_menu{"&Help",
-                             {item(commands::kKeyReference),
+                             {item(commands::kKeyReference), item(commands::kAllKeys),
                               item(u::std_command_keys::kTerminalReport), separator,
                               item(commands::kAbout)}};
 
@@ -2188,6 +2193,15 @@ void ClientApp::set_theme(u::Theme theme) {
 
 void ClientApp::show_key_reference() { app_.execute_command(app_.commands().standard().help); }
 
+void ClientApp::show_all_keys() {
+    // Straight to the topic rather than through the standard help command,
+    // which answers with the page for whatever has focus: this item exists
+    // precisely to be the page that does NOT depend on where the reader is.
+    if (desktop_ == nullptr) return;
+    retain_dialog(std::make_shared<w::HelpViewerPresentation>(
+        w::present_help_viewer(help_, "ckmux.keys.all", app_, *desktop_, roles_)));
+}
+
 void ClientApp::show_about() {
     if (desktop_ == nullptr) return;
     // The attribution line is CK Office's, character for character: the suite's
@@ -2241,6 +2255,11 @@ void ClientApp::enter_copy_mode() {
         app_.post([this] { leave_copy_mode(); });
     };
     copy_mode_ = desktop_->add_popup(std::move(surface));
+    // F1 here is about copy mode, not about the terminal underneath it: its
+    // keys are its own, they are fixed rather than bindable, and a reader who
+    // asks for help while reading history is asking about what they are doing
+    // now (WP-14).
+    copy_mode_->set_help_context_key("ckmux.copy");
     copy_mode_window_ = window;
     // Beside the pointer, the proof it is still this window: the caption
     // refresh below runs on a timer, and the window can be taken down under it
@@ -2722,6 +2741,46 @@ void ClientApp::populate_help() {
         label.resize(std::max<std::size_t>(label.size(), 8), ' ');
         keys += label + "  " + std::string(binding.hint) + "\n";
     }
+
+    // The complete listing (WP-14): every command this ckmux has, chorded or
+    // not, with the reader's own rebindings applied AND marked. Three groups,
+    // because a reader asking "what can I press" and a reader asking "did my
+    // configuration take" are asking different questions of the same table.
+    //
+    // Grouped by what REACHES a command rather than by binding context: the
+    // config file has five context names and only `terminal` is honoured
+    // today (plans/08 refuses the rest out loud), so grouping by context would
+    // print four empty headings and one full one — a shape that says the
+    // opposite of what is true.
+    std::string all_keys;
+    std::string rebound;
+    std::string menu_only;
+    for (const KeyBinding& binding : keymap_.bindings()) {
+        const bool moved = binding.chord != binding.default_chord;
+        if (binding.chord.empty()) {
+            std::string row = "  " + std::string(binding.hint);
+            if (moved)
+                row += "  — you unbound " + prefix_label(options_.settings.prefix) + " " +
+                       binding.default_chord;
+            menu_only += row + "\n";
+            continue;
+        }
+        std::string label = binding_label(options_.settings.prefix, binding);
+        label.resize(std::max<std::size_t>(label.size(), 8), ' ');
+        const std::string row = label + "  " + std::string(binding.hint) + "\n";
+        all_keys += row;
+        if (moved) {
+            // What their file changed, and what it changed FROM — the half a
+            // listing usually leaves out, and the half a reader needs when a
+            // key they have used for months has stopped working.
+            std::string was = binding.default_chord.empty()
+                                  ? std::string("nothing")
+                                  : prefix_label(options_.settings.prefix) + " " +
+                                        binding.default_chord;
+            rebound += "  " + std::string(binding.hint) + ": now " +
+                       binding_label(options_.settings.prefix, binding) + ", was " + was + "\n";
+        }
+    }
     const std::string prefix_text = prefix_label(options_.settings.prefix);
 
     // Prose is written as paragraphs and left to the viewer to wrap, which it
@@ -2751,14 +2810,108 @@ void ClientApp::populate_help() {
                                   {"ckmux.prefix", "The prefix key"}}});
     help_.add_topic(
         "ckmux.switcher",
-        w::HelpTopic{"Window bar",
-                     "The row above the footer lists every open terminal by its caption, and "
-                     "appears as soon as there is more than one — with a single terminal there "
-                     "is nothing to switch between.\n\nClick an entry to bring that terminal "
-                     "forward and start typing into it. Right-click one for what can be done to "
-                     "it: Maximize or Restore, Move / Resize, Move to session…, and Close. Each "
-                     "acts on the terminal whose entry you clicked, not on the one in front.",
+        w::HelpTopic{
+            "Window bar",
+            "The row above the footer lists every open terminal by its caption. It is on "
+            "screen while more than one terminal is open, and also whenever any terminal is "
+            "put away — with one terminal hidden and none showing, this row is the only way "
+            "back to it.\n\nEach entry carries a mark saying where its terminal is: " +
+                std::string(w::WindowSwitcherBar::status_glyph(
+                    w::WindowSwitcherBar::Status::Active)) +
+                " the one you are working in, " +
+                std::string(w::WindowSwitcherBar::status_glyph(
+                    w::WindowSwitcherBar::Status::Visible)) +
+                " one behind it, " +
+                std::string(w::WindowSwitcherBar::status_glyph(
+                    w::WindowSwitcherBar::Status::Minimized)) +
+                " one that has been put away.\n\nClicking does what the mark says: the "
+                "terminal you are in is put away, one behind comes forward and takes the "
+                "keyboard, and one that was put away comes back in front. Right-click an entry "
+                "for the rest — Minimize or Show, Maximize or Restore, Move / Resize, Rename…, "
+                "Move to session…, and Close. Every one of them acts on the terminal whose "
+                "entry you clicked, never on the one in front.\n\nThe ▼ at the far left hides "
+                "the status bar and drops this row onto the last line of the screen, which is "
+                "a row of terminal back. ▲ brings both back, and so does Window ▸ Status Bar.",
+            {{"ckmux.terminal", "Terminal window"},
+             {"ckmux.keys", "All keys"},
+             {"ckmux.keys.all", "Every command"}}});
+
+    // The complete listing behind Help ▸ All Keybindings… — and behind F1 on
+    // any surface that has nothing more specific to say.
+    std::string every = "Everything ckmux can do, and how it is reached. The prefix is " +
+                        prefix_text + ".\n\nAfter the prefix:\n\n" + all_keys;
+    if (!menu_only.empty())
+        every += "\nIn the menus only — no key reaches these directly:\n\n" + menu_only;
+    if (rebound.empty()) {
+        every +=
+            "\nEvery key above is ckmux's own default. Your configuration file can change any "
+            "of them with `bind` and `unbind` lines, and what you change is listed here.";
+    } else {
+        // Marked, not silently applied: a reader whose key stopped working
+        // needs to be told their own file is why, and told it here rather
+        // than by reading the file again.
+        every += "\nChanged by your configuration:\n\n" + rebound;
+    }
+    help_.add_topic("ckmux.keys.all",
+                    w::HelpTopic{"Every command", std::move(every),
+                                 {{"ckmux.keys", "All keys"},
+                                  {"ckmux.terminal", "Terminal window"}}});
+
+    // Copy mode. Its own keys are fixed rather than bindable (plans/06), so
+    // this page states them; the keymap has nothing to generate here.
+    help_.add_topic(
+        "ckmux.copy",
+        w::HelpTopic{"Copy mode",
+                     "You are reading this terminal's history rather than typing into it. The "
+                     "window's title bar says COPY while you are.\n\n↑ ↓ PgUp PgDn Home End "
+                     "move; Space or v starts a selection and moves extend it; Enter or y "
+                     "copies what is selected and leaves; Esc or q leaves without copying.\n\n"
+                     "What you copy goes to ckmux's own clipboard, which " +
+                         prefix_text +
+                         " ] pastes into any terminal here. The program you were "
+                         "running is untouched and still there when you leave.",
                      {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
+
+    // The picker, which is also the first thing a new reader sees.
+    help_.add_topic(
+        "ckmux.picker",
+        w::HelpTopic{"Sessions",
+                     "A session is a set of terminals the server keeps running whether or not "
+                     "anybody is watching them. This list is every session on this "
+                     "server.\n\nEnter or [ Attach ] takes you to the highlighted one — even "
+                     "one somebody else is watching, which is not refused: the newest client "
+                     "wins and the other one is told so and handed this same list. [ New… ] "
+                     "makes one, [ Rename… ] and [ End… ] act on the highlighted one, and "
+                     "ending a session ends the programs in it.\n\nClosing this window "
+                     "leaves ckmux running with nothing attached, which is a perfectly good "
+                     "state: the commands that need a session simply go grey.",
+                     {{"ckmux.keys", "All keys"}, {"ckmux.terminal", "Terminal window"}}});
+
+    // Move/resize mode, which is modal and therefore worth saying out loud.
+    help_.add_topic(
+        "ckmux.move",
+        w::HelpTopic{"Moving a window",
+                     "The arrow keys move this window; Shift with them resizes it. Enter or "
+                     "Esc finishes — Esc does not undo, because the window is already where "
+                     "you put it.\n\nThe mouse does the same thing without a mode: drag the "
+                     "title bar to move, drag an edge or a corner to resize.",
+                     {{"ckmux.switcher", "Window bar"}, {"ckmux.keys", "All keys"}}});
+
+    // And the surface WP-14 itself added, because a reader who has just been
+    // told something they did not ask about may reasonably ask what it is.
+    help_.add_topic(
+        "ckmux.notice",
+        w::HelpTopic{"Notices",
+                     "A line over the desktop reporting something that happened without you "
+                     "asking: a session taken over from another terminal, a session that "
+                     "ended, a server that stopped.\n\nMost take themselves away after a few "
+                     "seconds. The ones that matter — the ones that explain where your "
+                     "terminals went — stay until you dismiss them, because the reader they "
+                     "are for is the one who was not at the keyboard when it happened. Click "
+                     "a line to dismiss it.\n\nNothing here ever takes the keyboard from the "
+                     "program you are typing into. A notice is news, not a question; anything "
+                     "ckmux needs an answer to is a dialog.",
+                     {{"ckmux.picker", "Sessions"}, {"ckmux.terminal", "Terminal window"}}});
 }
 
 }  // namespace ckm::client

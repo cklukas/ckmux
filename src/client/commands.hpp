@@ -71,6 +71,11 @@ inline constexpr std::string_view kNewSession = "ckmux.session.new";
 inline constexpr std::string_view kRenameSession = "ckmux.session.rename";
 inline constexpr std::string_view kKillSession = "ckmux.session.kill";
 inline constexpr std::string_view kKeyReference = "ckmux.help.keys";
+// The whole listing, as against `kKeyReference`'s page for whatever surface
+// has the reader's attention (WP-14). Deliberately without a row in the
+// keymap table: it is the page that lists the chords, and giving it one of
+// its own would be a chord whose only purpose is to describe the others.
+inline constexpr std::string_view kAllKeys = "ckmux.help.all-keys";
 inline constexpr std::string_view kAbout = "ckmux.help.about";
 inline constexpr std::string_view kSendPrefix = "ckmux.terminal.send-prefix";
 // Arming the prefix from OUTSIDE a terminal. A terminal view hands the prefix
@@ -133,6 +138,18 @@ struct KeyBinding {
     // afterwards if the command was never declared, which is a state
     // tests/test_command_reachability.cpp fails on rather than lets ship.
     ckv::ui::CommandId command = ckv::ui::kInvalidCommand;
+    // The chord this row had before any of the reader's directives were
+    // applied — filled in by `Keymap`'s constructor from the table itself, so
+    // no row states it twice. It exists for one question a surface has to be
+    // able to ask: is this chord the reader's or ours? The help pages MARK a
+    // rebinding rather than quietly showing it (plans/06), which they cannot
+    // do without knowing what it replaced.
+    //
+    // Also updated by `set_default_chord`, because a default that depends on
+    // a setting is still a default: `^B ^B` for send-prefix is not a reader
+    // rebinding anything, and marking it as one would be a lie about their
+    // own file.
+    std::string default_chord = {};
 };
 
 // The bindings, with a reader's rebinding applied. One object rather than a
