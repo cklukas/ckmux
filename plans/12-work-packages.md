@@ -90,28 +90,37 @@ take first.
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | **Done** (2026-08-18) | WP-7 ✓ |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |
 | 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | **Done** (2026-08-18) | WP-8 ✓ |
-| 17 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
-| 18 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
-| 19 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
-| 20 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14 (WP-9 ✓, WP-10 ✓) |
-| 21 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
-| 22 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
-| 23 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
-| 24 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
-| 25 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
-| 26 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Ready** | WP-6 ✓ |
-| 27 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Ready** | WP-6 ✓, U0-c ✓ |
-| 28 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Ready** | WP-6 ✓, U1-c ✓, U1-d ✓ |
-| 29 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Ready** | WP-16 ✓ |
-| 30 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
-| 31 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
-| 32 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
-| 33 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
-| 34 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
-| 35 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
-| 36 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
+| 17 | **WP-28** — Window layout: wire and session-state storage | ckmux | 2 d | **Ready** | WP-8 ✓ |
+| 18 | **WP-29** — Client-side layout capture and reporting | ckmux | 2 d | Blocked | WP-28 |
+| 19 | **U4-a** — Window Switcher Bar (new ckVision widget) | ckVision | 3–4 d | **Ready** | — |
+| 20 | **U4-b** — Tile Horizontally/Vertically + filled-layout query | ckVision | 2–3 d | **Ready** | — |
+| 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Ready** | — |
+| 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | Blocked | WP-28, WP-29, U4-b |
+| 23 | **WP-31** — Tile Horizontally / Tile Vertically commands in ckmux | ckmux | 0.5–1 d | Blocked | U4-b |
+| 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | Blocked | U4-a |
+| 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | Blocked | U4-c |
+| 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
+| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
+| 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
+| 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
+| 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
+| 31 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
+| 32 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
+| 33 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
+| 34 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
+| 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Ready** | WP-6 ✓ |
+| 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Ready** (wire half landed as R8's side effect — `TermMeta` carries both flags; nothing in the UI reads them yet) | WP-6 ✓, U0-c ✓ |
+| 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Ready** | WP-6 ✓, U1-c ✓, U1-d ✓ |
+| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Ready** | WP-16 ✓ |
+| 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
+| 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
+| 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
+| 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
+| 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
+| 44 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
+| 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
 
-Roughly **90–120 focused days**, of which ~12–18 are upstream in ckVision.
+Roughly **107–137 focused days**, of which ~19–25 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
 commits; its row stays `In progress` until every acceptance item is met.
 
@@ -641,6 +650,168 @@ notifications or the help pages.
 **WP-15 — M3 acceptance.** Every operation-table row green at the wire; a
 newcomer drives everything from menus alone (checklist walkthrough); the
 author's tmux muscle-memory set is covered.
+
+### Window layout and management (2026-08-19)
+
+M-R3 in [13-architecture-review.md](13-architecture-review.md) named the gap
+and deliberately left it unfixed: everything about a terminal survives
+reattach — content, history, modes, clipboard watermark, printer state, exit
+status — except its window's position, size and z-order, which M-R3 called "a
+design question, not a transport one." The design arrived (reader-directed,
+2026-08-19) with three related feature requests attached, so this is one
+cluster of nine packages rather than one. plans/03 already settles the
+ownership question these build on: "window layout is session state, owned by
+the server."
+
+**WP-28 — Window layout: wire and session-state storage.** Revives the
+fields WP-1's catalogue already shaped and nothing has written or read since:
+`TerminalState.rect`/`z_order`/`zoomed`, and `LayoutDelta`. The server stores
+the last-reported geometry per terminal as session state and includes it on
+every snapshot; a producer sends the delta when the client reports a change
+(WP-29). *Done when*: a layout value round-trips through the server — set,
+snapshot, decode — with no client attached to read it back, proving the
+storage is real independent of any restoration policy.
+
+**WP-29 — Client-side layout capture and reporting.** The client watches
+each window — move, resize, zoom, close, raise — and reports the change
+through WP-28's message, debounced rather than sent per intermediate drag
+frame (WP-7 already found what an unthrottled per-frame channel costs). It
+also tags whether the arrangement AT THE MOMENT OF REPORTING is a
+ckVision-recognized filled, non-overlapping tile (U4-b's query) — the
+signal WP-30's proportional restoration needs. That half can land after
+U4-b; position/size/zoom capture does not need it and can ship first.
+*Done when*: dragging, resizing, zooming and closing a window each produce
+exactly one layout report at the wire, against a real `Desktop`.
+
+**WP-30 — Reattach layout restoration.** The actual policy, stated exactly
+as specified:
+
+  * A **zoomed/maximized** terminal is restored maximized against the
+    current desktop.
+  * A terminal that was part of a **filled tile** at the moment it was last
+    reported (WP-29's tag, via U4-b) is restored at the same *proportional*
+    fraction of the new desktop — a 50/50 split stays 50/50 whatever size
+    the reader reattaches at, rather than reusing the old absolute rect.
+  * An ordinary **floating** window is restored at its stored size, first
+    *moved* — shifted up and/or left, never down or right, only as far as
+    needed — to bring it maximally into the new desktop's bounds. Only if it
+    still does not fully fit after that move, and only if the reader has
+    opted in through a new Settings checkbox (default **off**), is it THEN
+    resized down to the largest size that fits — a distinct second
+    operation, always after the move, never instead of it. With the
+    checkbox off, a window too large for the new desktop is moved as far as
+    it can be and left at its real size, which may still hang off the edge
+    — automatic resizing is deliberately not the default; a reader's window
+    stays the size they set it to unless they asked otherwise.
+
+  New config key in `[general]` (name and wording to settle in
+  [08-configuration.md](08-configuration.md) when this lands — something
+  like `resize-windows-to-fit`), surfaced as a checkbox in
+  `Settings ▸ General…`, default off.
+
+  *Done when*: three regression scenarios are pinned — a window dragged to
+  the bottom-right on a large desktop reattaches shifted up-and-left, fully
+  visible, unresized, checkbox off; the same scenario with the checkbox on
+  and the window still oversized after the shift is then resized down as
+  the second step; a maximized window and a 50/50 tiled pair both reattach
+  correctly proportioned on a differently sized desktop.
+
+  **Open for whoever implements**: the move rule is specified for one
+  window. Several floating windows that all need to move on the same
+  reattach could either keep their relative offsets (shift as one group) or
+  each find its own nearest fit independently — the request above does not
+  settle which, and it is worth confirming rather than guessing; independent
+  movement is the simpler default absent a preference.
+
+**U4-a — Window Switcher Bar** *(ckVision)*. A new dockable widget: every
+open window listed by title, click to activate and raise, right-click for a
+host-supplied context menu — "like Windows taskbar," in the reader's own
+words. Docked at the bottom, stacked immediately above whatever a host
+already docks there (ckmux's own footer) — plans/06 records the footer as
+`Desktop::dock_bottom`; whether that slot already stacks more than one bar or
+needs to be taught to is the first thing to establish, not something this
+description can promise either way. `Desktop`'s content-area and
+maximize-geometry accounting must reserve the bar's height the same way it
+already reserves the `MenuBar`'s at the top, so a maximized window's bounds
+exclude it and it is never covered. Customizable, per the request: the
+window set listed, the context menu's contents, and what "activate" does are
+all host-supplied (a title/window provider and a menu-builder callback), not
+hardcoded to ckmux — ckmux is its first consumer, deliberately not its only
+one.
+
+  **Open for whoever implements**: command dispatch today runs against the
+  application's own focused view. Right-clicking a background window's row
+  and choosing Close must act on THAT window, not whichever one currently
+  has focus — check whether the existing per-window frame-overlay controls
+  (the print button, the close control) already solve "run this against a
+  specific window" and reuse that seam rather than inventing a second one.
+
+  *Done when*: three open windows produce three entries; clicking each
+  activates and raises the matching window; right-click shows a menu whose
+  contents the host supplied; a maximized window's bounds visibly exclude
+  the bar's row.
+
+**U4-b — Tile Horizontally / Tile Vertically, and a filled-layout query**
+*(ckVision)*. Two new standard window commands beside the existing `Tile`
+(near-square grid) and `Cascade`: Tile Horizontally arranges every
+non-minimized window in full-width horizontal bands stacked top to bottom;
+Tile Vertically arranges them in full-height vertical bands side by side —
+the conventional meaning from desktop taskbars' own "Tile Windows"
+commands, stated explicitly here because the two words are used
+inconsistently across platforms; confirm this matches intent before
+building it. Both produce an even, non-overlapping, desktop-filling
+arrangement, which is also what the rest of this package detects: **checked
+against the current code, and this does not exist yet** —
+`Desktop::child_casts_shadow` reads only each window's own `casts_shadow()`
+flag; there is no "is the desktop currently fully tiled" state anywhere in
+`desktop.cpp` today, so this is new work, not a reuse of something already
+there. A public query (`Desktop::filled_tile_fractions()` or similar)
+returns, when the arrangement IS such a filled tiling, every window's rect
+as a fraction of the desktop; empty otherwise. WP-29 tags a layout report
+with it; WP-30 restores proportionally from it. Shadow suppression while
+filled — the reader's own observation, and a sound one: a shadow is a
+windows-on-windows depth cue, and a full tile has no visible desktop
+between windows for one to fall on — is a visual consequence of the same
+detection, wired through `child_casts_shadow`, not a second mechanism.
+*Done when*: both commands produce the described arrangement for 2, 3 and 4
+windows; the fraction query is correct immediately after either runs and
+empty again once a window is dragged off-grid; shadows are absent while
+filled and return the moment a window moves.
+
+**U4-c — Maximize-follows-on-open capability** *(ckVision)*. An opt-in
+`Desktop` behavior: when a host enables it, a newly created window opens
+already maximized if the window active at the moment of creation was
+itself maximized. Opt-in because not every ckVision application wants this
+as a default — it is new behavior ckmux is choosing, not a correction of a
+wrong default elsewhere. *Done when*: with the capability enabled, opening a
+window while the active one is maximized places the new one maximized too;
+disabled (ckVision's own default), behavior is unchanged.
+
+**WP-31 — Tile Horizontally / Tile Vertically in ckmux.** Menu entries
+under `Window ▸`, beside the existing Tile/Cascade; keybindings, which-key
+rows and help-page entries through the one `Keymap` every other command
+already goes through (R6 made `chord_spelling()`/`parse_chord()` the single
+spelling authority — new bindings use it, not a table of their own).
+Depends on U4-b. *Done when*: `tests/test_command_reachability.cpp` — the
+suite that exists because a live-looking menu item once had no handler —
+passes with both new commands included, each reachable by its own chord.
+
+**WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
+terminal windows into U4-a's bar: the title provider (the same
+numbering/caption logic `open_terminal` already assigns), the right-click
+menu's contents (Maximize, Close, Move to session…, and whatever else the
+standard Window menu already offers per-window), and activation (click →
+focus and raise that terminal's window). Positioned above the existing
+footer, as specified. Depends on U4-a. *Done when*: the bar lists every open
+terminal window with its real caption, stays correct across open, close,
+rename and move-to-session, and a maximized terminal's bounds visibly leave
+the bar's row uncovered.
+
+**WP-33 — Maximize-follows integration in ckmux.** Enables U4-c for
+ckmux's terminal windows: a new terminal opened while another is maximized
+opens maximized too, instead of at its usual cascade position. Depends on
+U4-c. *Done when*: with a terminal maximized, `^B c` opens the new one
+maximized; with none maximized, cascade placement is unchanged.
 
 ### M4 — fidelity
 

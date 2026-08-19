@@ -332,6 +332,15 @@ What the fix decided, where a decision was needed:
   and a decision about what happens when a session is reattached on a smaller
   desktop than it was laid out for — which is a design question, not a
   transport one. plans/05 and plans/12 both say so where it belongs.
+  **The design decision arrived (reader-directed, 2026-08-19)**, along with
+  three related window-management requests it pulled in: a reattaching
+  window is moved (never resized, by default) to stay in view, a maximized
+  window is restored maximized, a filled-tile layout is restored
+  proportionally, resize-if-still-needed is an opt-in setting, plus a new
+  Window Switcher Bar, Tile Horizontally/Vertically, and maximize-follows.
+  Nine work packages now carry it — [12-work-packages.md](12-work-packages.md)
+  WP-28 through WP-33 and U4-a/b/c — replacing this paragraph as the record
+  of what M-R3 needs; this note stays as the finding's provenance.
 
 Build & enforcement (R9): `cmake --install` ships 119 ckVision SDK files;
 `CKMUX_SANITIZE` does not reach ckVision; the "build enforces the layer rule"
