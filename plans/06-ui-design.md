@@ -594,11 +594,15 @@ removes.
 
 - New windows cascade from the last created position; `Cascade` restacks.
   `Window ▸` offers **three named tilings** and no unqualified one (WP-31):
-  `Tile Vertically` (`^B v`) arranges every window in full-height vertical
-  bands side by side, `Tile Horizontally` (`^B h`) its transpose — full-width
-  bands stacked top to bottom — and `Tile Grid` (`^B g`) a near-square grid,
+  `Tile Horizontally` (`^B h`) arranges every window in full-height bands
+  side by side, in a row across the desktop; `Tile Vertically` (`^B v`) is
+  its transpose, full-width bands stacked down it; and `Tile Grid` (`^B g`)
+  a near-square grid,
   four windows into two columns by two rows. Each chord is the first letter of
-  its own name; that is the whole rule.
+  its own name; that is the whole rule. **The axis names what the windows
+  are laid out ALONG, not the direction of the divider between them** — the
+  two readings both exist in the wild, and the pair was swapped relative to
+  this one until a reader running ckmux said so (2026-08-19).
   This bullet said `Tile` arranges "a near-square grid" until 2026-08-19, when
   implementing U4-b sent someone to read `Desktop::tile()` and find it slicing
   width alone and handing every window the full content height. The grid was

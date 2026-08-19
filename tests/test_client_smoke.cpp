@@ -532,13 +532,13 @@ CK_TEST(window_management_commands_arrange_and_cycle_the_terminals) {
     // until WP-31 named it, and it is unchanged — only what a reader calls it
     // and which chord reaches it changed.
     const ckv::Rect area = f.client.desktop().content_area();
-    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileVertically)));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileHorizontally)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().width ==
              f.client.desktop().windows()[1]->bounds().width);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().height == area.height);
-    // Horizontal bands are its transpose: full width, stacked top to bottom.
-    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileHorizontally)));
+    // Vertical bands are its transpose: full width, stacked top to bottom.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kTileVertically)));
     f.app.step(0);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().width == area.width);
     CK_CHECK(f.client.desktop().windows()[0]->bounds().y <
@@ -1725,7 +1725,7 @@ CK_TEST(a_maximized_window_and_a_fifty_fifty_pair_come_back_proportioned_on_a_ne
     // An exact, desktop-filling tiling — which is what makes the query answer
     // at all. It is measured, not flagged: a window dragged off the grid stops
     // being part of one immediately (ckVision U4-b).
-    f.client.desktop().tile_vertically();
+    f.client.desktop().tile_horizontally();
     f.app.step(0);
     layout_tick(f);
     layout_tick(f);

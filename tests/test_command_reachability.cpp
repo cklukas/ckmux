@@ -149,14 +149,16 @@ CK_TEST(each_of_the_three_tilings_is_reachable_by_its_own_chord_and_arranges_the
     CK_CHECK(fixture.app.execute_command(
         fixture.app.commands().standard().tile_horizontally));
     fixture.app.step(fixture.clock.now_nanos());
-    // Full-WIDTH bands stacked top to bottom.
-    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().width == area.width);
+    // Full-HEIGHT bands side by side: the axis names what the windows are laid
+    // out ALONG, so tiling horizontally puts them in a row across the desktop.
+    // This is also the arrangement the unqualified `Tile` this package retired
+    // has always produced.
+    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().height == area.height);
 
     CK_CHECK(fixture.app.execute_command(fixture.app.commands().standard().tile_vertically));
     fixture.app.step(fixture.clock.now_nanos());
-    // Full-HEIGHT bands side by side — the transpose, and the arrangement the
-    // unqualified `Tile` this package retired has always produced.
-    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().height == area.height);
+    // Full-WIDTH bands stacked down the desktop — the transpose.
+    for (ckv::widgets::Window* window : windows) CK_CHECK(window->bounds().width == area.width);
 
     CK_CHECK(fixture.app.execute_command(fixture.app.commands().standard().tile_grid));
     fixture.app.step(fixture.clock.now_nanos());
