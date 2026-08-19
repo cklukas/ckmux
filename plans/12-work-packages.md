@@ -43,7 +43,7 @@ which is the one vocabulary shared across both repos.
 | State | Meaning |
 |---|---|
 | `Ready` | Every prerequisite is satisfied. Selectable. |
-| `In progress` | Being worked on now. **At most one row may hold this.** |
+| `In progress` | Being worked on now, and **by whom**: the row names the session holding it, e.g. `In progress (ckmux-63)`. **At most one row per session** — the rule was written when one agent worked this queue and read as "at most one row at all", which with several sessions live is unsatisfiable and was therefore not being written down at all. A row nobody has marked reads `Ready` to every other session, which is precisely how two of them start the same package; claim the row before the first edit, and clear it when the package lands. |
 | `Blocked` | A prerequisite is not met. The prerequisite column always names it. |
 | `Implementation complete — gate pending` | The package's own criteria hold literally, but a milestone-level gate ([09-testing.md](09-testing.md)) has not been run or has not passed. Satisfies a dependent row's prerequisite; is **not** selected as the next package. |
 | `Done` | The criteria hold literally, the gates are recorded, and no known contradiction remains. |
@@ -101,11 +101,12 @@ take first.
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
 | 25a | **U4-g** — A dialog too tall for its screen scrolls, buttons pinned | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `6d7172b`) | — |
 | 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `720e0eb`) | — |
-| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Ready** | U4-i |
+| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Done** (2026-08-19) | U4-i ✓ |
+| 25c2 | **U4-o** — A standard `ckv.window.minimize` command and its `Desktop` handler | ckVision | 0.5 d | **Done** (2026-08-19) | U4-i ✓ |
 | 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | **Ready** | U4-i |
-| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | Blocked | U4-i, U4-j |
+| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | **Done** (2026-08-19) | U4-i ✓, U4-j ✓, U4-o ✓ |
 | 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
-| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Ready** | U4-l |
+| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
@@ -1003,6 +1004,17 @@ the same move on the other child. *Done when*: collapsing hides the footer and
 puts the bar on the last row, expanding restores both, and a maximized
 terminal grows into the freed row and gives it back.
 
+*Landed* (2026-08-19), with one addition the package did not ask for and needs:
+a **command** beside the strip's toggle — `Window ▸ Status Bar`, `^B b`. The
+toggle alone would have been a trap, because the bar is not always on screen:
+collapse the chrome, close down to one terminal, and the `▼` goes with the bar
+while the footer stays hidden, leaving no way back to it. Both routes set one
+state (`ClientApp::set_chrome_collapsed`), so the glyph and the menu cannot
+disagree, and the state survives the bar coming and going — the reader's
+decision about ckmux's chrome is not undone by a fact about their windows.
+Re-entrancy is safe in both directions: `PagedStrip::set_collapsed` assigns
+before it reports, so the call that comes back finds nothing left to change.
+
 **U4-i — Minimize: window state, the `_` control, and what a hidden window
 does** *(ckVision)*. Reader-directed, 2026-08-19: a third frame control, `_`,
 immediately LEFT of the maximize/restore control, which **hides** the window.
@@ -1047,6 +1059,39 @@ replaces today's always-activate. *Done when*: each of the three transitions
 is driven through a real click and asserted, the icon matches the state after
 each one, and a right-click still opens the menu without changing any state.
 
+*Landed* (2026-08-19). The glyphs are `▮`/`▯`/`▄` (U+25AE/25AF/2584) in one
+`status_glyph(Status)` table the widget exposes, so a legend or a host's own
+listing names the same shapes the bar draws. The width check was run against
+ckVision's own tables before a glyph was chosen and it confirmed the warning
+above: `■`/`□` are East Asian Ambiguous, while all three chosen glyphs are
+neither Wide nor Extended_Pictographic. All three are also **one cell**, which
+is what keeps U4-m's damping honest — a window minimizing and restoring does
+not change its button's length, so the row cannot re-flow on a state change.
+
+The click policy went into the widget rather than into each host, and the seam
+that made that possible is two verbs instead of one: `set_activate_action`
+(unchanged) and a new `set_minimize_action`. The bar decides which of the
+three transitions a click is; a host that installs its own activate action —
+ckmux does, to move the keyboard with the window — keeps the semantics for
+free. A minimized row and a visible-but-behind row both go through activate,
+because `Desktop::activate` restores a hidden window on its way to the front:
+one verb, not two, for "bring me that one". State comes from a
+`set_minimized_provider` defaulting to `Window::minimized()`, so a host whose
+windows are put away by a model of its own has the same seam the label and the
+active window already had; where a host's providers answer both, **minimized
+wins**, because a row drawn as the reader's current window while that window
+is nowhere on screen is the one lie a taskbar must not tell. A window whose
+`minimizable()` is false is never minimized from its row. ckVision D-059.
+
+**U4-o — a standard `ckv.window.minimize` command** *(ckVision)*, found while
+building WP-34 and landed with U4-j. U4-i gave every window a `_` control, and
+that control is the one a reader cannot conveniently aim at for the window
+they are already working in — a menu item and a key are how they reach it, and
+every ckVision application with a Window menu wants that row. So it is the
+library's command, declared LAST in `CommandRegistry` so no existing id moves,
+with a `Desktop::minimize_active_window()` default handler beside `kZoom`'s
+that refuses a window whose `minimizable()` is false.
+
 **U4-k — The minimize animation** *(ckVision)*. The frame shrinks and flies to
 the entry it will live in, Windows-95 style, and back on restore. ckVision has
 no animation machinery at all today — `Application::start_timer` is the whole
@@ -1063,7 +1108,12 @@ can depend on the frames. *Done when*: the end state is identical with the
 animation on and off; interrupting mid-flight leaves a coherent desktop; and
 a host that never gets a timer tick still ends with the window hidden.
 
-**WP-34 — Minimize in ckmux** *(ckmux)*. Consume the three above. The bar's
+**WP-34 — Minimize in ckmux** *(ckmux)*. Consume the three above — two of
+them, as it turned out: **U4-k, the minimize animation, is not a dependency
+and remains open.** It is the flight between the window and its row, and
+everything here is about where the window and the row ARE, which the end
+state answers whether or not a frame of the flight was ever drawn (which is
+U4-k's own first constraint). The bar's
 visibility rule gains a second clause, reader-directed: it is on screen when
 more than one terminal is open **or when any terminal is minimized** — with
 one window hidden and none visible, the bar is the only way back, so hiding it
@@ -1071,6 +1121,41 @@ would strand the reader with an empty desktop and no route to their program.
 *Done when*: minimizing the only terminal makes the bar appear and the
 terminal restorable from it; the ckmux menu offers minimize beside zoom; and
 `^B` chords for it, if any, go through the one `Keymap` like everything else.
+
+*Landed* (2026-08-19). `sync_window_switcher()` now reads
+`listed.size() > 1U || any_minimized`, asked of the windows themselves rather
+than tracked beside them — the desktop already knows, and a second record
+could disagree with it. The block U4-n was carrying is real and is gone: the
+bar appearing changes the dock's height, which is a content-area change, which
+before ckVision `0e7c013` corrupted a tiling on every minimize and restore.
+The one-line fix really was not one line, and it was not this line.
+
+Three routes reach the verb, all through the one `Keymap`: `Window ▸ Minimize`
+(U4-o's standard command, beside Zoom, which is where the window's own frame
+puts the two controls), `^B _` (named for the `_` control the reader can see),
+and the row's own context menu, where it sits at the top and reads **&Show**
+for a window that is already away — a second "&Restore" would collide with the
+un-maximize row below it. Clicking the row itself is U4-j's, and ckmux adds
+the two side effects its activate action already had: the keyboard follows the
+window, and the footer is re-read.
+
+Two things this package deliberately does not do, both verified rather than
+assumed. **A minimized terminal does not survive a detach and reattach**:
+`WindowPlacement` on the wire carries `zoomed` and a rect but nothing about
+hiddenness (plans/05), so `apply_layout` brings every terminal back on screen.
+That is a wire change plus a session-state field, which is WP-28/WP-30's
+territory rather than this one's, and it is recorded here so the next person to
+open that file knows the field is missing on purpose. **Reaching a hidden
+terminal by number already works**: `^B 3` goes through `Desktop::activate`,
+which restores on the way to the front, and `^B n`/`^B p` step over hidden
+windows, both of which are U4-i's doing and neither of which needed anything
+here.
+
+Verified end to end as well as headlessly: `tests/test_minimize_chrome.cpp`
+drives the real client, and `tests/test_menu_commands.cpp` runs the real
+binary in a real terminal, presses `^B _`, and reads the screen — the window
+leaves it, the bar arrives with `▄ Terminal 1` on it, and a click on that row
+brings the terminal back and takes the bar away again.
 
 **WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
 terminal windows into U4-a's bar: the title provider (the same

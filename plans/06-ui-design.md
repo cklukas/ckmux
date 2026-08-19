@@ -94,9 +94,18 @@ ckVision (what exists vs. what we add) is in
   to flicker between; and a name the READER gave takes effect at once too,
   because a rename that visibly worked half a minute later reads as a command
   that did not work.
-- **Last row — footer** (permanent): left side = context-sensitive hotkey
-  hints; right side = status (session name · terminal count, prefix-pending
-  indicator, bell/activity flags).
+- **Last row — footer** (permanent unless the reader collapses it): left side
+  = context-sensitive hotkey hints; right side = status (session name ·
+  terminal count, prefix-pending indicator, bell/activity flags).
+- **Collapsing the chrome** (WP-35): the window bar's `▼` at its far left, and
+  `Window ▸ Status Bar` / `^B b`, hide the footer — at which point the docked
+  Column is one row and the bar sits on the last row of the terminal, which is
+  the row the reader asked to get back. Both routes set one state, so the
+  glyph and the menu cannot disagree. The command exists beside the toggle
+  because the bar is not always on screen: with one terminal and nothing
+  minimized there is no `▼` to press, and a reader who collapsed the chrome
+  earlier would have no way back to their footer. A maximized terminal grows
+  into the freed row and gives it back.
 
 Modal surfaces (menus, dialogs, the session picker, message boxes) float
 above the desktop. The footer switches to hints for the active modal surface.
@@ -171,6 +180,8 @@ the chord state machine from there (details in
 | `^B s` | Session picker (switch / manage sessions) |
 | `^B ,` | Rename terminal — implemented, WP-36 |
 | `^B z` | Zoom (maximize/restore) focused window |
+| `^B _` | Minimize focused window — implemented, WP-34. Named for the `_` control on the window's own frame; the window bar is where it goes and how it comes back |
+| `^B b` | Show / hide the status bar — implemented, WP-35. Collapsed, the window bar takes the last row |
 | `^B M` | Enter move/resize mode (arrows move, `Shift`+arrows resize, `Enter`/`Esc` done) |
 | `^B h` / `^B v` / `^B g` | Tile horizontally / vertically / grid · `^B T` cascade |
 | `^B [` | Copy mode (scrollback) |

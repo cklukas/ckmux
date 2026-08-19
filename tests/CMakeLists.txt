@@ -19,6 +19,7 @@ set(CKMUX_TEST_SOURCES
     test_grid_delta.cpp
     test_keymap.cpp
     test_menu_commands.cpp
+    test_minimize_chrome.cpp
     test_prefix.cpp
     test_proto.cpp
     test_process_stats.cpp
@@ -88,6 +89,7 @@ set(CKMUX_LABELS_test_server_terminals "pty")
 set(CKMUX_LABELS_test_client_smoke "pty")
 set(CKMUX_LABELS_test_command_reachability "pty")
 set(CKMUX_LABELS_test_copy_mode "pty")
+set(CKMUX_LABELS_test_minimize_chrome "pty")
 set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 

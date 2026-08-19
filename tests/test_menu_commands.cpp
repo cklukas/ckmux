@@ -1081,3 +1081,145 @@ CK_TEST(the_window_bars_context_menu_offers_a_rename_for_the_row_that_was_clicke
     end_process(server);
     forget(socket);
 }
+
+CK_TEST(minimizing_the_only_terminal_puts_the_window_bar_on_screen) {
+    // The reader's report, on a real screen: "the window bar does not appear
+    // when a single terminal window in a session is minimized" (WP-34). The
+    // headless suite pins the rule; this pins the only thing that answers the
+    // report — that a reader who puts their one terminal away can SEE where it
+    // went, and get it back.
+    const std::filesystem::path socket = private_socket("minimize");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+    const std::size_t rows = reader.rows().size();
+    CK_CHECK(rows >= 3U);
+    if (rows < 3U) return;
+    const int bar_row = static_cast<int>(rows) - 2;
+
+    // Before: one terminal, nothing hidden, no bar. The only "Terminal 1" on
+    // the screen is on the window's own title bar, above the bar's row.
+    {
+        const std::optional<std::pair<int, int>> caption = reader.find_cell("Terminal 1");
+        CK_CHECK(caption.has_value());
+        if (!caption) return;
+        CK_CHECK(caption->first < bar_row);
+        CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("Terminal 1") ==
+                 std::string::npos);
+    }
+
+    // `^B _`, the chord named for the `_` control on the window's own frame.
+    reader.press("\x02" "_");
+    reader.settle(300);
+
+    // After: the window is off the screen — the ONLY "Terminal 1" left is on
+    // the bar's row — and the bar is there, saying the terminal is put away.
+    const std::optional<std::pair<int, int>> listed = reader.find_cell("Terminal 1");
+    CK_CHECK(listed.has_value());
+    if (!listed) return;
+    CK_CHECK(listed->first == bar_row);
+    // The minimized glyph, one cell left of the name it belongs to (U4-j).
+    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("▄ Terminal 1") !=
+             std::string::npos);
+
+    // And the row is the way back. A click on it restores the terminal, at
+    // which point there is one terminal and nothing hidden again — so the bar
+    // has done its job and goes.
+    reader.click(bar_row, listed->second);
+    reader.settle(400);
+    const std::optional<std::pair<int, int>> restored = reader.find_cell("Terminal 1");
+    CK_CHECK(restored.has_value());
+    if (!restored) return;
+    CK_CHECK(restored->first < bar_row);
+    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("Terminal 1") ==
+             std::string::npos);
+
+    // And the route the reader most likely took to report this: the `_`
+    // control on the window's own frame, clicked with the mouse. It is the
+    // first underscore on the screen — the menu bar above it has none, and
+    // the child is /bin/cat, which writes nothing.
+    const std::optional<std::pair<int, int>> control = reader.find_cell("_");
+    CK_CHECK(control.has_value());
+    if (!control) return;
+    CK_CHECK(control->first < bar_row);  // on the frame, not in the bar
+    reader.click(control->first, control->second);
+    reader.settle(400);
+    const std::optional<std::pair<int, int>> away = reader.find_cell("Terminal 1");
+    CK_CHECK(away.has_value());
+    if (!away) return;
+    CK_CHECK(away->first == bar_row);
+    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("▄ Terminal 1") !=
+             std::string::npos);
+
+    reader.press("\x02" "d");
+    CK_CHECK(reader.gone());
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(hiding_the_status_bar_drops_the_window_bar_onto_the_last_row) {
+    // WP-35, and the second half of the same request: a way to push the window
+    // list down and hide the status bar. What it buys is one row of terminal,
+    // so what this checks is where the rows actually are.
+    const std::filesystem::path socket = private_socket("chrome");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+    reader.press("\x02" "c");
+    CK_CHECK(reader.sees("Terminal 2"));
+
+    const std::size_t rows = reader.rows().size();
+    CK_CHECK(rows >= 3U);
+    if (rows < 3U) return;
+    const int last_row = static_cast<int>(rows) - 1;
+
+    // Expanded: the bar above the footer, and the footer carrying its hints.
+    {
+        const std::vector<std::string> lines = reader.rows();
+        CK_CHECK(lines[static_cast<std::size_t>(last_row) - 1U].find("Terminal 2") !=
+                 std::string::npos);
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("Terminal 2") == std::string::npos);
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("menu") != std::string::npos);
+    }
+
+    reader.press("\x02" "b");
+    reader.settle(300);
+
+    // Collapsed: the footer is gone and the bar is on the last row — the row
+    // the footer was spending.
+    {
+        const std::vector<std::string> lines = reader.rows();
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("Terminal 2") != std::string::npos);
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("menu") == std::string::npos);
+        // And the row above it is the reader's desktop now, not chrome.
+        CK_CHECK(lines[static_cast<std::size_t>(last_row) - 1U].find("Terminal 2") ==
+                 std::string::npos);
+        // ▲ rather than ▼: the toggle says which way it goes next.
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("▲") != std::string::npos);
+    }
+
+    // And back, both together.
+    reader.press("\x02" "b");
+    reader.settle(300);
+    {
+        const std::vector<std::string> lines = reader.rows();
+        CK_CHECK(lines[static_cast<std::size_t>(last_row) - 1U].find("Terminal 2") !=
+                 std::string::npos);
+        CK_CHECK(lines[static_cast<std::size_t>(last_row)].find("menu") != std::string::npos);
+    }
+
+    reader.press("\x02" "d");
+    CK_CHECK(reader.gone());
+    end_process(server);
+    forget(socket);
+}
