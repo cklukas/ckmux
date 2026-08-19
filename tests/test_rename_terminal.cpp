@@ -360,10 +360,11 @@ CK_TEST(renaming_from_the_window_bar_names_the_row_clicked_not_the_one_in_front)
     ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
     CK_CHECK(menu != nullptr);
     if (menu == nullptr) return;
-    CK_CHECK(menu->items().size() == 8U);
-    if (menu->items().size() != 8U) return;
-    CK_CHECK(menu->items()[3].label() == "Re&name…");
-    menu->items()[3].action()();
+    // Nine since WP-34 put Minimize at the top of this menu.
+    CK_CHECK(menu->items().size() == 9U);
+    if (menu->items().size() != 9U) return;
+    CK_CHECK(menu->items()[4].label() == "Re&name…");
+    menu->items()[4].action()();
     f.app.step(0);
     f.app.step(0);
     CK_CHECK(f.app.is_modal());

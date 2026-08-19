@@ -10,6 +10,7 @@ set(CKMUX_TEST_SOURCES
     test_command_reachability.cpp
     test_attach.cpp
     test_cli.cpp
+    test_client_pacing.cpp
     test_client_smoke.cpp
     test_config.cpp
     test_copy_mode.cpp
@@ -43,10 +44,13 @@ ckmux_strict(ckmux_tests)
 # `e2e`, `benchmark`, `fuzz-corpus`, `portable` — and they have to say what a
 # suite actually does, because they are what a reader selects by: `ctest -L
 # unit` has to mean the suites that need nothing but the process they run in,
-# or nobody can trust it to be the fast lane. Labelling all nineteen `unit`
-# said the opposite of the truth about four of them.
+# or nobody can trust it to be the fast lane. Labelling all twenty-two `unit`
+# said the opposite of the truth about fifteen of them.
 #
-# Only the exceptions are named; everything else is `unit`, so a suite added
+# A named exception REPLACES `unit` rather than adding to it, because `ctest
+# -L unit` matches every suite carrying that label: a `unit;pty` would leave
+# the PTY suites in the fast lane and change nothing a reader selects by. So
+# only the exceptions are named, everything else is `unit`, and a suite added
 # tomorrow is labelled by default rather than unlabelled. Each entry below is
 # derived from what the file does, not from its name:
 #
@@ -57,10 +61,34 @@ ckmux_strict(ckmux_tests)
 #     has none.
 #   * `golden`: pins a decoded frame against a checked-in golden
 #     (`cvision/core/golden.hpp`, ckVision D-014).
+#
+# The `pty` set was established by running every suite under an interposed
+# `forkpty` and counting what it forked, rather than by reading it — because
+# five of the ten below never name a terminal at all. They reach the fork
+# through `ClientApp`'s constructor, which opens a terminal window at startup
+# (`open_terminal_at_startup`, default true) unless the test injects its own
+# `terminal_source`. test_remote_terminal injects at all three of its client
+# sites, forks nothing, and is the one client suite that is honestly `unit`.
 set(CKMUX_LABELS_test_cli "script;e2e")
 set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
+set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
+# Server side: `Terminals::open` and `Server::open_terminal` both go straight
+# to `PosixTerminalSubsession::launch`, which is forkpty + execve.
+set(CKMUX_LABELS_test_attach "pty")
+set(CKMUX_LABELS_test_diff_engine "pty")
+set(CKMUX_LABELS_test_rename_wire "pty")
+set(CKMUX_LABELS_test_server_loop "pty")
+set(CKMUX_LABELS_test_server_terminals "pty")
+# Client side: a `ClientApp` built with no `terminal_source` opens a real
+# terminal window while it is being constructed, so the fixture has already
+# forked its child before the first case in the file runs.
+set(CKMUX_LABELS_test_client_smoke "pty")
+set(CKMUX_LABELS_test_command_reachability "pty")
+set(CKMUX_LABELS_test_copy_mode "pty")
+set(CKMUX_LABELS_test_prefix "pty")
+set(CKMUX_LABELS_test_rename_terminal "pty")
 
 foreach(source ${CKMUX_TEST_SOURCES})
     get_filename_component(suite ${source} NAME_WE)

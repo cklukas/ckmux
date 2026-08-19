@@ -299,6 +299,14 @@ void ClientApp::register_commands() {
             // window), so it is asked rather than assumed.
             registry.set_enabled_predicate(rename,
                                            [this] { return active_terminal() != nullptr; });
+        } else if (binding.key == commands::kToggleStatusBar) {
+            // The keyboard's and the menu's way to the same state the bar's ▼
+            // reports (WP-35). It has to exist separately from that toggle
+            // because the bar itself is not always on screen — one terminal,
+            // none minimized, and the only route back to the footer would be
+            // a row that is not there.
+            declare(binding.key, binding.title, "Window",
+                    [this] { set_chrome_collapsed(!chrome_collapsed_); });
         } else if (binding.key == commands::kMoveResize) {
             declare(binding.key, binding.title, "Window", [this] {
                 if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
@@ -484,12 +492,18 @@ void ClientApp::build_chrome() {
     // exactly what Tile Vertically produces (U4-b), so a menu carrying both
     // would offer one behaviour twice under two names — and a reader choosing
     // between the two entries would be choosing between nothing.
+    //
+    // Minimize sits beside Zoom, which is where a reader looks for it and
+    // what the window's own frame says by drawing the two controls together
+    // (WP-34). Status Bar is last and on its own: it is the only item here
+    // that arranges ckmux's CHROME rather than the reader's windows.
     w::MenuBarItem window_menu{
         "&Window",
         {item(u::std_command_keys::kWindowList), separator, item(commands::kMoveResize),
-         item(u::std_command_keys::kZoom), separator,
+         item(u::std_command_keys::kZoom), item(u::std_command_keys::kMinimize), separator,
          item(u::std_command_keys::kTileHorizontally), item(u::std_command_keys::kTileVertically),
-         item(u::std_command_keys::kTileGrid), item(u::std_command_keys::kCascade)}};
+         item(u::std_command_keys::kTileGrid), item(u::std_command_keys::kCascade), separator,
+         item(commands::kToggleStatusBar)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
     // Settings menu rather than hiding one per feature area — and the colour
     // theme is a setting, which is why there is no View menu holding three
@@ -592,9 +606,30 @@ void ClientApp::install_window_switcher(w::WindowSwitcherBar& bar) {
         focus_active_terminal();
         refresh_footer();
     });
+    // And the other half of a taskbar button (U4-j): clicking the row of the
+    // terminal the reader is IN puts it away. The library decides WHICH of
+    // the three transitions a click is; what ckmux adds is the same pair of
+    // side effects its activate action carries, because the keyboard and the
+    // footer follow the window either way — a minimize that left the focus
+    // on a hidden terminal would send the reader's next keystroke nowhere.
+    bar.set_minimize_action([this, alive](w::Window& window) {
+        if (alive.expired() || desktop_ == nullptr) return;
+        window.set_minimized(true);
+        focus_active_terminal();
+        refresh_footer();
+    });
     bar.set_context_menu_provider([this, alive](const w::WindowSwitcherTarget& target) {
         return alive.expired() ? std::vector<w::MenuItem>{} : switcher_menu(target);
     });
+    // The ▼ at the far left of the row, and what ckmux means by it (WP-35).
+    // The bar hides nothing itself — it reports the toggle and answers
+    // `collapsed()` — so this is the whole of the behaviour, and it is one
+    // call into the state both routes share.
+    bar.set_collapsible(true);
+    bar.on_collapse_changed = [this, alive](bool collapsed) {
+        if (alive.expired()) return;
+        set_chrome_collapsed(collapsed);
+    };
     bar.set_help_context_key("ckmux.switcher");
 
     // And the buttons stop twitching. A terminal's caption follows the program
@@ -649,6 +684,33 @@ std::vector<ckv::widgets::MenuItem> ClientApp::switcher_menu(
     // and destructively. That is the whole reason the target exists (U4-a), and
     // `bind` also makes a window that ends while the menu stands open a no-op
     // rather than a reference to freed storage.
+    // Minimize first, and Maximize under it: that is the order the two
+    // controls sit in on the window's own frame, and a menu that reversed
+    // them would be describing a different window (WP-34).
+    //
+    // "&Show" rather than a second "&Restore": a window minimized while
+    // maximized has a Restore on the row below — the one that un-maximizes
+    // it — and two items reading Restore in one menu is a reader choosing
+    // between them by guessing. A terminal that draws no `_` control gets no
+    // row at all rather than a disabled one, because the reason is not a
+    // state that will pass.
+    if (window->minimizable())
+        items.push_back(
+            w::MenuItem::action(window->minimized() ? "&Show" : "Mi&nimize",
+                                target.bind([this, alive](w::Window& clicked) {
+                                    if (alive.expired() || desktop_ == nullptr) return;
+                                    if (clicked.minimized()) {
+                                        // Named from a list is asked for: it
+                                        // comes back in front, the way a click
+                                        // on its row does.
+                                        desktop_->activate(&clicked);
+                                    } else {
+                                        clicked.set_minimized(true);
+                                    }
+                                    focus_active_terminal();
+                                    refresh_footer();
+                                }))
+                .with_help("ckmux.switcher"));
     items.push_back(w::MenuItem::action(window->zoomed() ? "&Restore" : "Ma&ximize",
                                         target.bind([this, alive](w::Window& clicked) {
                                             if (alive.expired() || desktop_ == nullptr) return;
@@ -716,7 +778,20 @@ void ClientApp::sync_window_switcher() {
     // On an 80×24 terminal that line is one of the 22 a menu bar and a footer
     // leave — the exact budget `Settings ▸ General…` is drawn to fit
     // (plans/06-ui-design.md), which it therefore still gets.
-    const bool wanted = switcher_windows().size() > 1U;
+    //
+    // …with a second clause, which is the reader's own report (WP-34): OR any
+    // terminal is minimized. One window, hidden, and no bar is a reader
+    // looking at an empty desktop with their program still running somewhere
+    // they cannot name — the bar is the only route back to a minimized
+    // window, so the one case where hiding it strands them is exactly the
+    // case where it must appear. Asked of the WINDOWS rather than tracked
+    // alongside them, for the reason every other question here is: the
+    // desktop already knows, and a second record could disagree with it.
+    const std::vector<w::Window*> listed = switcher_windows();
+    const bool any_minimized = std::any_of(listed.begin(), listed.end(), [](const w::Window* w) {
+        return w != nullptr && w->minimized();
+    });
+    const bool wanted = listed.size() > 1U || any_minimized;
     if (switcher_->visible() == wanted) return;
     switcher_->set_visible(wanted);
     // And the desktop has to be TOLD. `content_area()` reads the docked view's
@@ -730,6 +805,34 @@ void ClientApp::sync_window_switcher() {
     // library's own seam called by hand rather than geometry recomputed here —
     // the one line missing upstream is `View::set_visible` raising the change,
     // which is a ckVision fix to make, not a rule for ckmux to keep.
+    desktop_->on_child_size_hint_changed(*chrome_stack_);
+}
+
+void ClientApp::set_chrome_collapsed(bool collapsed) {
+    if (switcher_ == nullptr || footer_ == nullptr || chrome_stack_ == nullptr ||
+        desktop_ == nullptr)
+        return;
+    // Asked BEFORE anything moves, because the answer is what decides
+    // whether the desktop has to be told at all.
+    const bool moved = footer_->visible() == collapsed;
+    chrome_collapsed_ = collapsed;
+    // Idempotent on purpose — see the header. Both of these are guarded
+    // upstream (`View::set_visible` and `PagedStrip::set_collapsed` each
+    // return early on no change), which is also what keeps the two routes
+    // from chasing each other: the bar's toggle calls this, this calls the
+    // bar's toggle, and the second call is the one that stops — the strip
+    // assigns its flag before it reports it, so the re-entrant call finds
+    // nothing left to change and notifies nobody.
+    footer_->set_visible(!collapsed);
+    switcher_->set_collapsed(collapsed);
+    if (!moved) return;
+    // The same missing library seam `sync_window_switcher` documents: a
+    // docked Column's aggregate height skips an invisible child, so
+    // `content_area()` already answers correctly — but nothing re-runs the
+    // pass that re-places the dock and re-fills the zoomed windows, because
+    // `View::set_visible` invalidates without raising `size_hint_changed()`.
+    // So the desktop is told by hand, and a maximized terminal grows into the
+    // freed row (and gives it back) as part of that one pass.
     desktop_->on_child_size_hint_changed(*chrome_stack_);
 }
 
@@ -1920,12 +2023,19 @@ void ClientApp::show_key_reference() { app_.execute_command(app_.commands().stan
 
 void ClientApp::show_about() {
     if (desktop_ == nullptr) return;
+    // The attribution line is CK Office's, character for character: the suite's
+    // shared cworks::about_lines() closes every one of its About boxes with
+    // this sentence, spelled "(c)" rather than the sign. Programs from the same
+    // hand that word their own authorship differently read as programs from
+    // different hands, so this one follows the suite rather than deciding
+    // again. Last, after a blank line, where the suite puts it too.
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Info, "About ckmux",
                                 std::string("ckmux ") + kVersion +
                                     "\nA terminal multiplexer with a visible interface.\n\n"
-                                    "Built on ckVision.",
+                                    "Built on ckVision.\n\n"
+                                    "(c) 2026 by Dr. Christian Klukas",
                                 w::MessageBoxButtons::Ok})));
 }
 

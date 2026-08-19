@@ -324,6 +324,31 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     CK_CHECK(menu_has_command(bar->menus()[4], id_of(f.app, ckm::client::commands::kAbout)));
 }
 
+CK_TEST(the_about_box_names_the_program_its_version_and_who_it_belongs_to) {
+    // An About box exists to answer "what is this and whose is it", and the
+    // second half of that question had no answer at all until WP-35. The
+    // attribution is worded exactly as CK Office words its own (see
+    // cworks::about_lines) — one hand, one sentence — so a renaming that
+    // quietly drops or reshapes it fails here rather than shipping.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kAbout)));
+    f.app.step(0);
+
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    // Drawn, not merely composed. Rows are joined end to end, so a line that
+    // survives this search is a line that landed whole on one row — which is
+    // the claim, since a copyright broken across a wrap is not one a reader
+    // can quote back.
+    CK_CHECK(screen.find("(c) 2026 by Dr. Christian Klukas") != std::string::npos);
+    // The identity it is an attribution FOR, in the same box: an author line
+    // over an unnamed program would pass the check above and say nothing.
+    CK_CHECK(screen.find("ckmux 0.0.1 (M1)") != std::string::npos);
+}
+
 CK_TEST(the_menu_bar_carries_the_clock_at_its_right_end_and_keeps_it_there) {
     Fixture f;
     f.app.step(0);
@@ -770,24 +795,27 @@ CK_TEST(a_right_click_on_the_switcher_bar_acts_on_that_window_not_the_active_one
     if (menu == nullptr) return;
     // What a reader is offered, in the order they are offered it — the taskbar
     // vocabulary the request asked for.
-    CK_CHECK(menu->items().size() == 8U);
-    if (menu->items().size() != 8U) return;
-    CK_CHECK(menu->items()[0].label() == "Ma&ximize");
-    CK_CHECK(menu->items()[1].label() == "&Move / Resize");
-    CK_CHECK(menu->items()[2].is_separator());
+    CK_CHECK(menu->items().size() == 9U);
+    if (menu->items().size() != 9U) return;
+    // Minimize above Maximize, the order the two controls sit in on the
+    // window's own frame (WP-34).
+    CK_CHECK(menu->items()[0].label() == "Mi&nimize");
+    CK_CHECK(menu->items()[1].label() == "Ma&ximize");
+    CK_CHECK(menu->items()[2].label() == "&Move / Resize");
+    CK_CHECK(menu->items()[3].is_separator());
     // Naming the window sits in a group of its own between what happens to the
     // window on this desktop and what happens to the terminal behind it.
-    CK_CHECK(menu->items()[3].label() == "Re&name…");
-    CK_CHECK(menu->items()[4].is_separator());
-    CK_CHECK(menu->items()[5].label() == "Move to &session…");
-    CK_CHECK(menu->items()[6].is_separator());
-    CK_CHECK(menu->items()[7].label() == "&Close");
+    CK_CHECK(menu->items()[4].label() == "Re&name…");
+    CK_CHECK(menu->items()[5].is_separator());
+    CK_CHECK(menu->items()[6].label() == "Move to &session…");
+    CK_CHECK(menu->items()[7].is_separator());
+    CK_CHECK(menu->items()[8].label() == "&Close");
     // With no server there is nowhere for a program to be moved TO, so that row
     // is plainly unavailable rather than quietly inert — the same rule
     // `Terminal ▸ Move terminal…` follows. Rename is not gated with it: a
     // reader may name a window whether or not there is anywhere to move it.
-    CK_CHECK(!menu->items()[5].enabled_flag());
-    CK_CHECK(!menu->items()[5].disabled_reason().empty());
+    CK_CHECK(!menu->items()[6].enabled_flag());
+    CK_CHECK(!menu->items()[6].disabled_reason().empty());
     CK_CHECK(menu->items()[3].enabled_flag());
 
     // Maximize, chosen from the BACKGROUND row. Command dispatch would have
@@ -824,9 +852,14 @@ CK_TEST(the_switcher_menu_reads_the_window_its_row_belongs_to_not_the_one_in_fro
     CK_CHECK(switcher_right_press(f, 0));
     ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
     CK_CHECK(menu != nullptr);
-    if (menu == nullptr || menu->items().size() != 6U) return;
-    CK_CHECK(menu->items()[0].label() == "&Restore");
-    menu->items()[0].action()();
+    // Checked, not merely guarded on. This bail-out named 6 items long after
+    // the menu had grown to 8, so the whole of what follows it was skipped and
+    // the test passed by not running — a guard that is not also an assertion
+    // is a test that goes quiet the moment the thing it guards on moves.
+    CK_CHECK(menu->items().size() == 9U);
+    if (menu == nullptr || menu->items().size() != 9U) return;
+    CK_CHECK(menu->items()[1].label() == "&Restore");
+    menu->items()[1].action()();
     f.app.step(0);
     CK_CHECK(!first->zoomed());
     CK_CHECK(!second->zoomed());
@@ -846,11 +879,14 @@ CK_TEST(closing_from_the_switcher_bar_ends_the_terminal_whose_row_was_clicked) {
     CK_CHECK(switcher_right_press(f, 0));
     ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
     CK_CHECK(menu != nullptr);
-    if (menu == nullptr || menu->items().size() != 6U) return;
+    // Asserted rather than silently skipped — see the note in the test above.
+    CK_CHECK(menu->items().size() == 9U);
+    if (menu == nullptr || menu->items().size() != 9U) return;
+    CK_CHECK(menu->items()[8].label() == "&Close");
 
     // `close()`, so the window's own veto still runs: /bin/cat is alive in it,
     // and the reader is asked — about the terminal they pointed at.
-    menu->items()[5].action()();
+    menu->items()[8].action()();
     f.app.step(0);
     CK_CHECK(f.app.is_modal());
     CK_CHECK(terminal_window_count(f.client) == 2U);

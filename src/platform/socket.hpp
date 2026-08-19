@@ -44,9 +44,12 @@ bool socket_path_fits(const std::filesystem::path& path);
 // The directory is created WITH mode 0700 rather than created and then
 // corrected — between a `mkdir` under a permissive umask and a `chmod` there is
 // a window in which anybody on the machine may walk in — and it is examined
-// through a descriptor opened `O_NOFOLLOW`, so a symbolic link planted at the
-// path is refused instead of being followed to a target whose ownership says
-// what the checker wanted to hear.
+// through a descriptor, so every check is about the directory the socket will
+// actually be bound in. A symbolic link at the path is followed only when the
+// link itself belongs to root or to this user — macOS's `/tmp` is root's link
+// to `/private/tmp`, and a reader may point their own links where they like —
+// and a link planted by another user is refused instead of being followed to
+// a target whose ownership says what the checker wanted to hear.
 bool prepare_socket_directory(const std::filesystem::path& socket, std::string& problem);
 
 enum class ConnectStatus {

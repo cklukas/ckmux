@@ -41,6 +41,11 @@ enum class Action : unsigned char {
     PreviousTerminal,
     WindowList,
     Zoom,
+    // Putting a terminal away, which is ckVision's own `ckv.window.minimize`
+    // wearing a ckmux chord (WP-34) — the same verb the window's own `_`
+    // control offers, reached from the keyboard and the menu for the window
+    // the reader is already IN and therefore cannot easily aim at.
+    Minimize,
     MoveResize,
     // Three named tilings and no unqualified `tile`. ckVision's own
     // `ckv.window.tile` produces exactly what tile_vertically produces
@@ -61,6 +66,11 @@ enum class Action : unsigned char {
     KillSession,
     KeyReference,
     Settings,
+    // Hiding the footer, at which point the window bar is on the last row
+    // (WP-35). A row of chrome the reader can spend on their program
+    // instead — and a command as well as the bar's own ▼, because the bar
+    // is not always on screen and the way back must not be either.
+    ToggleStatusBar,
     About,
     SendPrefix,
     Quit,

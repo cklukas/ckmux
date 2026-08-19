@@ -24,6 +24,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -41,6 +42,20 @@ namespace ckm::server {
 // function, because a bit that means "mouse reporting" on one side of the
 // socket and something else on the other is a defect nothing would report.
 std::uint32_t modes_of(const ckv::term::TerminalStatus& status);
+
+// Whether anybody is in a position to TAKE a fresh payload for this picture
+// right now. Asked once per redrawn picture per tick, before the pixels are
+// compared or copied.
+//
+// The differ knows nothing about clients and should not: what it is being told
+// here is not who is watching but whether the work is worth doing. A client
+// that already owes an unsent payload for this wire id has not yet been sent
+// the frame BEFORE this one, and the debt supersedes on arrival — so a payload
+// built for it now is compared, copied, queued and dropped, several megabytes
+// at a time, at tick rate. An empty function means "no opinion", which is
+// every caller that has no clients to consult, and behaves exactly as this did
+// before the question existed.
+using PictureReadiness = std::function<bool(TerminalId term, std::uint64_t wire_id)>;
 GridCursor cursor_of(const ckv::term::TerminalStatus& status);
 
 // Child-supplied text cut to a length the wire can say, on a character
@@ -140,9 +155,27 @@ public:
     // Remove-then-Add alternative blanked the picture for as long as the new
     // frame's megabytes were still crossing the socket, once per frame, which
     // a reader saw as flicker.
+    //
+    // `ready` is asked before a redrawn picture's pixels are examined, and a
+    // no makes this leave the picture ALONE: no comparison, no payload, and —
+    // the part that has to be got right — no adoption of the new pixels into
+    // the belief either. The belief is what the clients are believed to hold,
+    // so adopting pixels that were never sent would be the differ telling
+    // itself a story: it would never emit that frame, and a child that then
+    // stopped drawing would leave the reader on the frame before it forever.
+    // Left unadopted, the next tick asks again, and emits the moment somebody
+    // can take it.
     std::vector<proto::Message> flush_images(TerminalId id,
                                              const ckv::core::TerminalSubsession& source,
-                                             std::uint64_t& next_image_id);
+                                             std::uint64_t& next_image_id,
+                                             const PictureReadiness& ready = {});
+
+    // How many bytes of picture payload this differ has copied into messages
+    // at the flush tick. The gauge for work AVOIDED — the only way to see that
+    // a payload is no longer being built is to count the ones that are — and
+    // the reason it counts bytes rather than calls: what was expensive was
+    // never the call.
+    std::size_t picture_bytes_built() const noexcept { return picture_bytes_built_; }
 
     // The pictures a client attaching NOW must be given: the believed set,
     // exactly as the clients already watching hold it — not the terminal's
@@ -203,6 +236,7 @@ private:
     // history, because the client is what a reader pages through.
     GridState believed_;
     std::vector<BelievedRaster> believed_rasters_;
+    std::size_t picture_bytes_built_ = 0;
     std::uint32_t sequence_ = 0;
     bool needs_snapshot_ = false;
     bool history_diverged_ = false;
@@ -234,7 +268,7 @@ public:
     // One tick. Deltas and image ops per terminal that had news, in
     // terminal-id order so the sequence a client sees is the order the server
     // produced.
-    Tick flush(Terminals& terminals);
+    Tick flush(Terminals& terminals, const PictureReadiness& ready = {});
 
     // One terminal, for a caller holding the seam directly rather than a
     // collection — and the reason this exists at all: the differ's `flush` is a
@@ -243,7 +277,8 @@ public:
     // this file walked into on its first day (a differ read in a loop with
     // nothing clearing damage re-copied the whole history every tick, and the
     // measurement was forty times slower than it should have been).
-    TerminalTick flush(TerminalId id, ckv::core::TerminalSubsession& source);
+    TerminalTick flush(TerminalId id, ckv::core::TerminalSubsession& source,
+                       const PictureReadiness& ready = {});
 
     // The attach path, per terminal — the screen, and then as much of the
     // history as the caller says it can afford. Two calls because the second
@@ -258,6 +293,10 @@ public:
     // A terminal that has closed. Its id is never reused (WP-3), so forgetting
     // it cannot be confused with a new terminal arriving.
     void forget(TerminalId id);
+
+    // Every differ's payload building, added up. What a test watches to see
+    // that frames nobody could take were never built.
+    std::size_t picture_bytes_built() const noexcept;
 
     std::uint32_t sequence_for(TerminalId id) const;
     const TerminalDiffer* differ_for(TerminalId id) const;

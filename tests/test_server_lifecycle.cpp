@@ -681,13 +681,16 @@ CK_TEST(the_socket_directory_is_made_owner_only_rather_than_made_and_corrected) 
     forget(private_socket("mode"));
 }
 
-CK_TEST(a_socket_directory_that_is_a_symbolic_link_is_refused_rather_than_followed) {
-    // The ownership check exists to answer "could somebody else have put
-    // something here?". Asked of a name that follows a symbolic link, it
-    // answers about the target — which the reader owns, so the check says yes
-    // — while the link, and therefore where the socket really goes, was
-    // planted by whoever could write the directory the link sits in.
-    const std::filesystem::path base = private_socket("nofollow").parent_path();
+CK_TEST(a_socket_directory_reached_through_a_symbolic_link_works) {
+    // macOS's /tmp is itself a symbolic link to /private/tmp, and a reader may
+    // reach their own socket directory through a link of their own making.
+    // Refusing every link refused both: a server asked for a socket whose
+    // parent was spelled as a link answered "exists and is not a directory",
+    // which was neither true nor actionable. A link made by root or by this
+    // user took no privilege the checks do not already trust, so it is
+    // followed — and every check still lands on the target, which is the
+    // directory the socket is actually bound in.
+    const std::filesystem::path base = private_socket("follow").parent_path();
     const std::filesystem::path target = base / "real-directory";
     const std::filesystem::path link = base / "linked-directory";
     std::error_code ignored;
@@ -699,12 +702,61 @@ CK_TEST(a_socket_directory_that_is_a_symbolic_link_is_refused_rather_than_follow
     if (ignored) return;
 
     std::string problem;
-    CK_CHECK(!ckm::platform::prepare_socket_directory(link / "default.sock", problem));
-    CK_CHECK(!problem.empty());
+    CK_CHECK(ckm::platform::prepare_socket_directory(link / "s.sock", problem));
+    CK_CHECK(problem.empty());
+
+    // The checks were applied to the target, not to the link: the target was
+    // made owner-only, and the link is still a link rather than having been
+    // replaced by anything.
+    struct ::stat info{};
+    CK_CHECK(::lstat(target.c_str(), &info) == 0);
+    CK_CHECK(S_ISDIR(info.st_mode));
+    CK_CHECK((info.st_mode & 0777U) == 0700U);
+    CK_CHECK(::lstat(link.c_str(), &info) == 0);
+    CK_CHECK(S_ISLNK(info.st_mode));
+
+    // And not merely prepared: a server listens on the linked spelling of the
+    // path, and a client reaches it through the same spelling.
+    ckm::platform::Listener listener;
+    CK_CHECK(listener.listen(link / "s.sock") == ckm::platform::Listener::Status::Listening);
+    const ckm::platform::ConnectResult reached =
+        ckm::platform::connect_to_server(link / "s.sock");
+    CK_CHECK(reached.status == ckm::platform::ConnectStatus::Connected);
+    if (reached.fd >= 0) (void)::close(reached.fd);
+    listener.close();
 
     std::filesystem::remove(link, ignored);
     std::filesystem::remove_all(target, ignored);
-    forget(private_socket("nofollow"));
+    forget(private_socket("follow"));
+}
+
+CK_TEST(a_socket_directory_link_that_resolves_to_a_file_is_still_refused) {
+    // Following a trusted link is not trusting what it points at: the target
+    // takes every check a plain directory takes, so a link that resolves to
+    // something that is not a directory at all is refused — and now for the
+    // true reason, rather than for being a link.
+    const std::filesystem::path base = private_socket("linkfile").parent_path();
+    const std::filesystem::path target = base / "real-file";
+    const std::filesystem::path link = base / "linked-file";
+    std::error_code ignored;
+    std::filesystem::remove(target, ignored);
+    std::filesystem::remove(link, ignored);
+    {
+        std::FILE* const made = std::fopen(target.c_str(), "w");
+        CK_CHECK(made != nullptr);
+        if (made != nullptr) (void)std::fclose(made);
+    }
+    std::filesystem::create_symlink(target, link, ignored);
+    CK_CHECK(!ignored);
+    if (ignored) return;
+
+    std::string problem;
+    CK_CHECK(!ckm::platform::prepare_socket_directory(link / "s.sock", problem));
+    CK_CHECK(problem.find("is not a directory") != std::string::npos);
+
+    std::filesystem::remove(link, ignored);
+    std::filesystem::remove(target, ignored);
+    forget(private_socket("linkfile"));
 }
 
 CK_TEST(an_environment_variable_that_is_empty_or_relative_names_nowhere) {

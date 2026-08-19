@@ -356,9 +356,20 @@ public:
     // The taskbar row over the footer (WP-32). Not a second bottom dock —
     // `Desktop` holds one docked view per edge — but the upper half of the
     // `ui::Column` that IS the bottom dock, with the footer under it. On
-    // screen exactly while more than one terminal window is open; see
-    // `sync_window_switcher()`.
+    // screen while more than one terminal window is open, or while any
+    // terminal is minimized; see `sync_window_switcher()`.
     ckv::widgets::WindowSwitcherBar& window_switcher() noexcept { return *switcher_; }
+
+    // Whether ckmux's bottom chrome is collapsed to one row: the footer
+    // hidden, the window bar on the last row of the terminal (WP-35).
+    //
+    // Both routes to it end here — the bar's own ▼ toggle and
+    // `Window ▸ Status Bar` — so the glyph and the menu can never disagree
+    // about a state there is only one of. Setting it is idempotent, and
+    // states the whole answer rather than toggling: a caller that knows what
+    // it wants must not have to know what is already true.
+    void set_chrome_collapsed(bool collapsed);
+    bool chrome_collapsed() const noexcept { return chrome_collapsed_; }
 
     // What this client is running under: the reader's file over the built-in
     // defaults, with anything the constructor had to resolve already resolved.
@@ -640,6 +651,11 @@ private:
     // has to be told which docked view that was.
     ckv::ui::Column* chrome_stack_ = nullptr;
     ckv::widgets::WindowSwitcherBar* switcher_ = nullptr;
+    // See set_chrome_collapsed. Held rather than read back off the footer's
+    // visibility, because a footer can also be invisible for reasons that are
+    // not this — and because the bar's toggle has to be put back in step with
+    // it when the command is what moved it.
+    bool chrome_collapsed_ = false;
     // This client's own liveness, for the callbacks the DESKTOP holds.
     //
     // The desktop belongs to the `Application` and outlives this object, so a

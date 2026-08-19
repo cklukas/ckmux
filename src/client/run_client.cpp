@@ -79,6 +79,26 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         (void)connection.stream.send(proto::encode(message));
     });
     ckv::ui::Application app(terminal, clock);
+    // Pace against the reader's own terminal (ckVision's ARCHITECTURE.md §4,
+    // docs/graphics.md "Knowing the terminal took it"). Writing a frame proves
+    // its bytes left this process and nothing more; a host that accepts Sixel
+    // faster than it DRAWS it queues the difference, and a client that keeps
+    // composing regardless is producing frames nobody will ever see. What the
+    // reader sees then is a picture running further behind every frame — a
+    // child's animation still turning where its window was seconds ago, and
+    // going on after the child that drew it has exited.
+    //
+    // A multiplexer is exactly the application that cannot assume a modest
+    // frame rate: what it relays is whatever the child draws, and a child may
+    // draw a full-screen picture as fast as its own terminal will take one
+    // (ckvision_spin does, and ckmux's emulator takes them at memory speed).
+    // So the loop is closed here rather than by guessing a rate: each frame
+    // carries a Device Status Report, the reply says that frame was taken in,
+    // and ckVision holds the next picture back until it comes. A host that
+    // never answers is not waited for — tracking turns itself off — and a
+    // frame with no picture in it is never held back at all, so a terminal
+    // showing only text is paced exactly as it was before.
+    app.set_frame_completion_tracking(true);
     // What this display can actually show, carried on every Attach: the
     // server folds it into the graphics advertisement the children this
     // client opens are given (WP-16). The evidence a capability probe

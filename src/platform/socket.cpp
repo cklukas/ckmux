@@ -169,14 +169,33 @@ bool prepare_socket_directory(const std::filesystem::path& socket, std::string& 
     // An existing directory is not an error; anything else about it might be —
     // and what it is has to be asked of the thing that will be used, not of a
     // name that may mean something else by the time the socket is bound.
-    // O_NOFOLLOW refuses a symbolic link outright: following one would check
-    // the ownership of a target somebody else chose, which is the check saying
-    // yes to precisely the case it exists to catch.
-    const int handle = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    // O_NOFOLLOW refuses a symbolic link at first, because following one
+    // blindly would check the ownership of a target somebody else chose. But a
+    // link is only somebody else's choice when somebody else made it: macOS's
+    // /tmp is root's link to /private/tmp, and a reader may point their own
+    // links wherever they like. So a link owned by root or by this user is
+    // followed — the target still has to pass every check below, through the
+    // descriptor that will be used — and only a link planted by another user
+    // stays refused, which is the one case the follow would launder.
+    int handle = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int failure = handle < 0 ? errno : 0;
+    if (handle < 0 && (failure == ELOOP || failure == EMLINK || failure == ENOTDIR)) {
+        // Which of a link and a plain file the refusal was about, the errno
+        // cannot say alone — Darwin answers ENOTDIR for a link met with
+        // O_DIRECTORY | O_NOFOLLOW, Linux ELOOP — so lstat is asked.
+        struct ::stat link{};
+        if (::lstat(directory.c_str(), &link) == 0 && S_ISLNK(link.st_mode)) {
+            if (link.st_uid != 0 && link.st_uid != ::geteuid()) {
+                problem = directory.string() + " is a symbolic link planted by another user";
+                return false;
+            }
+            handle = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            failure = handle < 0 ? errno : 0;
+        }
+    }
     if (handle < 0) {
-        const int failure = errno;
         if (failure == ELOOP || failure == EMLINK)
-            problem = directory.string() + " is a symbolic link, not a directory";
+            problem = directory.string() + " is a loop of symbolic links, not a directory";
         else if (failure == ENOTDIR)
             problem = directory.string() + " exists and is not a directory";
         else

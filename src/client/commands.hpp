@@ -52,6 +52,12 @@ inline constexpr std::string_view kMoveTerminal = "ckmux.terminal.move-session";
 // override, and what the child says goes on being recorded underneath it.
 inline constexpr std::string_view kRenameTerminal = "ckmux.terminal.rename";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
+// Collapsing ckmux's own bottom chrome: the footer goes and the window bar
+// drops to the last row (WP-35). ckmux's rather than ckVision's because the
+// footer is ckmux's — the bar only REPORTS its ▼ toggle and hides nothing
+// itself, which is what makes the same widget usable by an application whose
+// chrome is something else entirely.
+inline constexpr std::string_view kToggleStatusBar = "ckmux.window.status-bar";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";
 inline constexpr std::string_view kNewSession = "ckmux.session.new";

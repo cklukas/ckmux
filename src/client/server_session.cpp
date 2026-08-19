@@ -390,6 +390,13 @@ bool ServerSession::handle(const proto::Message& message) {
         return true;
     }
     if (const auto* remove = std::get_if<proto::ImageRemove>(&message)) {
+        // Pixels that arrived but were never placed go too. The ordinary
+        // order is Begin/chunks/End and then the Place that takes them, so
+        // this is usually empty — but a picture the server dropped between
+        // the two leaves an entry nothing will ever come back for, and wire
+        // ids are never reused, so nothing would ever overwrite it either.
+        pending_images_.erase(remove->id);
+        completed_images_.erase(remove->id);
         if (RemoteTerminalSubsession* terminal = this->terminal(remove->term))
             terminal->mirror().remove_image(remove->id);
         return true;

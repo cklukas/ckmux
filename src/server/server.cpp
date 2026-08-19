@@ -30,6 +30,18 @@ namespace {
 // draining the drip.
 constexpr std::size_t kOwedImageBurstBytes = 1024u * 1024u;
 
+// The wire id a picture op is about. Every one of the five carries one, and
+// the debt has to be able to ask — a frame is superseded by id, not by
+// position, and the ops of two pictures interleave in the same queue.
+std::uint64_t image_op_subject(const proto::Message& op) {
+    if (const auto* begin = std::get_if<proto::ImageAddBegin>(&op)) return begin->id;
+    if (const auto* chunk = std::get_if<proto::ImageChunk>(&op)) return chunk->id;
+    if (const auto* end = std::get_if<proto::ImageEnd>(&op)) return end->id;
+    if (const auto* place = std::get_if<proto::ImagePlace>(&op)) return place->id;
+    if (const auto* remove = std::get_if<proto::ImageRemove>(&op)) return remove->id;
+    return 0;
+}
+
 // Signals, delivered to the loop rather than acted on inside a handler.
 //
 // A handler may do almost nothing safely, and a server that shut itself down
@@ -160,6 +172,22 @@ std::size_t Server::queued_bytes() const noexcept {
     std::size_t queued = 0;
     for (const std::unique_ptr<Client>& client : clients_) queued += client->stream.queued();
     return queued;
+}
+
+std::size_t Server::owed_image_bytes() const noexcept {
+    std::size_t owed = 0;
+    for (const std::unique_ptr<Client>& client : clients_)
+        for (std::size_t index = client->owed_sent; index < client->owed_images.size(); ++index)
+            if (const auto* chunk = std::get_if<proto::ImageChunk>(&client->owed_images[index].message))
+                owed += chunk->bytes.size();
+    return owed;
+}
+
+std::size_t Server::owed_image_ops() const noexcept {
+    std::size_t owed = 0;
+    for (const std::unique_ptr<Client>& client : clients_)
+        owed += client->owed_images.size() - client->owed_sent;
+    return owed;
 }
 
 bool Server::waiting_to_heal() const noexcept {
@@ -1490,8 +1518,7 @@ void Server::send_snapshot(Client& client) {
     client.owed_images.clear();
     client.owed_sent = 0;
     for (const TerminalId id : held)
-        for (proto::Message& op : diffs_.attach_images(id))
-            client.owed_images.push_back(std::move(op));
+        for (proto::Message& op : diffs_.attach_images(id)) owe_image(client, std::move(op));
     client.draining_heal = true;
 }
 
@@ -1554,6 +1581,103 @@ void Server::send(Client& client, const proto::Message& message) {
         if (proto::type_of(message) != proto::MessageType::Attached)
             client.dirty_snapshot = true;
     }
+}
+
+bool Server::picture_wanted_now(TerminalId term, std::uint64_t wire_id) {
+    // Asked per redrawn picture per tick, so the walk is over clients — of
+    // which there are a handful — rather than over anything a child controls.
+    const Session* const home = session_holding(term);
+    if (home == nullptr) return false;
+    for (const std::unique_ptr<Client>& client : clients_) {
+        // The same filter the tick's own broadcast applies, in the same order,
+        // because a picture is worth building exactly when the broadcast would
+        // hand it to somebody: a CLI connection has no screen, an unattached
+        // one has not asked for one, and a client watching another session is
+        // not shown this terminal's pixels.
+        if (!client->attached || client->closing) continue;
+        if (client->kind != proto::ClientKind::Ui) continue;
+        if (client->session != home->id) continue;
+        // Waiting to be healed: the broadcast skips it, and what it will be
+        // given is the BELIEVED set at its snapshot — which is precisely the
+        // set this frame would not have joined.
+        if (client->dirty_snapshot) continue;
+        // Already owes the frame before this one. Its debt supersedes on
+        // arrival (`owe_image`), so a payload built now is built to be thrown
+        // away; the frame this client actually wants is the one current when
+        // its debt has drained, which is a later tick's business.
+        bool owes_this_picture = false;
+        for (std::size_t index = client->owed_sent; index < client->owed_images.size(); ++index) {
+            const Client::OwedImage& owed = client->owed_images[index];
+            if (owed.image == wire_id && owed.begins) {
+                owes_this_picture = true;
+                break;
+            }
+        }
+        if (owes_this_picture) continue;
+        return true;
+    }
+    return false;
+}
+
+void Server::owe_image(Client& client, proto::Message op) {
+    const std::uint64_t subject = image_op_subject(op);
+    // A picture whose pixels are about to travel supersedes the frame of the
+    // same picture that has not started travelling yet, and so does a Remove
+    // that says the picture is gone: what is in the debt is a statement about
+    // a picture NOW, and two statements about the same picture are not two
+    // things a mirror has to be told. Told both, it paints the stale one and
+    // then, a drip later, the current one — which is precisely what a reader
+    // watching ckvision_spin through a slow host terminal saw, as a cube that
+    // went on turning at the position its window had left seconds ago.
+    //
+    // Only what has not STARTED going out. A payload half-way across the
+    // socket has to finish: the client is assembling it by sequence number,
+    // and chunks that stop arriving leave it holding a picture whose end
+    // never comes. So the search is for this id's next group OPENING among
+    // the unsent ops — a group already under way has its ImageAddBegin
+    // behind `owed_sent`, is therefore not found, and is left to complete.
+    const bool supersedes = std::holds_alternative<proto::ImageAddBegin>(op) ||
+                            std::holds_alternative<proto::ImageRemove>(op);
+    if (supersedes && subject != 0) {
+        const auto unsent =
+            client.owed_images.begin() + static_cast<std::ptrdiff_t>(client.owed_sent);
+        const auto stale = std::find_if(unsent, client.owed_images.end(),
+                                        [subject](const Client::OwedImage& owed) {
+                                            return owed.image == subject && owed.begins;
+                                        });
+        if (stale != client.owed_images.end())
+            client.owed_images.erase(
+                std::remove_if(stale, client.owed_images.end(),
+                               [subject](const Client::OwedImage& owed) {
+                                   return owed.image == subject;
+                               }),
+                client.owed_images.end());
+    }
+    // A placement supersedes an unsent placement of the same picture for the
+    // same reason, and it is the half a reader notices first: dragging a
+    // window moves its picture without redrawing a pixel of it, so a debt that
+    // kept every move replayed the drag — the picture sliding through every
+    // position the window had passed through, arriving where the reader put it
+    // seconds after they let go. A Place is a whole message rather than part
+    // of an assembly, so any unsent earlier one may go; the newest states
+    // where the picture is, and the pixels it swaps in are whatever has
+    // finished arriving under that id.
+    if (std::holds_alternative<proto::ImagePlace>(op) && subject != 0) {
+        const auto unsent =
+            client.owed_images.begin() + static_cast<std::ptrdiff_t>(client.owed_sent);
+        client.owed_images.erase(
+            std::remove_if(unsent, client.owed_images.end(),
+                           [subject](const Client::OwedImage& owed) {
+                               return owed.image == subject &&
+                                      std::holds_alternative<proto::ImagePlace>(owed.message);
+                           }),
+            client.owed_images.end());
+    }
+    Client::OwedImage owed;
+    owed.image = subject;
+    owed.begins = std::holds_alternative<proto::ImageAddBegin>(op);
+    owed.message = std::move(op);
+    client.owed_images.push_back(std::move(owed));
 }
 
 void Server::drop(Client& client, std::string_view why) {
@@ -1627,7 +1751,7 @@ void Server::flush_tick() {
         if (!client->attached || client->closing) continue;
         while (client->owed_sent < client->owed_images.size() &&
                client->stream.queued() < kOwedImageBurstBytes)
-            send(*client, client->owed_images[client->owed_sent++]);
+            send(*client, client->owed_images[client->owed_sent++].message);
         if (!client->owed_images.empty() && client->owed_sent >= client->owed_images.size()) {
             client->owed_images.clear();
             client->owed_sent = 0;
@@ -1651,7 +1775,10 @@ void Server::flush_tick() {
     // superseded by the snapshot that followed it in the same tick.
     announce_layout();
 
-    const DiffEngine::Tick tick = diffs_.flush(terminals_);
+    const DiffEngine::Tick tick = diffs_.flush(
+        terminals_, [this](TerminalId term, std::uint64_t wire_id) {
+            return picture_wanted_now(term, wire_id);
+        });
 
     // A terminal that scrolled more in one tick than a delta may carry says so
     // rather than sending it. What the client watching THAT session needs is
@@ -1728,7 +1855,7 @@ void Server::flush_tick() {
                 watched->terminals.end())
                 continue;
             if (owes_pictures)
-                client->owed_images.push_back(op.message);
+                owe_image(*client, op.message);
             else
                 send(*client, op.message);
         }

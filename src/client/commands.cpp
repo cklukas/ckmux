@@ -14,6 +14,7 @@ namespace {
 // "Next Terminal" IS the standard next-window command wearing a ckmux label.
 using ckv::ui::std_command_keys::kCascade;
 using ckv::ui::std_command_keys::kMenu;
+using ckv::ui::std_command_keys::kMinimize;
 using ckv::ui::std_command_keys::kNextWindow;
 using ckv::ui::std_command_keys::kPreviousWindow;
 using ckv::ui::std_command_keys::kQuit;
@@ -37,8 +38,8 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 27>& default_bindings() {
-    static const std::array<KeyBinding, 27> kBindings{{
+const std::array<KeyBinding, 29>& default_bindings() {
+    static const std::array<KeyBinding, 29> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {".", commands::kMoveTerminal, "&Move to Session…", "move to session", 0,
@@ -55,6 +56,11 @@ const std::array<KeyBinding, 27>& default_bindings() {
         {"1-9", commands::kFocusByNumber, "Focus Terminal by Number", "focus n", 0, std::nullopt},
         {"w", kWindowList, "&Window List…", "windows", 30, Action::WindowList},
         {"z", kZoom, "&Zoom", "zoom", 20, Action::Zoom},
+        // `_` is the glyph on the window's own frame control, which is the
+        // other way to ask for this and the one a reader has already seen.
+        // 'n' rather than 'M' for the mnemonic: Move / Resize holds this
+        // menu's M, the way Next holds the Terminal menu's N.
+        {"_", kMinimize, "Mi&nimize", "minimize", 0, Action::Minimize},
         {"M", commands::kMoveResize, "&Move / Resize", "move/size", 0, Action::MoveResize},
         // Each tiling answers to the first letter of its own name, which is
         // the whole rule: h, v, g. `t` used to be the unqualified Tile and is
@@ -81,6 +87,11 @@ const std::array<KeyBinding, 27>& default_bindings() {
         {"?", commands::kKeyReference, "&Keys…", "keys", 50, Action::KeyReference},
         {"q", kQuit, "&Quit ckmux", "quit", 10, Action::Quit},
         {"", commands::kSettings, "&Settings…", "settings", 0, Action::Settings},
+        // No footer priority: a reader looking for this is looking for a row
+        // of their terminal back, and the hint would be spending the very row
+        // it offers to free.
+        {"b", commands::kToggleStatusBar, "&Status Bar", "status bar", 0,
+         Action::ToggleStatusBar},
         {"", commands::kAbout, "&About ckmux…", "about", 0, Action::About},
     }};
     return kBindings;
@@ -98,6 +109,7 @@ std::string_view command_for_action(Action action) {
         case Action::PreviousTerminal: return kPreviousWindow;
         case Action::WindowList: return kWindowList;
         case Action::Zoom: return kZoom;
+        case Action::Minimize: return kMinimize;
         case Action::MoveResize: return commands::kMoveResize;
         case Action::TileHorizontally: return kTileHorizontally;
         case Action::TileVertically: return kTileVertically;
@@ -113,6 +125,7 @@ std::string_view command_for_action(Action action) {
         case Action::KillSession: return commands::kKillSession;
         case Action::KeyReference: return commands::kKeyReference;
         case Action::Settings: return commands::kSettings;
+        case Action::ToggleStatusBar: return commands::kToggleStatusBar;
         case Action::About: return commands::kAbout;
         case Action::SendPrefix: return commands::kSendPrefix;
         case Action::Quit: return kQuit;

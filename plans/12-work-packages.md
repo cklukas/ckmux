@@ -129,8 +129,12 @@ take first.
 | 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
 | 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
+| 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Ready** | — |
+| 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Ready** | — |
+| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | Blocked | WP-37, U5-a |
+| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | Blocked | WP-38 (serverless half needs only WP-37) |
 
-Roughly **107–137 focused days**, of which ~19–25 are upstream in ckVision.
+Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
 commits; its row stays `In progress` until every acceptance item is met.
 
@@ -1203,6 +1207,184 @@ names the row that was clicked; a name given over the wire comes back on
 `TermMeta`, is untouched by the child renaming itself, and is in the snapshot
 the next client attaches with; and naming a terminal that is gone is answered
 with an `Error` rather than ignored.
+
+### Per-terminal process activity: CPU and memory (2026-08-19)
+
+Reader-directed, 2026-08-19. Every terminal has a root child (the shell) and,
+under it, whatever the reader is actually running — and the question "what is
+this terminal costing me?" has an answer the operating system already keeps:
+the CPU time and resident memory of that process tree, sampled about once a
+second and shown on the terminal's own frame. The reader asked for a `View`
+menu with checkable items — Show CPU Usage, Show Memory Usage — whose state
+persists in the configuration file like every other setting and whose toggling
+applies at once to **every open terminal window in the session**, not to the
+active one alone.
+
+**Checked against both trees before these packages were written, which is what
+sized them** (the same discipline that reshaped U4-b): ckVision's menus already
+carry checkable items (`MenuMark::Checked`/`Unchecked`, `with_mark` —
+`widgets/menu.hpp` even uses a display toggle as its own example), and
+`widgets::Window` already owns the display slot: `set_footer()` puts a
+left-aligned line on the BOTTOM border, elides it on a narrow window before it
+can collide with the resize grip, and its header describes its purpose as
+"what this window is currently costing, counting, or waiting for" — which is
+this feature, described before it existed. Nothing in ckmux writes that footer
+today. So there is **no new widget work anywhere in this cluster**; what is
+genuinely new is one pid accessor upstream, a platform sampling seam, a
+protocol message, and the client glue. (Terminology, because ckmux overloads
+the word: "the footer" in every other package is the bottom `StatusLine`;
+this cluster writes the **window frame's footer**, `Window::set_footer`, and
+says so at each use.)
+
+Four decisions, settled here so the packages stay mechanical:
+
+  * **The server samples, because the server owns the pids.** The client may
+    be on the other end of a socket from the processes it is asking about, and
+    a detached session has no client at all. So sampling is server work, the
+    numbers travel as a protocol message, and the client only formats and
+    displays. The serverless M1 client samples locally through the same
+    platform seam — the display code cannot tell where its numbers came from,
+    which is the same seam discipline `terminal_source` bought WP-5.
+  * **Nobody watching, nobody sampling.** Stats exist for a reader who turned
+    a checkbox on. The server samples only while at least one attached client
+    has asked, and stops when the last one detaches or unsubscribes — a
+    detached server must not spend a wakeup per second measuring numbers
+    nobody will see. For the same reason stats are **never session state**:
+    not stored, not in snapshots, gone a second after they stopped being true.
+    A client that subscribes has current numbers within one sample period,
+    which is all "current" can mean.
+  * **Two memory numbers, because one of them lies when summed.** Summing RSS
+    across a tree counts every shared page once per process that maps it — a
+    shell and its child share libc, and naive addition bills it twice. So the
+    seam reports both `rss_bytes` (the number every tool shows, comparable
+    across platforms, honest about its overcount) and `real_bytes` — the
+    platform's own "what does this actually cost" metric: `phys_footprint` on
+    macOS (what Activity Monitor calls Memory), PSS on Linux (when WP-22
+    fills that seam in), private working set on Windows (parking lot). The
+    menu word is **Real**, not PSS, because PSS is Linux's *implementation*
+    of the idea rather than the idea; the help page says which metric each
+    platform provides.
+  * **CPU is a rate the consumer derives, not a number the seam invents.**
+    The seam returns cumulative CPU time per sample; CPU% is the delta of two
+    samples over the wall time between them — percent **of one core**, the
+    `top` convention, so a build fanning out over eight cores reads 800%
+    rather than being flattened to a fraction that hides it. Keeping the
+    clock out of the seam is what makes every rate computation testable
+    without waiting a second per assertion.
+
+Not in this cluster, deliberately: an aggregate per-session readout in the
+session picker or the switcher bar. It falls out of the same wire message the
+day someone wants it, and a package that exists is not padded with one that
+might.
+
+**U5-a — `process_id()` on `PosixTerminalSubsession`: a pid for observation**
+*(ckVision)*. The child pid is private today, and its header says why: hosts
+signal through `request_termination()`/`terminate_now()`, and "a host reaching
+for the pid is exactly what this class exists to own." That reasoning is about
+**control**, and it stands unchanged — nothing in this cluster sends a signal.
+Observation is a different act: a host that wants to *measure* a process tree
+needs to know where the tree is rooted, and there is no wrapper that could
+answer for it, because enumeration and sampling are platform work the library
+does not do. So: a public `process_id()` accessor (−1 once the child is
+gone), documented as for observation, with the signalling rule restated where
+it is declared. *Done when*: the accessor returns the spawned child's pid
+while it runs and −1 after `close()`, and the class's own comment still tells
+a host how to end a child without it.
+
+**WP-37 — Process-stats seam: the tree and what it costs, macOS first.**
+`src/platform/process_stats.{hpp,cpp}`, beside the poller and paths seams the
+Linux port already expects to fill. The interface is two calls: snapshot the
+process table once (pid and parent pid for every live process), and sample
+one pid's counters (cumulative user+system CPU nanoseconds, `rss_bytes`,
+`real_bytes` with a flag saying whether the platform can). Tree resolution —
+descendants of a terminal's root child — is a pure walk over the one
+snapshot, so **N terminals cost one table walk per second, not N**, and the
+walk is testable with a hand-built table. macOS first: `proc_listallpids` +
+`proc_pidinfo(PROC_PIDTBSDINFO)` for the table, `proc_pid_rusage
+(RUSAGE_INFO_V4)` for the counters (`ri_user_time`/`ri_system_time`/
+`ri_resident_size`/`ri_phys_footprint`) — all of it answerable for the
+server's own children with no entitlement, because they are the same uid.
+The Linux implementation (`/proc` scan, `smaps_rollup` for PSS — noting that
+PSS is the one expensive read, which is another reason nobody-watching does
+no work) is **added to WP-22's scope by this package**; Windows goes with
+the parking lot's ConPTY entry. Two honest edges, stated in the header: a
+pid may die between the table and the sample — it is skipped, never an
+error, and a tree whose root is gone reports empty; and a process that
+daemonized has reparented out of the tree and is deliberately no longer
+counted, because it is no longer this terminal's cost.
+*Done when*: with real children — a spinner's CPU time advances between two
+samples; a child that allocates and touches tens of megabytes shows them in
+`rss_bytes`; a grandchild through an intermediate shell is counted in the
+tree; a dead root reports empty; `real_bytes` on macOS is nonzero and below
+the naive RSS sum for a tree sharing libraries — and the cost of one full
+pass over this machine's own process table is **measured**, recorded here,
+and small enough for a once-per-second tick to carry.
+
+**WP-38 — Stats on the server tick and on the wire.** Two messages, into
+[05-protocol.md](05-protocol.md)'s catalogue when this lands (WP-1's pinned
+variant count will insist): `WatchStats{on}` from an attached client, and
+`TermStats{term, cpu_permille, rss_bytes, real_bytes, flags}` per terminal
+per sample to each client that asked — `cpu_permille` of one core so the
+integer carries 0.1% steps, `flags` saying whether `real_bytes` means
+anything and whether the child is still alive to be measured. The sampler
+rides the loop's existing tick machinery (`flush_tick`'s pattern, driven by
+the injected `Clock`) at a fixed 1 Hz — the interval joins plan 08's
+"explicitly not configurable in v1" list at landing — and holds the previous
+sample per terminal to derive the rate. It runs **only** while someone
+watches: subscription is per connection, dies with it, and the first sample
+after a subscription starts from a fresh baseline rather than a stale one.
+A terminal whose child exited stops being reported, with one final
+not-alive stats message so the client clears rather than freezes the
+readout.
+*Done when*: at the wire — a subscribed client receives `TermStats` at
+sample cadence with a genuinely spinning child reading nonzero permille and
+an idle shell reading ~0; a `sleep` and a deliberate allocator differ in
+`rss_bytes` the right way; unsubscribing mid-connection stops the flow while
+the connection lives on; with no watcher anywhere, an instrumented seam
+proves the sampler is **never invoked**; and a `ManualClock` loop test pins
+the cadence without a wall-clock second anywhere in the suite.
+
+**WP-39 — The View menu, the config keys, and the frame readout.** The
+user-facing half, all client. A new top-level **View** menu
+([06-ui-design.md](06-ui-design.md)'s menu table gains it at landing) with
+three checkable entries through the existing `MenuMark` machinery: **Show
+CPU Usage**, **Show Memory Usage (RSS)**, **Show Memory Usage (Real)** —
+independent, any combination. Three `[general]` keys, default off —
+`show-cpu`, `show-memory-rss`, `show-memory-real` (wording settled against
+[08-configuration.md](08-configuration.md)'s table at landing, where they
+become three rows) — read at startup like every key WP-12 covered and
+written back through the same `save_setting()` the Settings dialog's
+checkboxes already use, so the preference survives the session because the
+reader set it, not because they remembered to edit a file. The commands go
+through the one `Keymap` (rebindable; **no default chord** — a display
+toggle is not a muscle-memory operation, and the prefix table is a scarce
+resource), and the reachability suite covers the menu entries as it covers
+every other live-looking item.
+
+Flipping a toggle applies **immediately to every open terminal window in
+the session**: one footer composer per client owns the frame footer of
+every terminal window and rewrites it from (toggle state × latest stats) —
+on toggle, on every `TermStats`, on terminal open, and to the empty string
+when all three are off, which restores today's frame byte for byte. The
+composed line reads like `CPU 37% · RSS 210 MB · Real 96 MB`, dropping the
+parts not enabled; the window elides it when narrow by its own existing
+rule. Bytes are auto-scaled — KB/MB/GB/TB, 1024-based, at most three
+significant digits (`999 KB`, `1.2 GB`) — by a pure formatter whose unit
+boundaries are pinned in a test, because `1024` vs `1000` and `1.0 MB` vs
+`1024 KB` are exactly the disagreements a test settles once. CPU above one
+core displays as it is (`340%`), per the decision above. A terminal whose
+child exited shows no readout — the exit banner owns that moment. Remote
+terminals subscribe with `WatchStats` when the first toggle goes on and
+unsubscribe when the last goes off; the serverless M1 client samples
+through WP-37's seam on the application timer at the same cadence, and the
+composer cannot tell the difference.
+*Done when*: `tests/test_command_reachability.cpp` passes with the three
+new commands; toggling CPU on puts a readout on **every** open terminal
+window within one sample period, is observable as a config-file write, and
+a restarted client comes up with the checkbox still ticked and the readout
+already live; all-off restores a frame identical to today's; the formatter
+boundaries are pinned; and the end-to-end PTY walk asserts the footer's
+shape by pattern rather than its numbers, because the numbers are real.
 
 ## Not in this queue
 

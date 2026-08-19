@@ -371,6 +371,34 @@ left it ([04](04-terminal-emulation.md) WP-PRINT).
   Defining the disconnect-the-laggard policy that makes the sentence true — and
   fixing the heal gate that re-snapshots forever against it — is R2's, M-S1 and
   M-S5 in [13-architecture-review.md](13-architecture-review.md).
+- **A picture debt holds the current picture, not a history of frames.** A
+  client healed after falling behind is *owed* its pictures rather than having
+  them queued whole, and the debt is dripped as its queue has room. What a
+  reader is owed is a statement about a picture **now**: when a child redraws
+  one — an animation frame, arriving under the same wire id — the newest
+  payload replaces the one still waiting to go out, and only a payload already
+  part-way across the socket is allowed to finish, because a client assembling
+  by sequence number cannot be left holding a picture whose end never comes.
+  Appending instead was unbounded in exactly the case a multiplexer must
+  survive: `ckvision_spin` drawing at 16fps into a pane whose host terminal
+  draws Sixel more slowly made every frame a permanent entry, measured at
+  **354 MiB owed to one client after 300 frames** — and the reader watched it
+  play back, a cube still turning where its window had been ten seconds
+  earlier, going on for a minute or more after the child had exited (field
+  report, 2026-08-19). Superseded, the same run owes **1.8 frames**.
+- **And a payload nobody can take is not built.** Supersession makes the debt
+  bounded; it does not stop the work that fills it. The differ compares a
+  redrawn picture's pixels against the believed ones and copies the whole
+  frame into chunk messages — a megabyte of each, per tick, per picture — for
+  a payload the debt then drops. So it asks first: when every client that
+  would be sent this picture already owes an unsent payload for the same wire
+  id (or there is nobody to send it to), the picture is left alone. The part
+  that has to be got right is the **belief**, which is what the clients are
+  believed to hold: pixels that were not sent are not adopted into it, or the
+  differ would never emit that frame and a child that stopped drawing would
+  leave the reader on the frame before it forever. Left unadopted, the next
+  tick asks again and sends what is current *then*. Measured over the same 300
+  frames: **356 MiB built before, 3.6 MiB after**.
 - **Client → server (paste)**: `PasteChunk` is credit-based: server replies
   `PasteAck { seq }` as each chunk is written to the PTY; client keeps ≤ 2
   chunks in flight. Keystrokes/mouse are unpaced (human-rate). *Designed, and

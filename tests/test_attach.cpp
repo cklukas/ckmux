@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <span>
 #include <map>
 #include <string>
 #include <system_error>
@@ -107,9 +109,9 @@ struct Client {
 
     // Reads whatever has arrived and routes it, keeping what the session did not
     // understand so a test can assert on the wire itself.
-    std::size_t pump() {
+    std::size_t pump(std::size_t byte_budget = 1024 * 1024) {
         std::string arrived;
-        (void)stream.receive(arrived);
+        (void)stream.receive(arrived, byte_budget);
         if (!arrived.empty() && !reader.append(arrived)) return 0;
         std::size_t count = 0;
         for (;;) {
@@ -160,6 +162,20 @@ bool run_until(Server& server, ckv::ManualClock& clock, Client& client, Ready re
         ::usleep(1000);
     }
     return false;
+}
+
+// One frame of a child's animation: the terminal's whole picture area filled,
+// drawn at the same place every time, in a colour that changes so the pixels
+// really differ (the differ compares them, and a frame equal to the last one
+// is correctly not news at all). Full-screen because that is the size a real
+// one is — ckvision_spin fills its pane — and because a picture has to be
+// bigger than one tick's drip for a debt to outlive the tick that made it.
+std::string sixel_frame(int shade, int row = 1, int column = 1) {
+    std::string frame = "\x1b[" + std::to_string(row) + ";" + std::to_string(column) + "H";
+    frame += "\x1bPq#0;2;" + std::to_string(shade % 101) + ";20;60#0";
+    for (int band = 0; band < 72; ++band) frame += "!720~-";  // 720 x 432 px
+    frame += "\x1b\\";
+    return frame;
 }
 
 }  // namespace
@@ -840,6 +856,180 @@ CK_TEST(a_heal_under_steady_news_converges_instead_of_looping) {
             if (!cell.is_continuation()) text += cell.grapheme();
         return text.find("the very last line") != std::string::npos;
     }));
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_child_that_animates_owes_a_reader_its_newest_frame_not_a_history_of_them) {
+    // ckvision_spin in a pane, on a host terminal that draws Sixel slower than
+    // the child produces it. The picture debt exists because a client that
+    // fell behind must not be re-snapshotted per tick — but it used to be
+    // APPENDED to, so every frame the child ever drew became a permanent entry
+    // in it. The reader saw the consequence twice over: a cube that went on
+    // turning at the position its window had left ten seconds earlier, and an
+    // animation that carried on for a minute or two after the child was gone,
+    // out of the hundreds of megabytes the server was holding in order to
+    // replay it (field report, 2026-08-19).
+    //
+    // A debt is a statement about a picture NOW. The newest frame supersedes
+    // the one that has not gone out yet, so what is owed stays the size of the
+    // picture rather than the size of the child's history.
+    const std::filesystem::path socket = private_socket("animation");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& animating = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client client;
+    CK_CHECK(client.connect(socket));
+    client.greet();
+    client.session.set_host_sixel(true);
+    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
+    ckm::client::RemoteTerminalSubsession* mirrored = nullptr;
+    animating.session().feed_output(sixel_frame(0));
+    CK_CHECK(run_until(server, clock, client, [&] {
+        mirrored = client.session.terminal(animating.id());
+        return mirrored != nullptr && !mirrored->rasters().empty();
+    }, kChildOutputPasses));
+    CK_CHECK(mirrored != nullptr);
+    std::size_t one_frame = 0;
+    if (mirrored != nullptr && !mirrored->rasters().empty() &&
+        mirrored->rasters().front().image != nullptr)
+        one_frame = static_cast<std::size_t>(mirrored->rasters().front().image->width()) *
+                    static_cast<std::size_t>(mirrored->rasters().front().image->height()) * 4U;
+    CK_CHECK(one_frame > 0U);
+
+    // The fall. The reader stops taking pixels for a moment — a host terminal
+    // busy drawing the last picture it was given — and the server marks it for
+    // healing, which is the ordinary, working half of this.
+    for (int frame = 1; frame <= 60 && !server.waiting_to_heal(); ++frame) {
+        animating.session().feed_output(sixel_frame(frame));
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+    }
+    CK_CHECK(server.waiting_to_heal());
+
+    // The reader catches up, so the heal goes out and with it the picture
+    // debt: the believed pictures, owed rather than queued whole, dripped as
+    // the queue has room. This is the state the bug lives in — while a debt is
+    // being paid the client is deliberately exempt from being marked dirty
+    // again, so nothing else was left to stop the debt from growing.
+    CK_CHECK(run_until(server, clock, client, [&] { return !server.waiting_to_heal(); }));
+
+    // And now the child animates on, three hundred frames of it, while the
+    // reader takes pixels slower than they are drawn — a host terminal that
+    // accepts Sixel more slowly than a child produces it, which is the whole
+    // situation this is about.
+    constexpr std::size_t kReaderAppetite = 64u * 1024u;  // per tick, against ~1.2 MiB drawn
+    const std::size_t built_before = server.diffs().picture_bytes_built();
+    std::size_t peak = 0;
+    bool debt_seen = false;
+    for (int frame = 61; frame <= 360; ++frame) {
+        animating.session().feed_output(sixel_frame(frame));
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        client.pump(kReaderAppetite);
+        const std::size_t owed = server.owed_image_bytes();
+        if (owed > 0) debt_seen = true;
+        peak = std::max(peak, owed);
+    }
+    CK_CHECK(client.session.attached());
+    // A run in which nothing was ever owed would sail past the ceiling below
+    // without having tested anything at all, so the shape the bug needs is
+    // asserted rather than assumed.
+    CK_CHECK(debt_seen);
+
+    // And the work that was never done. A payload built for a client that
+    // already owes an unsent one is compared, copied, queued and dropped, so
+    // the differ is asked first and leaves the picture alone when the answer
+    // is no — including its belief, which is what makes the frame after the
+    // debt drains the CURRENT one rather than this one. Three hundred frames
+    // at 1.2 MiB is 356 MiB of memcmp-and-copy if every one is built; what a
+    // reader who cannot keep up actually needs built is the handful that
+    // reach them.
+    const std::size_t built = server.diffs().picture_bytes_built() - built_before;
+    std::printf("  [animation] payload built across 300 frames: %zu bytes of %zu drawn\n",
+                built, one_frame * 300U);
+    CK_CHECK(built < one_frame * 30U);
+
+    // The other half a reader sees, and the one they described first: a
+    // picture DRAGGED. A window moving across a desktop is redrawn, not
+    // shifted — the pane is cleared and the picture painted at the new cell —
+    // so what the differ says is that one picture went away and another
+    // arrived, under a wire id of its own each time. The Remove is what makes
+    // that bounded: it says the pixels still waiting to go out are for a
+    // picture nobody will ever see, and a debt that kept them anyway replayed
+    // the drag — the cube arriving where the reader put it long after they let
+    // go, having visited every position on the way.
+    std::size_t peak_ops = 0;
+    for (int step = 0; step < 200; ++step) {
+        animating.session().feed_output("\x1b[2J" + sixel_frame(7, 1 + step % 12, 1 + step % 30));
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        client.pump(kReaderAppetite);
+        peak_ops = std::max(peak_ops, server.owed_image_ops());
+        peak = std::max(peak, server.owed_image_bytes());
+    }
+    std::printf("  [animation] peak owed ops across 200 moves: %zu\n", peak_ops);
+    // Measured across two hundred moves: **3887 ops and 528 MiB** owed before
+    // this, **78 ops and the same 1.8 frames** after. The ceiling is set well
+    // above the second and far below the first, because what is being asserted
+    // is the difference between a debt that tracks the picture and one that
+    // records the drag — not a particular drip schedule.
+    CK_CHECK(peak_ops <= 400U);
+    CK_CHECK(peak <= one_frame * 3U);
+
+    // Back to one place, and a last handful of frames drawn there while the
+    // reader is STILL behind — which is the state the belief has to survive.
+    for (int frame = 0; frame < 10; ++frame) {
+        animating.session().feed_output(frame == 0 ? "\x1b[2J" + sixel_frame(90)
+                                                   : sixel_frame(90 + frame));
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        client.pump(kReaderAppetite);
+    }
+    CK_CHECK(server.owed_image_bytes() > 0U);  // still behind, or the check below is vacuous
+
+    // And it is the NEWEST frame that is owed, not the oldest. The child stops
+    // HERE, having drawn its last frame while the reader was still behind —
+    // which is the case that pins the belief. A differ that adopted pixels it
+    // had decided not to send would believe the client already held this
+    // frame, would never emit it, and the reader would sit on the frame before
+    // it for as long as the child stayed quiet: forever, in a demo that has
+    // finished. Nothing more is fed below; the reader simply catches up, and
+    // what it must land on is the last thing the child drew.
+    ckv::Image expected(1, 1);
+    CK_CHECK(run_until(server, clock, client, [&] {
+        ckm::server::Terminal* const source = server.terminals().find(animating.id());
+        if (source == nullptr) return false;
+        const std::span<const ckv::core::TerminalRaster> rasters = source->session().rasters();
+        if (rasters.empty() || rasters.front().image == nullptr) return false;
+        expected = *rasters.front().image;
+        return true;
+    }, kChildOutputPasses));
+    CK_CHECK(run_until(server, clock, client, [&] {
+        if (mirrored == nullptr || mirrored->rasters().empty()) return false;
+        const ckv::Image* const held = mirrored->rasters().front().image.get();
+        if (held == nullptr) return false;
+        if (held->width() != expected.width() || held->height() != expected.height()) return false;
+        return std::memcmp(held->data(), expected.data(),
+                           static_cast<std::size_t>(expected.width()) *
+                               static_cast<std::size_t>(expected.height()) * 4U) == 0;
+    }, kChildOutputPasses));
+
+
+    std::printf("  [animation] one frame %zu bytes, peak owed %zu bytes across 300 frames\n",
+                one_frame, peak);
+    // Two frames' worth is the honest ceiling: one payload may be half-way
+    // out — those chunks must finish, or the mirror is left assembling a
+    // picture whose end never comes — while the newest waits behind it. Three
+    // hundred frames of history is what this used to be, and it is what the
+    // reader was made to sit through.
+    CK_CHECK(peak <= one_frame * 3U);
+    CK_CHECK(server.owed_image_bytes() <= one_frame * 3U);
+
     server.terminals().close_all();
     forget(socket);
 }

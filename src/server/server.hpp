@@ -127,6 +127,18 @@ public:
     // arithmetic.
     std::size_t queued_bytes() const noexcept;
     bool waiting_to_heal() const noexcept;
+    // The pixels held for clients that have not caught up yet. The other half
+    // of the same gauge: `queued_bytes` measures what is on the wire, which is
+    // bounded by the stream's own marks, while this measures what is waiting
+    // to go ON it — the quantity that used to grow without bound under a child
+    // that draws continuously, and the one a test can watch stay flat.
+    std::size_t owed_image_bytes() const noexcept;
+    // And how many ops those pixels are waiting behind. The companion gauge,
+    // because the ops that carry no pixels are superseded too — a picture
+    // dragged across a desktop moves without a byte of it being redrawn, and a
+    // debt that kept every move would replay the drag rather than state where
+    // the picture ended up.
+    std::size_t owed_image_ops() const noexcept;
 
 private:
     struct Client {
@@ -182,7 +194,22 @@ private:
         // images), so a drip that takes ticks is invisible where a loop was
         // unmissable. Superseded whole by the next snapshot; cleared on
         // detach.
-        std::vector<proto::Message> owed_images;
+        //
+        // Each op carries the wire id it is about and whether it OPENS a
+        // payload group, because those two are what let a frame the child has
+        // already replaced be dropped before it is ever sent (`owe_image`).
+        // Without that, a child that animates — ckvision_spin redrawing its
+        // cube at 16fps — made every frame a permanent entry here the moment
+        // a debt existed: the debt only ever grew, the reader watched minutes
+        // of stale frames play back after the child had stopped, and the
+        // server held hundreds of megabytes in order to replay them (field
+        // report, 2026-08-19).
+        struct OwedImage {
+            proto::Message message;
+            std::uint64_t image = 0;
+            bool begins = false;
+        };
+        std::vector<OwedImage> owed_images;
         // How much of `owed_images` has been sent. An index rather than a
         // deque so supersession is one assignment.
         std::size_t owed_sent = 0;
@@ -206,6 +233,17 @@ private:
     void serve(Client& client);
     void handle(Client& client, const proto::Message& message);
     void send(Client& client, const proto::Message& message);
+    // Queues one picture op behind a debt, dropping what it makes untrue.
+    // Every route into `Client::owed_images` goes through here, so that the
+    // debt holds the CURRENT picture rather than a history of frames.
+    void owe_image(Client& client, proto::Message op);
+    // Whether any client could take a fresh payload for this picture now — the
+    // question the differ asks before it builds one. False means every client
+    // that would be sent it already owes an unsent payload for the same wire
+    // id, or there is nobody to send it to at all.
+    // Not const, only because the session lookup it needs is not: it reads
+    // and decides nothing.
+    bool picture_wanted_now(TerminalId term, std::uint64_t wire_id);
     void drop(Client& client, std::string_view why);
     void flush_tick();
     std::int64_t nanos_until_tick() const;

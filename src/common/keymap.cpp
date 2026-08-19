@@ -12,7 +12,7 @@ using ContextName = std::pair<std::string_view, KeyContext>;
 // Kebab-case, because that is what the rest of the file is written in
 // (`login-shell`, `kill-empty-session`) and a reader should not have to
 // remember which half of their configuration uses which style.
-constexpr std::array<ActionName, 26> kActions{{
+constexpr std::array<ActionName, 28> kActions{{
     {"new-terminal", Action::NewTerminal},
     {"close-terminal", Action::CloseTerminal},
     {"move-terminal", Action::MoveTerminal},
@@ -21,6 +21,7 @@ constexpr std::array<ActionName, 26> kActions{{
     {"previous-terminal", Action::PreviousTerminal},
     {"window-list", Action::WindowList},
     {"zoom", Action::Zoom},
+    {"minimize", Action::Minimize},
     {"move-resize", Action::MoveResize},
     // Named for the arrangement, not for the axis word: the two words are
     // used inconsistently across desktops, so `tile-horizontally` is the one
@@ -42,6 +43,7 @@ constexpr std::array<ActionName, 26> kActions{{
     {"kill-session", Action::KillSession},
     {"key-reference", Action::KeyReference},
     {"settings", Action::Settings},
+    {"status-bar", Action::ToggleStatusBar},
     {"about", Action::About},
     {"send-prefix", Action::SendPrefix},
     {"quit", Action::Quit},

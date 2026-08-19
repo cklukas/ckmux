@@ -308,6 +308,13 @@ namespace {
 // AddBegin, the pixel chunks, End — the whole picture on the wire. RGBA rows
 // exactly as `Image` holds them (stride == width * 4, no padding), split at
 // the chunk cap the codec enforces.
+// What one picture costs to say, in payload bytes. Beside the builder rather
+// than derived at the call sites, so the gauge cannot drift from the thing it
+// is gauging.
+std::size_t payload_bytes_of(const ckv::Image& image) {
+    return static_cast<std::size_t>(image.stride()) * static_cast<std::size_t>(image.height());
+}
+
 void append_image_payload(std::vector<proto::Message>& ops, std::uint64_t wire_id,
                           const ckv::Image& image) {
     proto::ImageAddBegin begin;
@@ -348,7 +355,8 @@ proto::ImagePlace place_of(TerminalId id, std::uint64_t wire_id, ckv::Point anch
 
 std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
                                                          const ckv::core::TerminalSubsession& source,
-                                                         std::uint64_t& next_image_id) {
+                                                         std::uint64_t& next_image_id,
+                                                         const PictureReadiness& ready) {
     const std::span<const ckv::core::TerminalRaster> current = source.rasters();
     if (current.empty() && believed_rasters_.empty()) return {};
 
@@ -415,6 +423,20 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
         if (matched[index] != SIZE_MAX) {
             BelievedRaster entry = believed_rasters_[matched[index]];
             if (replaced[index]) {
+                // Nobody can take this frame, so nobody pays for it. Asked
+                // BEFORE the comparison below, because the comparison is the
+                // expensive half: a full-screen picture is a megabyte of
+                // memcmp and then, when it differs, a megabyte of copying into
+                // chunk messages — per tick, per terminal, for a payload the
+                // debt supersedes the instant it is queued. The belief is left
+                // exactly as it was, which is what makes this safe: what the
+                // clients hold has not changed, and the next tick that finds
+                // somebody ready sends the pixels that are current THEN rather
+                // than these.
+                if (ready && !ready(id, entry.wire_id)) {
+                    next.push_back(std::move(entry));
+                    continue;
+                }
                 // A new object whose pixels EQUAL the believed ones is not a
                 // change at all — it is the same picture decoded again (a
                 // payload past the emulator's decode-cache cap arrives as a
@@ -439,6 +461,7 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
                 // clients will hold after this tick, not the frame before.
                 entry.image = raster.image;
                 append_image_payload(ops, entry.wire_id, *entry.image);
+                picture_bytes_built_ += payload_bytes_of(*entry.image);
                 ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
                 next.push_back(std::move(entry));
                 continue;
@@ -461,6 +484,7 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
         entry.anchor = raster.anchor;
         entry.cell_extent = raster.cell_extent;
         append_image_payload(ops, entry.wire_id, *entry.image);
+        picture_bytes_built_ += payload_bytes_of(*entry.image);
         ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
         next.push_back(std::move(entry));
     }
@@ -477,7 +501,8 @@ std::vector<proto::Message> TerminalDiffer::attach_images(TerminalId id) const {
     return ops;
 }
 
-DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSubsession& source) {
+DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSubsession& source,
+                                          const PictureReadiness& ready) {
     // The child asked to hold this until it says the frame is whole (DEC
     // 2026): an empty tick, and damage left untouched rather than cleared, so
     // the tick after the matching reset reads everything the frame changed —
@@ -496,7 +521,7 @@ DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSub
     TerminalDiffer& differ = differs_[id];
     TerminalTick tick;
     tick.delta = differ.flush(id, source);
-    tick.images = differ.flush_images(id, source, next_image_id_);
+    tick.images = differ.flush_images(id, source, next_image_id_, ready);
     // Sent: the host saying it has caught up. Here rather than inside the
     // differ, so that a terminal with several clients watching it has its
     // damage cleared once, after all of them have read — not by whichever one
@@ -505,12 +530,12 @@ DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSub
     return tick;
 }
 
-DiffEngine::Tick DiffEngine::flush(Terminals& terminals) {
+DiffEngine::Tick DiffEngine::flush(Terminals& terminals, const PictureReadiness& ready) {
     Tick tick;
     for (const TerminalId id : terminals.ids()) {
         Terminal* terminal = terminals.find(id);
         if (terminal == nullptr) continue;
-        TerminalTick per_terminal = flush(id, terminal->session());
+        TerminalTick per_terminal = flush(id, terminal->session(), ready);
         if (per_terminal.delta.has_value()) tick.deltas.push_back(std::move(*per_terminal.delta));
         for (proto::Message& message : per_terminal.images)
             tick.images.push_back(ImageOp{id, std::move(message)});
@@ -535,6 +560,15 @@ std::size_t DiffEngine::fill_history(TerminalId id, proto::TerminalState& state,
     // A terminal with no differ has never been snapshotted, so there is no
     // state of the caller's for a history to belong to.
     return differ == nullptr ? 0 : differ->fill_history(state, source, budget);
+}
+
+std::size_t DiffEngine::picture_bytes_built() const noexcept {
+    std::size_t built = 0;
+    for (const auto& [id, differ] : differs_) {
+        (void)id;
+        built += differ.picture_bytes_built();
+    }
+    return built;
 }
 
 void DiffEngine::forget(TerminalId id) { differs_.erase(id); }
