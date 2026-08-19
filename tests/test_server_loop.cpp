@@ -1280,3 +1280,234 @@ CK_TEST(a_snapshot_that_fills_the_queue_is_not_asked_for_twice) {
     server.terminals().close_all();
     forget(socket);
 }
+
+namespace {
+
+// One window's place, as a client would report it.
+ckm::proto::LayoutEntry placed(std::uint64_t term, std::int16_t x, std::int16_t y,
+                               std::uint16_t width, std::uint16_t height, std::uint16_t z,
+                               std::uint8_t zoomed = 0) {
+    return ckm::proto::LayoutEntry{term, ckm::proto::Rect{x, y, width, height}, z, zoomed};
+}
+
+// The entry for one terminal, whatever order the message carried them in: the
+// server states a session's windows in the order the session holds them, which
+// is not the order a client reported them in.
+const ckm::proto::LayoutEntry* entry_for(const std::vector<ckm::proto::LayoutEntry>& entries,
+                                         std::uint64_t term) {
+    for (const ckm::proto::LayoutEntry& entry : entries)
+        if (entry.term == term) return &entry;
+    return nullptr;
+}
+
+const ckm::proto::TerminalState* state_for(const ckm::proto::Attached& attached,
+                                           std::uint64_t term) {
+    for (const ckm::proto::TerminalState& state : attached.snapshot.terminals)
+        if (state.term == term) return &state;
+    return nullptr;
+}
+
+}  // namespace
+
+CK_TEST(a_reported_layout_outlives_the_client_that_reported_it) {
+    // WP-28's whole claim, and the thing M-R3 named as missing: a window's place
+    // is session state, held by the server, and it survives the client that
+    // arranged it exactly as the screen and the history already do (plans/03).
+    // Set, stored, and stated again on the snapshot the next attach is given —
+    // with nothing on the other end interpreting it, because what a reattaching
+    // client DOES with a layout is a restoration policy this package
+    // deliberately has none of (WP-30).
+    const std::filesystem::path socket = private_socket("layout");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.kill_empty_session = false;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    const ckm::server::TerminalId first =
+        server.open_terminal(0, spec_running("sleep 3600")).id();
+    const ckm::server::TerminalId second =
+        server.open_terminal(0, spec_running("sleep 3600")).id();
+
+    // Two windows, one of them dragged off the left edge of the desktop and one
+    // maximized over it. The negative origin is deliberate: it is an
+    // arrangement a reader can really make, it is the case WP-30's move rule
+    // exists for, and a codec or a store that clamped it away would look
+    // correct everywhere else.
+    ckm::proto::SetLayout report;
+    report.entries.push_back(placed(first, -3, 2, 30, 9, 0));
+    report.entries.push_back(placed(second, 12, 1, 24, 6, 1, /*zoomed=*/1));
+    client.say(report);
+
+    // The watching client is told, in one message for the whole session: a
+    // z-order is a position among windows, so stating one window's without the
+    // others' says nothing a mirror could apply.
+    ckm::proto::LayoutDelta stated;
+    CK_CHECK(await_message(server, clock, client, stated));
+    CK_CHECK(stated.entries.size() == 2U);
+    CK_CHECK(stated.desktop_columns == 40 && stated.desktop_rows == 8);
+    const ckm::proto::LayoutEntry* const said_first = entry_for(stated.entries, first);
+    const ckm::proto::LayoutEntry* const said_second = entry_for(stated.entries, second);
+    CK_CHECK(said_first != nullptr && said_second != nullptr);
+    if (said_first != nullptr) CK_CHECK(said_first->rect == (ckm::proto::Rect{-3, 2, 30, 9}));
+    if (said_second != nullptr) {
+        CK_CHECK(said_second->z_order == 1);
+        CK_CHECK(said_second->zoomed == 1);
+    }
+
+    // The client goes. Its terminals stay, and so does what it said about where
+    // their windows were — checked against the server's own state, with nobody
+    // attached to be told it, because "the storage is real" is a claim about the
+    // server and not about a message.
+    client.say(ckm::proto::Detach{});
+    ckm::proto::Detached gone;
+    CK_CHECK(await_message(server, clock, client, gone));
+    const ckm::server::Terminal* const held = server.terminals().find(first);
+    CK_CHECK(held != nullptr);
+    if (held != nullptr) {
+        CK_CHECK(held->layout().rect == (ckm::proto::Rect{-3, 2, 30, 9}));
+        CK_CHECK(!held->layout().zoomed);
+    }
+
+    // And it comes back on the snapshot, which is where a reattaching client
+    // finds every other thing it lost — the grid, the history, the modes, the
+    // exit — rather than in a message of its own.
+    ckm::proto::Attach again;
+    again.columns = 40;
+    again.rows = 8;
+    client.say(again);
+    ckm::proto::Attached snapshot;
+    CK_CHECK(await_message(server, clock, client, snapshot));
+    const ckm::proto::TerminalState* const restated_first = state_for(snapshot, first);
+    const ckm::proto::TerminalState* const restated_second = state_for(snapshot, second);
+    CK_CHECK(restated_first != nullptr && restated_second != nullptr);
+    if (restated_first != nullptr) {
+        CK_CHECK(restated_first->rect == (ckm::proto::Rect{-3, 2, 30, 9}));
+        CK_CHECK(restated_first->z_order == 0);
+        CK_CHECK(restated_first->zoomed == 0);
+    }
+    if (restated_second != nullptr) {
+        CK_CHECK(restated_second->rect == (ckm::proto::Rect{12, 1, 24, 6}));
+        CK_CHECK(restated_second->z_order == 1);
+        CK_CHECK(restated_second->zoomed == 1);
+    }
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_layout_is_stated_when_it_moves_and_not_once_a_tick) {
+    // Edge-triggered, like the marks: a client that reports the same
+    // arrangement again — which is what a mirror applying what it was told
+    // produces — must not be answered. An unconditional producer and a client
+    // that applies what it is told are a loop with no end, and it would run at
+    // tick rate for as long as a session was attached.
+    const std::filesystem::path socket = private_socket("layoutonce");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+    const ckm::server::TerminalId term = server.open_terminal(0, spec_running("sleep 3600")).id();
+
+    ckm::proto::SetLayout report;
+    report.entries.push_back(placed(term, 4, 4, 20, 6, 0));
+    client.say(report);
+    ckm::proto::LayoutDelta stated;
+    CK_CHECK(await_message(server, clock, client, stated));
+    CK_CHECK(stated.entries.size() == 1U);
+
+    // Ticks pass with the arrangement unchanged, and then the same report is
+    // made again. Neither produces a second statement of it.
+    const auto no_layout_for = [&](int passes) {
+        for (int pass = 0; pass < passes; ++pass) {
+            clock.advance(34'000'000);
+            if (!server.step()) return false;
+            ckm::proto::Message arrived;
+            while (client.take(arrived))
+                if (std::holds_alternative<ckm::proto::LayoutDelta>(arrived)) return false;
+        }
+        return true;
+    };
+    CK_CHECK(no_layout_for(6));
+    client.say(report);
+    CK_CHECK(no_layout_for(6));
+
+    // A window that really moves is news again.
+    ckm::proto::SetLayout moved;
+    moved.entries.push_back(placed(term, 5, 4, 20, 6, 0));
+    client.say(moved);
+    ckm::proto::LayoutDelta after;
+    CK_CHECK(await_message(server, clock, client, after));
+    CK_CHECK(after.entries.size() == 1U);
+    CK_CHECK(after.entries.front().rect.x == 5);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_layout_report_is_filed_against_a_session_or_answered) {
+    // Two halves of one rule. A terminal a report names that this client does
+    // not watch — one that closed a moment ago, one that moved away — is STALE
+    // rather than wrong, and is skipped in silence: a report describes an
+    // arrangement at a moment, and a window leaving it races the report every
+    // time. A client with no session at all has said something that cannot be
+    // filed anywhere, and is told so, because a request that goes unanswered
+    // looks to a reader exactly like a server that has hung.
+    const std::filesystem::path socket = private_socket("layoutstale");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient watcher;
+    CK_CHECK(watcher.connect(socket));
+    CK_CHECK(greet_and_attach(server, watcher));
+    const ckm::server::TerminalId term =
+        server.open_terminal(0, spec_running("sleep 3600")).id();
+
+    // One real window and one id that never existed, in the same report. The
+    // real one is filed; the connection stays up.
+    ckm::proto::SetLayout mixed;
+    mixed.entries.push_back(placed(4242, 0, 0, 10, 4, 0));
+    mixed.entries.push_back(placed(term, 6, 3, 18, 5, 0));
+    watcher.say(mixed);
+    ckm::proto::LayoutDelta stated;
+    CK_CHECK(await_message(server, clock, watcher, stated));
+    CK_CHECK(stated.entries.size() == 1U);
+    CK_CHECK(stated.entries.front().term == term);
+    CK_CHECK(stated.entries.front().rect == (ckm::proto::Rect{6, 3, 18, 5}));
+
+    // And a client that greeted but never attached is answered rather than
+    // ignored — and rather than being allowed to state an arrangement for a
+    // session it is not watching.
+    WireClient stranger;
+    CK_CHECK(stranger.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    stranger.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, stranger, greeting));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+    ckm::proto::SetLayout unattached;
+    unattached.entries.push_back(placed(term, 1, 1, 8, 4, 0));
+    stranger.say(unattached);
+    ckm::proto::Error refusal;
+    CK_CHECK(await_message(server, clock, stranger, refusal));
+    CK_CHECK(refusal.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NoSuchSession));
+    const ckm::server::Terminal* const untouched = server.terminals().find(term);
+    CK_CHECK(untouched != nullptr);
+    if (untouched != nullptr)
+        CK_CHECK(untouched->layout().rect == (ckm::proto::Rect{6, 3, 18, 5}));
+
+    server.terminals().close_all();
+    forget(socket);
+}

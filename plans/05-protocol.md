@@ -1,6 +1,6 @@
 # ckmux — Client⇄Server Protocol
 
-Plan 05 · Status: draft · 2026-08-18 · [Index](README.md)
+Plan 05 · Status: draft · 2026-08-19 · [Index](README.md)
 
 Local Unix-socket protocol between the ckVision client (and CLI tools) and
 the server. Design goals: dumb client, authoritative server; self-healing
@@ -82,7 +82,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | Value | Meaning |
 |---|---|
 | **live** | one end constructs it and the other acts on it, in shipping code |
-| **encode-only** | codec only: no producer, no handler. **15 of the 49 types** are here |
+| **encode-only** | codec only: no producer, no handler. **14 of the 50 types** are here |
 | **handler only** | one end acts on it; nothing sends it |
 | **producer only** | one end sends it; nothing acts on it |
 | **tests only** | producer and handler exist, but the only asker is a test |
@@ -102,8 +102,9 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `KillTerminal` | `term u64` | *encode-only* | SIGKILL outright; `CloseTerminal{force=1}` covers the reader-facing case today |
 | `RespawnTerminal` | `term u64` | *encode-only* | restart exited terminal in-window — WP-13 |
 | `MoveTerminal` | `term u64, dest_session u64, to_new_session u8` | **live** | the flag outranks the id, because `Attach` already gave 0 a different meaning; a close pending against the terminal is cancelled, since a move is the reader deciding to keep it (WP-10) |
-| `MoveResize` | `term u64, rect` | **live** | one TERMINAL's own size, sent by its mirror when its view is laid out |
-| `Raise` / `FocusTerm` | `term u64` | *encode-only* | z-order and focus, both still dormant: the client draws its own z-order, and nothing sends either message. **`Session::focused` is maintained off `Input` instead** — the terminal a reader's keys, mouse reports and focus reports go to is the terminal they are in, and it is the only statement of focus this wire carries today (R8). Two things read it: the snapshot's `focused_term`, and `TermMeta`'s activity mark, which means "output in a terminal the reader is NOT in" |
+| `MoveResize` | `term u64, rect` | **live** | one TERMINAL's own size, sent by its mirror when its view is laid out — and only that: the PTY is sized from this rect, so it is the grid inside the frame and never the window around it. Where the WINDOW is travels on `SetLayout` |
+| `SetLayout` | `n × { term u64, rect, z u16, zoomed u8 }` | *handler only* | where this client's windows now are — every window of the session it is attached to, in one message. The server records it per terminal as session state and states it back, on the attach snapshot and on `LayoutDelta` (WP-28: plans/03's "window layout is session state, owned by the server", made real). A whole arrangement rather than the one window that moved, for two things a per-window message cannot say: a `z_order` is a position in a STACK, so raising one window renumbers the ones it passed, and a window that CLOSES leaves the arrangement without being named at all. Deliberately not `MoveResize`, and not `MoveResize` with two fields bolted on — that rect is the terminal's grid and sizes a PTY, this one is the window on the desktop, and one rect meaning both is exactly the confusion the two-geometries note below exists for. No session id: a client is attached to one, and `ClientResize` names none for the same reason. **Nothing sends it yet** — the client that watches its windows and reports them is WP-29 |
+| `Raise` / `FocusTerm` | `term u64` | *encode-only* | z-order and focus, both still dormant as COMMANDS: nothing sends either. Raising is reported rather than requested today — a raise changes the whole stack, and the stack travels whole on `SetLayout` (WP-28). **`Session::focused` is maintained off `Input` instead** — the terminal a reader's keys, mouse reports and focus reports go to is the terminal they are in, and it is the only statement of focus this wire carries today (R8). Two things read it: the snapshot's `focused_term`, and `TermMeta`'s activity mark, which means "output in a terminal the reader is NOT in" |
 | `ZoomTerm` | `term u64, on u8` | *encode-only* | maximize/restore |
 | `RenameSession` | `id u64, name str` | **live** | |
 | `RenameTerminal` | `id u64, name str` | *encode-only* | M3 |
@@ -124,7 +125,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `SessionList` | `n × { id, name, terminals u16, attached u8, created i64, last_attached i64 }` | **live** | sent to every greeted client whenever the set changes, which is why there is no separate refresh hint |
 | `Attached` | `session u64` + **Snapshot** | **live** | full state; also sent for self-healing |
 | `Detached` | `reason u8 (user\|takeover\|session_killed\|server_shutdown), text str` | **live** | |
-| `LayoutDelta` | `session u64, n × { term u64, rect, z u16, zoomed u8 }, focused u64, desktop cols/rows` | *encode-only* | no producer, and the snapshot's matching `rect`/`z_order`/`zoomed` fields are written by nobody and read by nobody — a reattach cascades default windows. M-R3, the one part of R8 still open: everything else a reattaching reader was losing now travels, and window GEOMETRY does not ([13](13-architecture-review.md)) |
+| `LayoutDelta` | `session u64, n × { term u64, rect, z u16, zoomed u8 }, focused u64, desktop cols/rows` | *producer only* | the session's whole arrangement, sent to its one watching client on the tick and only when a window actually moved — the same edge trigger `TermMeta` uses, and here it is also what keeps the echo from becoming a loop: the client this states a layout back to is the client that reported it, a mirror applies what it is told, and an unchanged layout produces nothing, so the exchange stops after one. Every window rather than the ones that moved, because a `z_order` is a position among the others and a partial list is an arrangement nothing can apply. **Nothing acts on it yet**: restoring window geometry from it is WP-30 (WP-28) |
 | `TermOpened` | `term u64, session u64, index u16, rect, title str, cols, rows` | **live** | `rect` and `title` are left at their defaults today; the client places and names the window itself |
 | `TermClosed` | `term u64, exited u8, exit_status i32, hold u8` | **live** | `exited = 0` is a leaving, not a death — that is how a moved terminal's old watcher is told. A child that ends on its own produces one off the lifecycle damage flag, with `hold` set from `[general] on-exit` (R2); the same three facts are on the attach snapshot now, so a client that was not listening when it happened still learns them (R8) |
 | `TermMeta` | `term u64, index u16, title str, flags u8 (bell, activity)` | **live** | what a reader who is not in this terminal has MISSED. `Bell` is set when the child rings; `Activity` when it writes to a terminal that is not the focused one — the tmux meaning, and the only one that makes a window marker worth looking at. Both are cleared when that terminal becomes the focused one. Marks rather than counts, and edge-triggered: the server sends one only when the pair changes, so a terminal printing steadily costs one message and not one per tick. The title travels with them, through the same clamp the `Title` op uses, because a message that STATES a title must not state an empty one (R8) |
@@ -199,6 +200,14 @@ draws around it. Sizing a terminal to the desktop puts a shell's prompt above
 the top of its own window, where a reader cannot see it, while every layer
 underneath works perfectly (WP-7, reported from a running ckmux).
 
+**Three of them since WP-28**, and the third is why layout got a message of its
+own rather than two more fields on `MoveResize`. `SetLayout`, `LayoutDelta` and
+`TerminalState.rect` carry the WINDOW: where it sits on the desktop, frame
+included, and where it stands in the stack. Nothing is sized from that rect —
+a window whose corner hangs off an edge is an arrangement a reader made rather
+than a number to clamp — and one message carrying both meanings would have made
+"the rect" ambiguous at exactly the seam WP-7's bug lived on.
+
 A `GridDelta` states the terminal's own grid too, whenever it changes: the
 `Resize` op leads any delta that repaints every row, and the ops after it are
 validated against the size the mirror is about to be rather than the one it
@@ -259,11 +268,25 @@ rather than by what the server holds (R8):
 **What of that is filled in today**: the grid, the scrollback, the modes
 (the kitty keyboard flags among them), the cursor, the size, the title, the
 placed images, the printer state, the clipboard watermark, the exit and the
-last complaint — everything a reattaching reader sees. The **layout** fields (`rect`, `z_order`, `zoomed` per terminal)
-are shaped and written by nobody, so window geometry is not restored and each
-window is placed by the client's own cascade; that is M-R3, remediation topic
-R8 in [13-architecture-review.md](13-architecture-review.md), and it is stated
-the same way in [12-work-packages.md](12-work-packages.md)'s M3 section.
+last complaint — everything a reattaching reader sees.
+
+The **layout** fields (`rect`, `z_order`, `zoomed` per terminal) are written by
+the server as of WP-28, off the arrangement its client last reported through
+`SetLayout` — they are session state like the history above, held per terminal
+and outliving every client that watched it, which is what plans/03 decided and
+what M-R3 found nothing had implemented. A zero-size rect means no client has
+ever placed that window, the same sentinel `NewTerminal.rect`'s zero is; a
+terminal moved into another session arrives with one, because a z-order is a
+place among windows it has never been beside.
+
+What no client does with them **yet** is read them: window geometry is not
+restored, and each window is still placed by the client's own cascade. That
+half is WP-29 (capture and report) and WP-30 (the restoration policy — move
+before resize, maximized stays maximized, a tile stays proportional) in
+[12-work-packages.md](12-work-packages.md); M-R3 in
+[13-architecture-review.md](13-architecture-review.md) is the finding both
+answer, and it called the policy "a design question, not a transport one",
+which is why the transport landed on its own.
 
 **The history is the one part of a snapshot that may be short without the
 snapshot being wrong.** The screen is what a terminal *is* and goes whole; the
@@ -365,7 +388,7 @@ unknown-argument refusal until it lands
    denial of service. The same bound applies to the stream reassembler, so a
    peer that declares a frame and then dribbles cannot grow it either.
 
-## What exists today (2026-08-18)
+## What exists today (2026-08-19)
 
 The whole catalogue above encodes and decodes, in `src/common/proto.{hpp,cpp}`
 — framing, the handshake, every message, `GridDelta`'s six ops and the attach
@@ -373,14 +396,21 @@ snapshot. Nothing in it knows about a socket, which is why all of it is tested
 without one ([09-testing.md](09-testing.md)'s unit layer).
 
 **Encoding is not sending, and the `Today` column above is the difference.**
-Of the forty-nine types in `proto::Message`, **thirty-two are live** end to
+Of the fifty types in `proto::Message`, **thirty-two are live** end to
 end: the handshake, sessions, attach and detach, the terminal operations a
 reader can reach from a menu, `Input`, `GridDelta`, the five image messages
 (WP-16), and — since R8 — `ClipboardSet`, `PrintState`, `TermDiagnostic` and
-the three that used to be wired at one end only. **Fifteen are codec-only**,
-and `Ping`/`Pong` are asked for by nothing but a test.
+the three that used to be wired at one end only. **Fourteen are codec-only**,
+`Ping`/`Pong` are asked for by nothing but a test, and **two are wired at one
+end on purpose** — see below.
 
-**Nothing is wired at one end alone any more.** Three were, and each read as
+**Two rows are wired at one end alone, and both say which end.** `SetLayout`
+has a server handler and no sender; `LayoutDelta` has a server producer and no
+reader. That is WP-28 landing deliberately as half of a pair: the server is the
+authority for window layout (plans/03), so making it store and state one is a
+package that can be finished and tested on its own, and WP-29's reporting
+client and WP-30's restoring one are then written against a wire that already
+answers. Three other rows were once in this state by accident, and each read as
 working until somebody asked which end: `ClientResize` had a server handler and
 no sender, `TermMeta` had a client handler and no sender, and `Error` had eight
 senders and no reader. That was the shape WP-1 chose deliberately — build the
@@ -399,16 +429,22 @@ once here rather than in the server and the client separately.
 Still open in WP-1 itself: nothing. The transport (WP-2), the server's
 terminals (WP-3), the diff engine that fills `GridDelta` (WP-4a/4b) and the
 reattach fields (R8) have all landed, which is what moved thirty-two rows into
-the **live** column. What is open *about* this wire is the **layout**:
-`LayoutDelta` has no producer and the snapshot's `rect`/`z_order`/`zoomed` are
-written by nobody, so each window is still placed by the client's own cascade
-(M-R3, and the one part of R8 the fix did not reach — see
-[13-architecture-review.md](13-architecture-review.md)).
+the **live** column. What is open *about* this wire is the **client half of the
+layout**: the server now stores a session's window arrangement and states it —
+on every snapshot, and on `LayoutDelta` when it changes (WP-28) — and nothing
+yet reports one to it or places a window from one, so each window is still put
+where the client's own cascade puts it. That is WP-29 and WP-30; M-R3 is the
+finding, and the transport half of it is answered
+([13-architecture-review.md](13-architecture-review.md)).
 
 **Version 3 covers all of it.** R1's `ResizeOp`, tracking level and close/move
 fields shipped nowhere before R8's additions were made on top of them — the
 keyboard-flag bits, `TerminalState`'s clipboard watermark, exit state and
 diagnostic, `ClipboardSet`'s terminal id, and `TermDiagnostic` — so both sets
-are v3. The version integer exists so that two builds can tell whether they can
-talk; two numbers for a wire nobody has ever spoken would say the same thing
-twice (`proto.hpp` records the same list).
+are v3. WP-28's `SetLayout` is v3 too, and more easily: it is a new type rather
+than a change to an existing one, so nothing already on this wire changed shape
+for it, and a build that did not know it would refuse it as an unknown type,
+which is precisely what the one version integer is for. The version integer
+exists so that two builds can tell whether they can talk; two numbers for a wire
+nobody has ever spoken would say the same thing twice (`proto.hpp` records the
+same list).

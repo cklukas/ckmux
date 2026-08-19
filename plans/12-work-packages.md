@@ -90,8 +90,8 @@ take first.
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | **Done** (2026-08-18) | WP-7 ✓ |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |
 | 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | **Done** (2026-08-18) | WP-8 ✓ |
-| 17 | **WP-28** — Window layout: wire and session-state storage | ckmux | 2 d | **Ready** | WP-8 ✓ |
-| 18 | **WP-29** — Client-side layout capture and reporting | ckmux | 2 d | Blocked | WP-28 |
+| 17 | **WP-28** — Window layout: wire and session-state storage | ckmux | 2 d | **Done** (2026-08-19) | WP-8 ✓ |
+| 18 | **WP-29** — Client-side layout capture and reporting | ckmux | 2 d | **Ready** | WP-28 ✓ |
 | 19 | **U4-a** — Window Switcher Bar (new ckVision widget) | ckVision | 3–4 d | **Ready** | — |
 | 20 | **U4-b** — Tile Horizontally/Vertically + filled-layout query | ckVision | 2–3 d | **Ready** | — |
 | 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Ready** | — |

@@ -52,6 +52,7 @@ constexpr bool is_client_to_server(proto::MessageType type) {
         case proto::MessageType::Raise:
         case proto::MessageType::FocusTerm:
         case proto::MessageType::ZoomTerm:
+        case proto::MessageType::SetLayout:
         case proto::MessageType::RenameTerminal:
         case proto::MessageType::Input:
         case proto::MessageType::PasteChunk:

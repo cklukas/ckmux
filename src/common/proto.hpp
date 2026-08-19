@@ -76,6 +76,12 @@ namespace ckm::proto {
 // asynchronous, so a session that connected before it landed advertised no
 // Sixel to every child it ever ran, for the rest of that connection's life,
 // however long after the answer actually arrived a reader opened a pane.
+//
+// And still v3 for `SetLayout` (WP-28), the message a client reports its window
+// arrangement with. It is a new type rather than a field on an existing one, so
+// nothing already on this wire changes shape; a build that does not know it
+// would refuse it as an unknown type, which is exactly what the one version
+// integer is for — and there is no such build, because v3 has shipped nowhere.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -173,6 +179,7 @@ enum class MessageType : std::uint16_t {
     Input = 0x020B,
     PasteChunk = 0x020C,
     PasteAck = 0x020D,
+    SetLayout = 0x020E,
 
     // --- 0x03xx state sync ---
     LayoutDelta = 0x0301,
@@ -410,6 +417,22 @@ struct TerminalState {
     std::uint8_t flags = 0;  // bell, activity — see TermMetaFlag
     std::uint16_t columns = 0;
     std::uint16_t rows = 0;
+    // Where this terminal's WINDOW was when its client last reported the
+    // arrangement (`SetLayout`), which the server keeps as session state and
+    // states here for a client that has just arrived — the layout half of what
+    // survives a detach, beside the grid, the history and the modes above
+    // (plans/03: window layout is session state, owned by the server).
+    //
+    // NOT the grid: `columns`/`rows` are the terminal, and this is the window
+    // drawn around it, frame included. The two are different numbers and
+    // confusing them puts a shell's prompt above the top of its own window
+    // (plans/05, "Two geometries, and they are not the same number").
+    //
+    // A zero-size rect means "no layout reported" — the same sentinel
+    // `NewTerminal.rect` uses for "place it yourself" — because a window nobody
+    // has ever moved is not one at the origin with no width, it is one whose
+    // place has never been stated, and a client that could not tell those apart
+    // would stack every fresh terminal in the top-left corner.
     Rect rect;
     std::uint16_t z_order = 0;
     std::uint8_t zoomed = 0;
@@ -513,8 +536,20 @@ struct SessionInfo {
     friend bool operator==(const SessionInfo&, const SessionInfo&) = default;
 };
 
+// One window's place in a session's arrangement: where it is on the desktop,
+// how high it stands in the stack, and whether it is maximized over everything
+// else. The same three facts `TerminalState` carries per terminal, so a
+// snapshot and a layout message state a window's place in one shape rather than
+// two — and both directions of the wire use this one struct (`SetLayout` up,
+// `LayoutDelta` down).
+//
+// `z_order` counts from the bottom, and it is only meaningful against the other
+// entries of the same message: a stack position is a comparison, not a
+// coordinate, which is why layout travels as a whole arrangement and never as
+// one window on its own.
 struct LayoutEntry {
     std::uint64_t term = 0;
+    // Zero size means "no layout reported" — see `TerminalState::rect`.
     Rect rect;
     std::uint16_t z_order = 0;
     std::uint8_t zoomed = 0;
@@ -678,6 +713,39 @@ struct ZoomTerm {
     std::uint64_t term = 0;
     std::uint8_t on = 0;
     friend bool operator==(const ZoomTerm&, const ZoomTerm&) = default;
+};
+
+// Where the client's windows now are: every window of the session it is
+// attached to, in one message. The server records it as session state and
+// states it back — on the snapshot a reattaching client is given, and on a
+// `LayoutDelta` while one is watching (plans/03: window layout is session
+// state, owned by the server, and a reader's move/resize/zoom/raise gestures
+// are reports the server applies rather than decisions the client keeps).
+//
+// A whole arrangement rather than the one window that moved, for two things a
+// per-window message cannot say. A `z_order` is a position in a STACK: raising
+// one window renumbers the ones it passed, so a message naming only the raised
+// one leaves the server holding two windows that both claim to be on top. And a
+// window that CLOSES leaves the arrangement without being named at all — which
+// a list of what remains states, and a per-window report cannot.
+//
+// Deliberately not `MoveResize`, and not `MoveResize` with two fields added.
+// That one's rect is a different geometry with a different consumer: it carries
+// a TERMINAL's own grid and the server sizes the PTY from it, where this
+// carries the WINDOW on the desktop, frame included. One rect meaning both is
+// what put a shell's prompt above the top of its own window, with every layer
+// underneath working perfectly (plans/05, "Two geometries, and they are not the
+// same number" — WP-7, reported from a running ckmux). So they stay two
+// messages, and this one never resizes anything.
+//
+// No session id: a client is attached to exactly one, the server knows which,
+// and a field would let a client state an arrangement for a session it is not
+// watching. `ClientResize` — the other message a client reports its own display
+// state with — names no session for the same reason.
+struct SetLayout {
+    static constexpr MessageType kType = MessageType::SetLayout;
+    std::vector<LayoutEntry> entries;
+    friend bool operator==(const SetLayout&, const SetLayout&) = default;
 };
 
 struct RenameSession {
@@ -969,9 +1037,9 @@ using Message =
     std::variant<Hello, HelloAck, Refuse, Ping, Pong, ListSessions, NewSession, Attach, Detach,
                  ClientResize, RenameSession, KillSession, KillServer, SessionList, SessionsChanged,
                  Attached, Detached, NewTerminal, CloseTerminal, KillTerminal, RespawnTerminal,
-                 MoveTerminal, MoveResize, Raise, FocusTerm, ZoomTerm, RenameTerminal, Input,
-                 PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta, GridDelta,
-                 ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,
+                 MoveTerminal, MoveResize, Raise, FocusTerm, ZoomTerm, SetLayout, RenameTerminal,
+                 Input, PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta,
+                 GridDelta, ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,
                  ImageRemove, ClipboardSet, TermDiagnostic, Error, SetPrinterPolicy, PrintState,
                  PrintJobAdded, PrintJobFetch, PrintJobData, PrintJobDiscard>;
 

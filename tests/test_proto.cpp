@@ -149,6 +149,12 @@ std::vector<Message> every_message() {
     messages.emplace_back(Raise{11});
     messages.emplace_back(FocusTerm{11});
     messages.emplace_back(ZoomTerm{11, 1});
+
+    SetLayout report;
+    report.entries.push_back(LayoutEntry{11, Rect{-6, 4, 44, 14}, 0, 0});
+    report.entries.push_back(LayoutEntry{12, Rect{3, 0, 22, 7}, 1, 1});
+    messages.emplace_back(std::move(report));
+
     messages.emplace_back(RenameTerminal{11, "build"});
     messages.emplace_back(Input{11, std::string("\x1b[A\x00 bytes", 10)});
     messages.emplace_back(PasteChunk{11, 3, 1, "pasted text"});
@@ -240,6 +246,56 @@ CK_TEST(the_modes_word_gives_every_facility_its_own_bits) {
     const auto& modes = std::get<ModesOp>(std::get<GridDelta>(decoded).ops.front());
     CK_CHECK(((modes.values & kMouseTrackingMask) >> kMouseTrackingShift) == 2u);
     CK_CHECK(((modes.values & kKeyboardFlagsMask) >> kKeyboardFlagsShift) == 0b11111u);
+}
+
+CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
+    // A client reports an arrangement and the server states one back, and the
+    // two use one entry shape on purpose: a field added to one direction and
+    // forgotten in the other would round-trip perfectly in every test that only
+    // ever looked at one of them, and would lose a window's place on exactly the
+    // path this exists for.
+    std::vector<LayoutEntry> arrangement;
+    // Off the left edge and above the top, which is a real thing a reader can
+    // drag a window into and the case WP-30's move rule is written for — and a
+    // signed field that had been written as unsigned would come back as 65533
+    // rather than -3, placing the window at the far side of a desktop nobody
+    // has.
+    arrangement.push_back(LayoutEntry{101, Rect{-3, -1, 40, 12}, 0, 0});
+    arrangement.push_back(LayoutEntry{102, Rect{9, 5, 25, 8}, 1, 0});
+    arrangement.push_back(LayoutEntry{103, Rect{0, 0, 80, 24}, 2, 1});
+
+    SetLayout reported;
+    reported.entries = arrangement;
+    LayoutDelta stated;
+    stated.session = 8;
+    stated.entries = arrangement;
+    stated.focused_term = 103;
+    stated.desktop_columns = 80;
+    stated.desktop_rows = 24;
+
+    // Held rather than bound through the call: `std::get` hands back a
+    // reference into the value, and a reference bound to one a function
+    // returned is not lifetime-extended.
+    const Message report_bytes = round_trip(reported);
+    const Message statement_bytes = round_trip(stated);
+    const auto& decoded_report = std::get<SetLayout>(report_bytes);
+    const auto& decoded_statement = std::get<LayoutDelta>(statement_bytes);
+    CK_CHECK(decoded_report.entries == decoded_statement.entries);
+    CK_CHECK(decoded_report.entries.size() == 3U);
+    CK_CHECK(decoded_report.entries[0].rect.x == -3);
+    CK_CHECK(decoded_report.entries[0].rect.y == -1);
+    // The order the client reported them in survives, because the z-order is a
+    // field rather than a position — a decoder that sorted or reversed them
+    // would put a maximized window under the ones it covers.
+    CK_CHECK(decoded_report.entries[2].term == 103);
+    CK_CHECK(decoded_report.entries[2].zoomed == 1);
+
+    // A session whose last window closed reports no windows, which is a
+    // statement and not an absence of one: a report that could not say "none
+    // left" would leave the server holding the arrangement of a desktop that no
+    // longer has anything on it.
+    const Message empty_report = round_trip(SetLayout{});
+    CK_CHECK(std::get<SetLayout>(empty_report).entries.empty());
 }
 
 CK_TEST(a_frame_states_its_own_length_type_and_zero_flags) {

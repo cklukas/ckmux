@@ -671,32 +671,46 @@ void read(Reader& r, Detached& m) {
     m.text = r.str();
 }
 
-void write(Writer& w, const LayoutDelta& m) {
-    w.u64(m.session);
-    w.u32(static_cast<std::uint32_t>(m.entries.size()));
-    for (const LayoutEntry& entry : m.entries) {
+// The entry list both layout messages carry, written once. A client reports an
+// arrangement and the server states one back; two copies of these eight lines
+// would be two definitions of one shape, and a field added to one of them would
+// make the two ends disagree in exactly the direction that never round-trips.
+void write_layout_entries(Writer& w, const std::vector<LayoutEntry>& entries) {
+    w.u32(static_cast<std::uint32_t>(entries.size()));
+    for (const LayoutEntry& entry : entries) {
         w.u64(entry.term);
         w.rect(entry.rect);
         w.u16(entry.z_order);
         w.u8(entry.zoomed);
     }
+}
+void read_layout_entries(Reader& r, std::vector<LayoutEntry>& entries) {
+    // 8 term + 8 rect + 2 z_order + 1 zoomed.
+    const std::uint32_t count = r.count(19);
+    entries.reserve(count);
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        LayoutEntry entry;
+        entry.term = r.u64();
+        entry.rect = r.rect();
+        entry.z_order = r.u16();
+        entry.zoomed = r.u8();
+        if (r.ok()) entries.push_back(entry);
+    }
+}
+
+void write(Writer& w, const SetLayout& m) { write_layout_entries(w, m.entries); }
+void read(Reader& r, SetLayout& m) { read_layout_entries(r, m.entries); }
+
+void write(Writer& w, const LayoutDelta& m) {
+    w.u64(m.session);
+    write_layout_entries(w, m.entries);
     w.u64(m.focused_term);
     w.u16(m.desktop_columns);
     w.u16(m.desktop_rows);
 }
 void read(Reader& r, LayoutDelta& m) {
     m.session = r.u64();
-    // 8 term + 8 rect + 2 z_order + 1 zoomed.
-    const std::uint32_t entries = r.count(19);
-    m.entries.reserve(entries);
-    for (std::uint32_t i = 0; i < entries && r.ok(); ++i) {
-        LayoutEntry entry;
-        entry.term = r.u64();
-        entry.rect = r.rect();
-        entry.z_order = r.u16();
-        entry.zoomed = r.u8();
-        if (r.ok()) m.entries.push_back(entry);
-    }
+    read_layout_entries(r, m.entries);
     m.focused_term = r.u64();
     m.desktop_columns = r.u16();
     m.desktop_rows = r.u16();

@@ -520,6 +520,51 @@ void Server::handle(Client& client, const proto::Message& message) {
                          rows * std::max(0, client.cell_pixels.height));
         return;
     }
+    if (const auto* report = std::get_if<proto::SetLayout>(&message)) {
+        // Where this client's windows now are. Recorded, and deliberately
+        // nothing else: no PTY is sized from it (that is `MoveResize` above,
+        // whose rect is the terminal's own grid rather than the window drawn
+        // around it), and no window is placed by it. The server is the thing
+        // that REMEMBERS an arrangement so that it survives the client that
+        // made it (plans/03) — what a reattaching client then does with one is
+        // its own decision and a package of its own.
+        Session* const session = session_of(client);
+        if (session == nullptr) {
+            // A layout belongs to a session, so a client that is in none has
+            // said something this server cannot file anywhere. Answered rather
+            // than dropped, because an unanswered request looks to a reader
+            // exactly like a server that has hung.
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+            error.context = "SetLayout";
+            error.human = "attach to a session before reporting its layout";
+            send(client, error);
+            return;
+        }
+        for (const proto::LayoutEntry& entry : report->entries) {
+            // A terminal that has gone, or one this client does not watch, is
+            // skipped in silence rather than refused: a report describes an
+            // arrangement at a moment, and a window closing or moving to
+            // another session races it every time — which is stale, not wrong
+            // (plans/03 says the same about closing a terminal twice).
+            Terminal* const terminal = terminals_.find(entry.term);
+            if (terminal == nullptr) continue;
+            if (std::find(session->terminals.begin(), session->terminals.end(), entry.term) ==
+                session->terminals.end())
+                continue;
+            WindowLayout layout;
+            layout.rect = entry.rect;
+            layout.z_order = entry.z_order;
+            layout.zoomed = entry.zoomed != 0;
+            (void)terminal->set_layout(layout);
+        }
+        // What actually changed goes out on the tick, in one message for the
+        // whole session — see `announce_layout`. Not from here: a drag reports
+        // many times between two ticks, and answering each one would put a
+        // message on the wire per intermediate frame, which is the cost WP-7
+        // measured on the delta path and the reason that path coalesces too.
+        return;
+    }
     if (const auto* request = std::get_if<proto::NewTerminal>(&message)) {
         // Into the session this client is attached to. A client that is not
         // attached has no session for a terminal to live in, and saying so is
@@ -1012,6 +1057,58 @@ void Server::announce_terminal_news() {
     }
 }
 
+void Server::announce_layout() {
+    for (const Session& session : sessions_) {
+        // Nothing to say unless a window actually moved. The gate is per
+        // terminal and the message is per session, so one report that moves
+        // three windows costs one message — the same edge trigger `TermMeta`
+        // uses, and for the same reason: a client that reports an arrangement
+        // on every frame of a drag must not cost a message per frame.
+        //
+        // It is also what stops the echo from becoming a loop. The client that
+        // reported this layout is the client this states it back to (there is
+        // at most one watcher per session — plans/03's takeover), and a mirror
+        // applies what it is told; if applying it produced another report, an
+        // unconditional producer would answer that one too, forever. An
+        // unchanged layout changes nothing, so the exchange stops after one.
+        bool moved = false;
+        for (const TerminalId id : session.terminals) {
+            const Terminal* const terminal = terminals_.find(id);
+            if (terminal == nullptr || terminal->layout_announced()) continue;
+            moved = true;
+            break;
+        }
+        if (!moved) continue;
+        Client* const watcher = client_attached_to(session.id);
+        // No watcher, no announcement — and the flag stays down, so the
+        // arrangement is stated to the next client to attach by the snapshot it
+        // is given rather than lost. A session nobody is watching is exactly
+        // when a layout most needs remembering.
+        if (watcher == nullptr) continue;
+
+        proto::LayoutDelta layout;
+        layout.session = session.id;
+        layout.focused_term = session.focused;
+        // The desktop this client declared, the same number the snapshot
+        // states, because a fraction of a desktop means nothing without the
+        // desktop it is a fraction of.
+        layout.desktop_columns = static_cast<std::uint16_t>(std::max(0, watcher->desktop.width));
+        layout.desktop_rows = static_cast<std::uint16_t>(std::max(0, watcher->desktop.height));
+        for (const TerminalId id : session.terminals) {
+            Terminal* const terminal = terminals_.find(id);
+            if (terminal == nullptr) continue;
+            // Every window, not only the ones that moved: a `z_order` is a
+            // position among the others, so a partial list is an arrangement a
+            // mirror cannot apply.
+            const WindowLayout& held = terminal->layout();
+            layout.entries.push_back(proto::LayoutEntry{
+                id, held.rect, held.z_order, static_cast<std::uint8_t>(held.zoomed ? 1 : 0)});
+            terminal->note_layout_announced();
+        }
+        send(*watcher, layout);
+    }
+}
+
 void Server::remove_terminal(TerminalId id, bool exited) {
     Session* const home = session_holding(id);
     std::optional<int> status;
@@ -1086,6 +1183,12 @@ void Server::move_terminal(Client& client, const proto::MoveTerminal& request) {
         std::remove(source->terminals.begin(), source->terminals.end(), request.term),
         source->terminals.end());
     target->terminals.push_back(request.term);
+    // Its window's place does not come with it. A `z_order` is a position among
+    // the windows of ONE session, and carried into a stack this terminal has
+    // never been beside it would claim a place nobody put it in — so the
+    // terminal arrives in its new session as an unplaced one, which is exactly
+    // what a terminal opened there would be.
+    if (Terminal* const moved = terminals_.find(request.term)) (void)moved->clear_layout();
     // The source's watcher sees the window leave without a death notice:
     // exited = 0 says nothing exited, so no banner and no invented status.
     proto::TermClosed left;
@@ -1242,6 +1345,20 @@ void Server::send_snapshot(Client& client) {
         // a snapshot and the `PrintState` that follows it agree about the mode
         // rather than one of them defaulting.
         state.printer_mode = wire_printer_mode(options_.settings.printer_mode);
+        // Where the reader last had this window. The layout half of what
+        // survives a detach, said with everything else a reattaching client
+        // gets rather than through a message of its own — the arrangement is
+        // part of the state, not news about it (plans/03: window layout is
+        // session state, owned by the server). A terminal whose place has never
+        // been reported states a zero-size rect, which is the wire's way of
+        // saying "nobody has placed this yet".
+        const WindowLayout& placed = terminal->layout();
+        state.rect = placed.rect;
+        state.z_order = placed.z_order;
+        state.zoomed = static_cast<std::uint8_t>(placed.zoomed ? 1 : 0);
+        // A snapshot IS the announcement, so the tick that follows it does not
+        // restate the same arrangement in a `LayoutDelta`.
+        terminal->note_layout_announced();
         state.flags = static_cast<std::uint8_t>(
             (terminal->bell_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Bell) : 0) |
             (terminal->activity_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)
@@ -1471,6 +1588,11 @@ void Server::flush_tick() {
     // others are restatements of what a snapshot just said, which costs a few
     // bytes and says the same thing twice rather than losing something.
     announce_terminal_news();
+    // And where the windows are, which is a fact about a session rather than
+    // about any one terminal. After the heal above for the same reason the news
+    // is: a snapshot states the layout, so a delta sent before it would be
+    // superseded by the snapshot that followed it in the same tick.
+    announce_layout();
 
     const DiffEngine::Tick tick = diffs_.flush(terminals_);
 

@@ -171,6 +171,20 @@ void Terminal::mark_activity() noexcept {
     marks_announced_ = false;
 }
 
+bool Terminal::set_layout(const WindowLayout& layout) noexcept {
+    // Stored exactly as reported, and in particular NOT clamped the way
+    // `Terminal::resize` clamps a grid. Nothing here is sized from it: a window
+    // rect is a place on a reader's desktop, and one that hangs off an edge is a
+    // real arrangement somebody made rather than a number this server has to
+    // make safe. What to do about it when the desktop is a different size next
+    // time is a restoration policy, and this package deliberately has none
+    // (WP-28 stores and states; WP-30 decides).
+    if (layout_ == layout) return false;
+    layout_ = layout;
+    layout_announced_ = false;
+    return true;
+}
+
 bool Terminal::take_client_resize() noexcept {
     const bool resized = resized_by_a_client_;
     resized_by_a_client_ = false;

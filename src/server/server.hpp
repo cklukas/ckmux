@@ -42,6 +42,13 @@ using SessionId = std::uint64_t;
 // a session's, and moving one between sessions is meant to be a pointer move
 // (plans/12 WP-10) rather than a transplant. What a session holds is which ones
 // are its own, in the order they were opened.
+//
+// plans/03 also gives a session a `layout` field, and it is this list read
+// through `Terminal::layout()` plus the `focused` id below rather than a member
+// here: a window's place is a fact about one terminal (plans/03's Terminal
+// `geometry` row), and a second list keyed by id would have to be pruned
+// wherever a terminal leaves a session — which is where a stale row would
+// survive to state a window for a terminal nobody has any more.
 struct Session {
     SessionId id = 0;
     std::string name;
@@ -272,6 +279,15 @@ private:
     // none of these is the grid — a clipboard write is not something a reader
     // can see on a screen at all.
     void announce_terminal_news();
+    // The session's window arrangement, once per tick, to the one client
+    // watching it — the same routing the news above uses, and the same edge
+    // trigger: a layout that did not move costs no message.
+    //
+    // A session at a time rather than a terminal at a time, because that is what
+    // the message is: a `z_order` is a position among windows, so stating one
+    // window's without the others' says nothing a mirror can apply. One report
+    // that moves three windows is therefore one `LayoutDelta` and not three.
+    void announce_layout();
     // Actually removes one terminal: the PTY, the diffs, the session row, and
     // the watcher's window. `exited` distinguishes a child that ended from a
     // terminal that merely left for another session — the client keeps a

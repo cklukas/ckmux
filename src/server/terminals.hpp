@@ -26,9 +26,31 @@
 #include <vector>
 
 #include "common/config.hpp"
+#include "common/proto.hpp"
 #include "cvision/term/posix_terminal_subsession.hpp"
 
 namespace ckm::server {
+
+// Where a terminal's WINDOW is, as the client watching its session last
+// reported it (plans/03's Terminal `geometry` row; a session's `layout` is this
+// for every terminal in it, plus the focused id the session itself holds).
+//
+// Kept in the wire's own `Rect` rather than ckVision's, because this server
+// neither draws a window nor computes with one: what it does with a layout is
+// remember it and say it again, and a value converted on the way in and back on
+// the way out is a value that can differ from what the reader arranged. The
+// clamping that `MoveResize` does is deliberately absent for the same reason —
+// see `Terminal::set_layout`.
+struct WindowLayout {
+    proto::Rect rect;
+    // From the bottom of the stack up. Only meaningful against the other
+    // windows of the same session, which is why a layout report states them all
+    // at once (plans/05 `SetLayout`).
+    std::uint16_t z_order = 0;
+    bool zoomed = false;
+
+    friend bool operator==(const WindowLayout&, const WindowLayout&) = default;
+};
 
 // Never recycled within a server's lifetime (plans/05, invariant 3). A client
 // that names a terminal after it closed must be told it is gone, not handed a
@@ -163,6 +185,37 @@ public:
     // on the wire every tick for the whole of a build.
     bool marks_announced() const noexcept { return marks_announced_; }
     void note_marks_announced() noexcept { marks_announced_ = true; }
+    // Where this terminal's window is, and whether the watching client has been
+    // told the arrangement AS IT NOW STANDS.
+    //
+    // Here rather than on the client for the same reason the marks above are: a
+    // session outlives its clients, and a reader who arranged their windows and
+    // then closed the lid expects to find them where they left them — which is
+    // the whole of what plans/03 decided when it made window layout session
+    // state owned by the server. Here rather than beside the session's terminal
+    // list for the reason plans/03's own Terminal table gives it a `geometry`
+    // row: it is a fact about one terminal, and a parallel list keyed by id
+    // would need pruning at every place a terminal leaves a session — three of
+    // them today, and the one that got missed would state a window for a
+    // terminal that no longer exists.
+    //
+    // `set_layout` answers whether anything actually moved, and only a move
+    // clears the announcement: a client that reports the same arrangement twice
+    // costs one message and not two, and — the failure that matters — a
+    // producer that restated an unchanged layout would ping-pong forever with
+    // the client that reported it, since applying what it is told is what a
+    // mirror does.
+    const WindowLayout& layout() const noexcept { return layout_; }
+    bool set_layout(const WindowLayout& layout) noexcept;
+    // Forgets where the window was, which is what a terminal entering a session
+    // it has never been arranged in has to do: a `z_order` is a position among
+    // windows, and one carried into a stack it was never in names a place
+    // nobody put it. Zero size is "no layout reported" on the wire, which is
+    // the same thing a terminal nobody has moved yet says.
+    bool clear_layout() noexcept { return set_layout(WindowLayout{}); }
+    bool layout_announced() const noexcept { return layout_announced_; }
+    void note_layout_announced() noexcept { layout_announced_ = true; }
+
     // Whether the last thing to change this terminal's screen was a client
     // resizing it rather than its child saying something. Read once and
     // cleared, on the tick.
@@ -212,6 +265,10 @@ private:
     // True until a mark moves. A terminal nobody has ever marked has nothing to
     // say, so the announcement starts as already made.
     bool marks_announced_ = true;
+    WindowLayout layout_;
+    // And true until a window moves, for the same reason: a terminal whose
+    // place nobody has stated has no place to state.
+    bool layout_announced_ = true;
 };
 
 // Every terminal this server owns.
