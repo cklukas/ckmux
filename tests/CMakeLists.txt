@@ -21,6 +21,7 @@ set(CKMUX_TEST_SOURCES
     test_menu_commands.cpp
     test_prefix.cpp
     test_proto.cpp
+    test_process_stats.cpp
     test_remote_terminal.cpp
     test_rename_terminal.cpp
     test_rename_wire.cpp
@@ -91,6 +92,11 @@ set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 
 foreach(source ${CKMUX_TEST_SOURCES})
+# test_process_stats forks bare children of its own (fork, no exec, no PTY) —
+# a process primitive available anywhere the suite itself can run, so it stays
+# in the fast lane rather than joining `pty`, whose reason is a sandbox with
+# no pseudo-terminals. Unlike the ClientApp suites above, its forks are its
+# own explicit `::fork()` calls, so reading the file does tell you.
     get_filename_component(suite ${source} NAME_WE)
     add_test(NAME suite_${suite} COMMAND ckmux_tests --suite ${source})
     set(CKMUX_SUITE_LABELS "unit")

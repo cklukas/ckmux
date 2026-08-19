@@ -135,6 +135,7 @@ add_library(ckmux_platform STATIC
     src/platform/paths.cpp
     src/platform/poller.cpp
     src/platform/process.cpp
+    src/platform/process_stats.cpp
     src/platform/socket.cpp)
 target_include_directories(ckmux_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_platform PUBLIC ckvision::cvision)

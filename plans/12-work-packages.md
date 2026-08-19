@@ -129,9 +129,9 @@ take first.
 | 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
 | 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
-| 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Ready** | — |
-| 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Ready** | — |
-| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | Blocked | WP-37, U5-a |
+| 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`) | — |
+| 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
+| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Ready** | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | Blocked | WP-38 (serverless half needs only WP-37) |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
@@ -1376,6 +1376,11 @@ core displays as it is (`340%`), per the decision above. A terminal whose
 child exited shows no readout — the exit banner owns that moment. Remote
 terminals subscribe with `WatchStats` when the first toggle goes on and
 unsubscribe when the last goes off; the serverless M1 client samples
+*Done, 2026-08-19 (ckVision `da11baa`).* Pinned by a test whose child prints
+its own `$$`: the accessor and the child agree on who the child is while it
+runs, and the accessor answers −1 once the exit has been observed. ckVision's
+full suite green around it, 144/144 with examples ON.
+
 through WP-37's seam on the application timer at the same cadence, and the
 composer cannot tell the difference.
 *Done when*: `tests/test_command_reachability.cpp` passes with the three
@@ -1394,3 +1399,21 @@ keyboard passthrough and graphics, hyperlink activation, scrollback reflow,
 per-terminal palette re-theming, session groups, PDF export (PRINT-7). Nothing
 there gets a row until a plan edit moves it, because R5 binds: an addition
 edits the plan first.
+*Done* (2026-08-19). `src/platform/process_stats.{hpp,cpp}`; nine cases in
+`tests/test_process_stats.cpp`, all with real children where a child is the
+claim (bare `fork`s, no exec and no PTY, so the suite stays in ctest's fast
+lane). Measured: a table of **281 processes snapshotted and one tree summed
+in 96 µs** — four orders of magnitude inside the one-second tick; and the
+spinner read **302 ms of CPU across 300 ms of spinning**, which is the
+mach-timebase arithmetic being right rather than lucky (a conversion wrong
+by the Apple-silicon 125/3 lands orders of magnitude outside the test's
+bounds). The grandchild, dead-root and pid-loop cases are as specified. Two
+notes carried forward: `real_bytes` is asserted nonzero and page-accounted
+rather than "below the naive RSS sum" — for a child that dirties its pages
+footprint and RSS agree, and the overcount claim is about *shared* pages,
+which a test would have to stage carefully to pin without flaking; and the
+first version of the allocator child was deleted wholesale by `-O3` (a
+`memset` nothing reads is a dead store — the child paused with 960 KB
+resident and the test failed honestly), so the child now dirties one byte
+per page through a `volatile` pointer, which is not deletable.
+
