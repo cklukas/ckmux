@@ -3,10 +3,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+
 
 namespace ckm::server {
 namespace {
@@ -244,6 +246,17 @@ proto::TerminalState TerminalDiffer::snapshot(TerminalId id,
         state.diagnostic_kind = wire_kind(complaints.back().kind);
         state.diagnostic = std::string(clamp_utf8(complaints.back().message, proto::kMaxTitleBytes));
     }
+    // The wire ids of the pictures this terminal's watchers hold — the ids the
+    // restatement that follows a snapshot will arrive under, since they are
+    // stable across snapshots. A mirror adopting this keeps showing the pixels
+    // it already holds under these ids rather than blanking them: the field
+    // shape this closes is a client healing under load, whose every picture
+    // vanished at each heal and re-crossed the socket megabytes later, gray in
+    // between. Ids the list does not name are pictures the believed set no
+    // longer has (their Remove may have been dropped with the rest of the
+    // backlog), and the mirror drops them on adoption.
+    state.images.reserve(believed_rasters_.size());
+    for (const BelievedRaster& entry : believed_rasters_) state.images.push_back(entry.wire_id);
 
     // What the client has just been given is what it holds, and the deltas that
     // follow start again at 1. A snapshot carries no sequence of its own — that
@@ -402,6 +415,23 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
         if (matched[index] != SIZE_MAX) {
             BelievedRaster entry = believed_rasters_[matched[index]];
             if (replaced[index]) {
+                // A new object whose pixels EQUAL the believed ones is not a
+                // change at all — it is the same picture decoded again (a
+                // payload past the emulator's decode-cache cap arrives as a
+                // fresh object every redraw) or re-punched into the same
+                // holes — and resending megabytes to say "unchanged" is what
+                // let a merely-busy child saturate the wire. The pointer is
+                // adopted so the next tick's identity check is cheap again;
+                // nothing travels.
+                if (entry.image->width() == raster.image->width() &&
+                    entry.image->height() == raster.image->height() &&
+                    std::memcmp(entry.image->data(), raster.image->data(),
+                                static_cast<std::size_t>(raster.image->width()) *
+                                    static_cast<std::size_t>(raster.image->height()) * 4U) == 0) {
+                    entry.image = raster.image;
+                    next.push_back(std::move(entry));
+                    continue;
+                }
                 // New pixels under the old id: the whole payload again, then
                 // the Place that makes them current. The believed image is
                 // swapped too — it is what attach_images serializes, and a

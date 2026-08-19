@@ -112,11 +112,24 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
     }
 
     damage_ = everything(state_.cells);
-    // The pictures are restated after every snapshot (the server's
-    // attach_images follows the Attached), so whatever was held goes the same
-    // way the grid did.
-    rasters_.clear();
-    raster_wire_ids_.clear();
+    // The pictures the snapshot says this terminal's watchers hold are KEPT:
+    // their wire ids are stable across snapshots, the restatement that
+    // follows will arrive under these same ids, and place_image treats a
+    // restated id as the swap it is. Clearing them all — the first answer
+    // here — meant every heal blanked every picture until its pixels had
+    // re-crossed the socket, which under load is exactly when they are
+    // megabytes behind: a reader watching a busy child saw gray with the
+    // picture surfacing for a moment per heal (field report, 2026-08-19,
+    // ckgrapher). What the snapshot does NOT name goes, because a picture
+    // missing from the believed set had its Remove dropped with the rest of
+    // the backlog this snapshot is healing.
+    for (std::size_t index = raster_wire_ids_.size(); index-- > 0;) {
+        const std::uint64_t held = raster_wire_ids_[index];
+        if (std::find(state.images.begin(), state.images.end(), held) != state.images.end())
+            continue;
+        rasters_.erase(rasters_.begin() + static_cast<std::ptrdiff_t>(index));
+        raster_wire_ids_.erase(raster_wire_ids_.begin() + static_cast<std::ptrdiff_t>(index));
+    }
     damage_.rasters = true;
     // A snapshot is what a lost sequence is cured by, so taking one is what
     // makes the mirror current again — and the count starts over, which is why

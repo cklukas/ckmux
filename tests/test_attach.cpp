@@ -742,6 +742,91 @@ CK_TEST(a_pane_opened_after_the_hosts_sixel_probe_resolves_still_gets_told_it_ca
     forget(socket);
 }
 
+CK_TEST(a_heal_under_steady_news_converges_instead_of_looping) {
+    // The self-sustaining heal loop, pinned end to end. A heal used to inline
+    // every believed picture's pixels — tens of megabytes at HiDPI cell sizes
+    // — so the heal's own payload crossed the backlog mark, any news during
+    // the drain (a blinking cursor suffices) re-marked the client dirty, and
+    // the next heal re-sent everything: one full lap per drain, forever, the
+    // pictures visible for a moment per lap and gray otherwise (field report,
+    // 2026-08-19, ckgrapher). Now the heal owes its pictures and drips them
+    // as the queue has room, news during the drip does not re-arm the heal,
+    // and the mirror keeps the pixels it already holds — so a client that
+    // fell behind once heals ONCE, under news that never stops.
+    const std::filesystem::path socket = private_socket("healloop");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    // The ckgrapher shape: one terminal holds a picture and stays quiet, a
+    // second is busy — so the session's backlog is real while the picture
+    // itself never legitimately goes away.
+    ckm::server::Terminal& pictured = server.open_terminal(
+        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30"));
+    ckm::server::Terminal& busy = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client client;
+    CK_CHECK(client.connect(socket));
+    client.greet();
+    client.session.set_host_sixel(true);
+    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
+    ckm::client::RemoteTerminalSubsession* mirrored = nullptr;
+    CK_CHECK(run_until(server, clock, client, [&] {
+        mirrored = client.session.terminal(pictured.id());
+        return mirrored != nullptr && !mirrored->rasters().empty();
+    }));
+
+    // The fall: the client stops reading while the busy child floods, until
+    // the server has marked it for healing.
+    client.refuse_to_read();
+    std::string burst;
+    for (int line = 0; line < 24; ++line)
+        burst += "a line of output that fills the screen " + std::to_string(line) + "\r\n";
+    for (int tick = 0; tick < 4000 && !server.waiting_to_heal(); ++tick) {
+        busy.session().feed_output(burst);
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+    }
+    CK_CHECK(server.waiting_to_heal());
+
+    // The recovery, under news that never stops: one short line per tick, the
+    // shape of a blinking cursor or a clock. The client reads normally.
+    const std::uint64_t attachments_before = client.session.attachments();
+    bool raster_seen_missing = false;
+    for (int tick = 0; tick < 400; ++tick) {
+        busy.session().feed_output("tick " + std::to_string(tick) + "\r");
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        client.pump();
+        if (mirrored != nullptr && mirrored->rasters().empty()) raster_seen_missing = true;
+    }
+    const std::uint64_t heals = client.session.attachments() - attachments_before;
+    std::printf("  [heal loop] %llu heal(s) across 400 ticks of steady news\n",
+                static_cast<unsigned long long>(heals));
+    // Healed at all, and healed ONCE — the loop was one per drain, dozens
+    // here. Two are allowed: a heal may be marked while the first is still
+    // being asked for.
+    CK_CHECK(heals >= 1U);
+    CK_CHECK(heals <= 2U);
+    // And the reader never stared at a hole where their picture was: the
+    // mirror held its pixels across every heal.
+    CK_CHECK(!raster_seen_missing);
+    // The mirror ends the stretch current, not merely pretty: the last line
+    // the busy child wrote is on its mirror.
+    busy.session().feed_output("\r\nthe very last line\r\n");
+    CK_CHECK(run_until(server, clock, client, [&] {
+        ckm::client::RemoteTerminalSubsession* watched = client.session.terminal(busy.id());
+        if (watched == nullptr) return false;
+        std::string text;
+        for (const ckv::Cell& cell : watched->cells())
+            if (!cell.is_continuation()) text += cell.grapheme();
+        return text.find("the very last line") != std::string::npos;
+    }));
+    server.terminals().close_all();
+    forget(socket);
+}
+
 // --- R8: what a reattaching reader used to lose ----------------------------
 
 CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_dead) {

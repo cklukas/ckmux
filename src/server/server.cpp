@@ -22,6 +22,14 @@
 namespace ckm::server {
 namespace {
 
+// How much of a client's picture debt may be queued per tick (flush_tick's
+// drip). Big enough that a debt retires in a handful of ticks on a local
+// socket; small enough that the deltas queued behind one tick's worth stay
+// prompt. Twice this is the queue depth past which a client that owes
+// pictures is judged to have genuinely stopped reading rather than merely
+// draining the drip.
+constexpr std::size_t kOwedImageBurstBytes = 1024u * 1024u;
+
 // Signals, delivered to the loop rather than acted on inside a handler.
 //
 // A handler may do almost nothing safely, and a server that shut itself down
@@ -1190,6 +1198,10 @@ void Server::detach(Client& client, proto::DetachReason reason, std::string text
     if (!client.attached) return;
     client.attached = false;
     client.dirty_snapshot = false;
+    // A picture debt is owed to an attachment, not to a connection.
+    client.owed_images.clear();
+    client.owed_sent = 0;
+    client.draining_heal = false;
     proto::Detached detached;
     detached.reason = reason;
     detached.text = std::move(text);
@@ -1293,9 +1305,20 @@ void Server::send_snapshot(Client& client) {
     send(client, attached);
     // The pictures, after the grid (WP-16): the believed set, exactly what the
     // clients already watching hold, so every mirror agrees until the next
-    // tick moves them all together.
+    // tick moves them all together. OWED rather than queued here: one busy
+    // session's pictures are tens of megabytes at HiDPI cell sizes, and a
+    // heal that queued them whole crossed the backlog mark by itself — any
+    // news during the drain re-marked the client dirty and the next heal
+    // re-sent everything, forever. flush_tick drips these as the queue has
+    // room; the mirror keeps showing the pixels it already holds under the
+    // same wire ids (TerminalState::images), so the drip is invisible where
+    // the loop was unmissable. A newer snapshot supersedes the whole debt.
+    client.owed_images.clear();
+    client.owed_sent = 0;
     for (const TerminalId id : held)
-        for (const proto::Message& op : diffs_.attach_images(id)) send(client, op);
+        for (proto::Message& op : diffs_.attach_images(id))
+            client.owed_images.push_back(std::move(op));
+    client.draining_heal = true;
 }
 
 void Server::send(Client& client, const proto::Message& message) {
@@ -1423,6 +1446,20 @@ void Server::flush_tick() {
         send_snapshot(*client);
     }
 
+    // What each client is still owed of its pictures, as its queue has room.
+    // Bounded per tick so the deltas behind it stay prompt; what does not fit
+    // now goes next tick, and the mirror shows its held pixels meanwhile.
+    for (const std::unique_ptr<Client>& client : clients_) {
+        if (!client->attached || client->closing) continue;
+        while (client->owed_sent < client->owed_images.size() &&
+               client->stream.queued() < kOwedImageBurstBytes)
+            send(*client, client->owed_images[client->owed_sent++]);
+        if (!client->owed_images.empty() && client->owed_sent >= client->owed_images.size()) {
+            client->owed_images.clear();
+            client->owed_sent = 0;
+        }
+    }
+
     // Everything a terminal has to say that is not its grid — the marks, a
     // clipboard write, the printer going on or off, the newest complaint.
     //
@@ -1473,10 +1510,25 @@ void Server::flush_tick() {
         // which is what the flood gate measured before this mark existed. The
         // same predicate the heal gate above uses, so that no queue can satisfy
         // one and not the other.
-        if (!client->stream.ready_for_screen()) {
+        //
+        // With one exception: a queue over the mark because a heal's own
+        // bytes — its snapshot, or the picture drip paying its debt — have
+        // not drained yet is not a client that fell behind again, and
+        // marking it dirty on that was the whole loop: a snapshot larger
+        // than the mark plus any steady news (a blinking cursor is enough)
+        // healed once per drain, forever. While the drain window is open the
+        // deltas keep flowing — the sequence restarted at the snapshot, so
+        // they are its valid continuation, and the mirror needs their
+        // continuity — and a reader who has genuinely stopped is what the
+        // stream's hard limit is for, as it always was.
+        if (client->draining_heal && client->stream.ready_for_screen() &&
+            client->owed_sent >= client->owed_images.size())
+            client->draining_heal = false;
+        if (!client->stream.ready_for_screen() && !client->draining_heal) {
             client->dirty_snapshot = true;
             continue;
         }
+        const bool owes_pictures = client->owed_sent < client->owed_images.size();
         for (const proto::GridDelta& delta : tick.deltas) {
             // A delta for a terminal in another session is not this client's to
             // see: sessions are what a reader has instead of one big desktop.
@@ -1488,12 +1540,18 @@ void Server::flush_tick() {
         // The pictures ride the same gate as the deltas (WP-16): the session
         // filter, because pixels for another session's terminal are not this
         // client's to hold, and the backlog mark, because a client that will
-        // be healed by a snapshot gets the believed pictures with it.
+        // be healed by a snapshot gets the believed pictures with it. While a
+        // debt is still being paid, fresh picture ops JOIN it rather than
+        // jumping it: one wire id's payloads must arrive in the order they
+        // were produced, and the debt already holds that id's older ones.
         for (const DiffEngine::ImageOp& op : tick.images) {
             if (std::find(watched->terminals.begin(), watched->terminals.end(), op.term) ==
                 watched->terminals.end())
                 continue;
-            send(*client, op.message);
+            if (owes_pictures)
+                client->owed_images.push_back(op.message);
+            else
+                send(*client, op.message);
         }
     }
 }

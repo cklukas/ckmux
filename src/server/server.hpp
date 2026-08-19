@@ -163,6 +163,31 @@ private:
         // otherwise is how a screen ends up showing something no program drew
         // (plans/05, and WP-5's gap rule on the other end of the same idea).
         bool dirty_snapshot = false;
+        // The picture payloads this client is still owed, dripped out per tick
+        // as its queue has room instead of queued whole behind a snapshot.
+        // Inlining them was a loop under load: the pictures of one busy
+        // session are tens of megabytes at HiDPI cell sizes, a heal that
+        // queues them all crosses the backlog mark by itself, any news during
+        // the drain marks the client dirty again, and the next heal re-sends
+        // everything — the reader saw their pictures blink in for a moment
+        // per lap and gray otherwise (field report, 2026-08-19, ckgrapher).
+        // The mirror keeps showing its held pixels meanwhile (TerminalState::
+        // images), so a drip that takes ticks is invisible where a loop was
+        // unmissable. Superseded whole by the next snapshot; cleared on
+        // detach.
+        std::vector<proto::Message> owed_images;
+        // How much of `owed_images` has been sent. An index rather than a
+        // deque so supersession is one assignment.
+        std::size_t owed_sent = 0;
+        // A heal was sent and its bytes have not yet drained under the
+        // backlog mark. While this is true, news does NOT re-mark the client
+        // dirty: the queue is over the mark because of the heal itself, and
+        // re-arming on that is the whole loop — a snapshot larger than the
+        // mark plus a blinking cursor healed once per drain, forever. Deltas
+        // keep flowing meanwhile (the sequence restarted at the snapshot, so
+        // they are its valid continuation), and a reader who has genuinely
+        // stopped is the hard limit's business, as it always was.
+        bool draining_heal = false;
         bool closing = false;
     };
 

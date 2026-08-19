@@ -267,6 +267,44 @@ CK_TEST(two_simultaneous_placed_pictures_on_one_mirror_get_distinct_scene_ids) {
     CK_CHECK(surface.raster_regions().size() == 2U);
 }
 
+CK_TEST(a_heal_keeps_the_pictures_a_mirror_holds_until_they_are_restated) {
+    // A snapshot names the picture ids its watchers hold (TerminalState::
+    // images), and the mirror keeps exactly those across adopt: their
+    // restatement arrives under the same stable ids, megabytes behind the
+    // grid, and clearing them first was the gray a reader stared at for most
+    // of every heal under load (field report, 2026-08-19, ckgrapher). What
+    // the snapshot does not name goes — its Remove was dropped with the rest
+    // of the backlog the heal is healing.
+    FakeServer server;
+    server.child_printed("\x1b[2;3H\x1bPq#0;2;100;0;0!8~-!8~\x1b\\");
+    const auto tick = server.engine.flush(server.id, server.terminal);
+    const auto* begin = tick.images.empty()
+                            ? nullptr
+                            : std::get_if<ckm::proto::ImageAddBegin>(&tick.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+
+    TerminalMirror mirror;
+    mirror.set_history_limit(200);
+    mirror.set_raster_identity(99);
+    auto pixels = std::make_shared<ckv::Image>(8, 12);
+    mirror.place_image(begin->id, pixels, ckv::Point{2, 1}, ckv::Size{1, 1});
+    CK_CHECK(mirror.rasters().size() == 1U);
+
+    // The heal: the snapshot lists the id, so the raster survives adoption
+    // with its pixels intact.
+    mirror.adopt(server.snapshot());
+    CK_CHECK(mirror.rasters().size() == 1U);
+    CK_CHECK(!mirror.rasters().empty() && mirror.rasters().front().image == pixels);
+
+    // The picture goes away child-side; the next snapshot no longer names it,
+    // and adoption drops it.
+    server.child_printed("\x1b[2J");
+    (void)server.engine.flush(server.id, server.terminal);
+    mirror.adopt(server.snapshot());
+    CK_CHECK(mirror.rasters().empty());
+}
+
 CK_TEST(the_child_dialect_the_view_encodes_is_the_one_the_server_reported) {
     // Keys are encoded client-side against mirrored mode state (plans/04), so the
     // mode bits have to survive the wire with their meaning intact. A cursor key

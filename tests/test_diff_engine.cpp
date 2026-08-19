@@ -887,6 +887,123 @@ CK_TEST(attach_images_restates_exactly_what_the_clients_hold) {
     CK_CHECK(placed_again);
 }
 
+CK_TEST(a_snapshot_names_the_picture_ids_its_watchers_hold) {
+    // The list a healing mirror keeps its pixels by: the restatement that
+    // follows a snapshot arrives under these same stable ids, so a mirror
+    // that kept the rasters the list names shows the old frame until the new
+    // pixels land instead of gray. An id the list omits is a picture whose
+    // Remove was dropped with the rest of the backlog, and goes.
+    ckv::term::TerminalEmulator emulator = sixel_emulator();
+    DiffEngine engine;
+    CK_CHECK(engine.snapshot(1, emulator).images.empty());
+    emulator.feed_output(kRedSixelAt23);
+    const DiffEngine::TerminalTick tick = engine.flush(1, emulator);
+    const auto* begin = tick.images.empty()
+                            ? nullptr
+                            : std::get_if<ckm::proto::ImageAddBegin>(&tick.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+    const std::vector<std::uint64_t> listed = engine.snapshot(1, emulator).images;
+    CK_CHECK(listed.size() == 1U);
+    CK_CHECK(!listed.empty() && listed.front() == begin->id);
+
+    emulator.feed_output("\x1b[2J");
+    (void)engine.flush(1, emulator);
+    CK_CHECK(engine.snapshot(1, emulator).images.empty());
+}
+
+namespace {
+
+// A terminal that hands the differ exactly the rasters a test places — the
+// seam's own type, no emulator behind it — so identity-versus-content cases
+// the emulator's decode cache would optimize away stay constructible.
+class RasterSource final : public ckv::core::TerminalSubsession {
+public:
+    explicit RasterSource(ckv::Size cells)
+        : cells_(static_cast<std::size_t>(cells.width) * static_cast<std::size_t>(cells.height),
+                 ckv::Cell::from_grapheme(" ", ckv::Style{})),
+          size_(cells) {
+        profile_.cells = cells;
+        damage_.rows.assign(static_cast<std::size_t>(cells.height),
+                            ckv::core::TerminalDamage::RowSpan{});
+    }
+
+    void place(std::shared_ptr<const ckv::Image> image, ckv::Point anchor, ckv::Size extent) {
+        rasters_.clear();
+        rasters_.push_back(ckv::core::TerminalRaster{1, anchor, extent, std::move(image), "[sixel]"});
+        damage_.rasters = true;
+    }
+
+    ckv::core::TerminalSnapshot snapshot() const override { return {}; }
+    ckv::core::TerminalStatus status() const override {
+        ckv::core::TerminalStatus status;
+        status.cells = size_;
+        status.state = ckv::core::TerminalSubsessionState::Running;
+        return status;
+    }
+    const ckv::core::TerminalDamage& damage() const noexcept override { return damage_; }
+    void clear_damage() noexcept override {
+        damage_ = {};
+        damage_.rows.assign(static_cast<std::size_t>(size_.height),
+                            ckv::core::TerminalDamage::RowSpan{});
+    }
+    bool synchronized_output_active() const noexcept override { return false; }
+    std::span<const ckv::Cell> cells() const noexcept override { return cells_; }
+    std::span<const ckv::Cell> scrollback() const noexcept override { return {}; }
+    std::span<const ckv::core::TerminalRaster> rasters() const noexcept override {
+        return rasters_;
+    }
+    std::span<const ckv::core::TerminalDiagnostic> diagnostics() const noexcept override {
+        return {};
+    }
+    const ckv::core::TerminalCapabilityProfile& profile() const noexcept override {
+        return profile_;
+    }
+    void feed_output(std::string_view) override {}
+    void resize(ckv::Size, ckv::Size) override {}
+    void send_input(std::string_view) override {}
+    std::string take_pending_input() override { return {}; }
+    ckv::core::TerminalSubsessionState state() const noexcept override {
+        return ckv::core::TerminalSubsessionState::Running;
+    }
+
+private:
+    std::vector<ckv::Cell> cells_;
+    std::vector<ckv::core::TerminalRaster> rasters_;
+    ckv::core::TerminalDamage damage_;
+    ckv::core::TerminalCapabilityProfile profile_;
+    ckv::Size size_;
+};
+
+}  // namespace
+
+CK_TEST(pixels_equal_to_the_believed_ones_do_not_travel_again) {
+    // A new object whose bytes equal the believed ones is the same picture
+    // decoded again — a payload past the emulator's cache cap arrives as a
+    // fresh object on every redraw — and it must cost nothing on the wire: a
+    // merely-busy child re-drawing an unchanged plot was shipping megabytes
+    // per tick to say "unchanged", which is half of how ckgrapher saturated
+    // its session (field report, 2026-08-19).
+    RasterSource source(ckv::Size{20, 6});
+    DiffEngine engine;
+    auto first = std::make_shared<ckv::Image>(8, 12);
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 8; ++x) first->set_pixel(x, y, ckv::Image::Rgba{200, 30, 40, 255});
+    source.place(first, ckv::Point{0, 0}, ckv::Size{2, 2});
+    CK_CHECK(!engine.flush(1, source).images.empty());
+
+    // Same bytes, different object: nothing travels.
+    auto identical = std::make_shared<ckv::Image>(*first);
+    source.place(identical, ckv::Point{0, 0}, ckv::Size{2, 2});
+    CK_CHECK(engine.flush(1, source).images.empty());
+
+    // Genuinely different pixels still travel.
+    auto changed = std::make_shared<ckv::Image>(*first);
+    changed->set_pixel(0, 0, ckv::Image::Rgba{1, 2, 3, 255});
+    source.place(changed, ckv::Point{0, 0}, ckv::Size{2, 2});
+    CK_CHECK(!engine.flush(1, source).images.empty());
+}
+
 // --- R8: everything about a terminal that is not its grid --------------------
 
 namespace {
