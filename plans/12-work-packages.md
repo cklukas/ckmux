@@ -101,12 +101,12 @@ take first.
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
 | 25a | **U4-g** — A dialog too tall for its screen scrolls, buttons pinned | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `6d7172b`) | — |
 | 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `720e0eb`) | — |
-| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Done** (2026-08-19) | U4-i ✓ |
-| 25c2 | **U4-o** — A standard `ckv.window.minimize` command and its `Desktop` handler | ckVision | 0.5 d | **Done** (2026-08-19) | U4-i ✓ |
+| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `da11baa`, gated) | U4-i ✓ |
+| 25c2 | **U4-o** — A standard `ckv.window.minimize` command and its `Desktop` handler | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`, gated) | U4-i ✓ |
 | 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | **Ready** | U4-i |
-| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | **Done** (2026-08-19) | U4-i ✓, U4-j ✓, U4-o ✓ |
+| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-i ✓, U4-j ✓, U4-o ✓ |
 | 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
-| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19) | U4-l ✓ |
+| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
@@ -1166,6 +1166,25 @@ terminal by number already works**: `^B 3` goes through `Desktop::activate`,
 which restores on the way to the front, and `^B n`/`^B p` step over hidden
 windows, both of which are U4-i's doing and neither of which needed anything
 here.
+
+*Gated* — the four rows of this cluster (U4-j, U4-o, WP-34, WP-35) rest on one
+set of runs, recorded here so a `Done` is checkable rather than trusted: gated
+by the test-coordinator session at ckmux `8464b3a` × ckVision `da11baa` —
+26/26 Debug and 26/26 ASan+UBSan on the ckmux side, 144/144 Debug and 143/143
+ASan+UBSan on the ckVision side (examples ON, `install_package_smoke`
+excluded, which is the 144 → 143). The sanitized lane is the one that means
+something for this cluster: both new callback shapes — a minimize action held
+by a view the desktop owns, and a collapse callback that re-enters the widget
+that fired it — are lifetime questions an unsanitized green does not answer.
+
+**What that evidence does NOT say**, stated because the tester raised it and
+they are right: ckVision `da11baa` already contained U4-j and U4-o before any
+gate ran, so 144/144 gates the ckVision half without demonstrating that these
+changes are what made it pass. The counterfactual is a mutant — the rule
+inverted, the test red — and it has not been run. The one-cell property is the
+worked example: nothing in a green run distinguishes "all three glyphs are one
+cell" from "the widths happen to agree today", and it is load-bearing for
+U4-k.
 
 Verified end to end as well as headlessly: `tests/test_minimize_chrome.cpp`
 drives the real client, and `tests/test_menu_commands.cpp` runs the real
