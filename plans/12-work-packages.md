@@ -109,7 +109,7 @@ take first.
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
-| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
+| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **In progress (ckmux-a5)** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
 | 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
 | 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
@@ -659,12 +659,27 @@ the which-key popup and the help pages together, because all four read one
 `keys_not_honoured_yet()` names it with the package it waits for. Only
 `check-config`'s CLI entry point still waits for WP-11, and both halves of
 its output already exist as return values.
-**WP-13 — Exit policy, banners, respawn.** *Ready.* `on-exit` = close/hold/
-hold-on-error, the exit banner, and respawn-in-window. The wire is shaped for
-all three and nothing on the server fills it in: `TermClosed.hold` is read by
-the client (`mirror.cpp`, `server_session.cpp`) and never set, `RespawnTerminal`
-has neither producer nor handler, and `[general] on-exit` is the first line
-`keys_not_honoured_yet()` prints. **Carried over from WP-8**: the per-session
+**WP-13 — Exit policy, banners, respawn.** *In progress.* Two of the three
+sentences this row used to make were already false when it was picked up, so
+what is left is smaller than it advertised. `on-exit` = close/hold/
+hold-on-error **has landed**: the server's self-exit path reads the setting,
+removes or holds accordingly, and sets `TermClosed.hold` — the row's claim
+that it "is read by the client and never set" described the state before R2
+(m-exit-msg). `[general] on-exit` was still the first line
+`keys_not_honoured_yet()` printed, which made `ckmux check-config` tell
+readers the key was dead while it was deciding what their windows did; removed
+2026-08-19, and the audit test that pins the other four corrected keys now
+pins this one too.
+
+Genuinely remaining: **respawn-in-window** — `RespawnTerminal` still has
+neither producer nor handler, existing only as an enum value and a variant
+member, and `Terminal` does not retain the `TerminalSpec` it was launched
+from, so "the same command in the same window" (plans/06:668) needs the spec
+kept before it can be relaunched. Then the **exit banner** with its
+`Enter restart · x close` footer, which is client-side and sequences behind
+WP-39's work in `client_app.cpp`. And the per-session **terminal limit**
+carried over from WP-8, which still has no key in
+[08](08-configuration.md). **Carried over from WP-8**: the per-session
 terminal limit ([03](03-session-model.md): "config, default 64"), which has no
 key in [08](08-configuration.md) yet and belongs with the policy that decides
 what an over-limit request is told. **Depends on R2**

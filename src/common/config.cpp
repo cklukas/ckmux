@@ -631,11 +631,15 @@ std::vector<std::string> keys_not_honoured_yet() {
     //                                 denies capture)
     //   [printer] spool-limit         terminals.cpp max_printer_spool_bytes
     //   [render]  max-fps             server.cpp flush_tick period
+    // And one more left with WP-13, for the same reason and found the same
+    // way — by `check-config` printing it after the code had moved on:
+    //   [general] on-exit             server.cpp's self-exit path reads it to
+    //                                 decide whether an exited terminal is
+    //                                 removed or held, and sets TermClosed.hold
     // A key some of whose values do nothing yet is not listed here — the list
     // is about keys, and `[printer] mode = ask` capturing without asking until
     // PRINT-1…6 lands is plans/08's to explain, not a key nothing reads.
     return {
-        "[general] on-exit (WP-13)",
         "[printer] ask-cache (PRINT-1…6)",
         "[printer] save-format (PRINT-1…6)",
         "[printer] save-folder (PRINT-1…6)",

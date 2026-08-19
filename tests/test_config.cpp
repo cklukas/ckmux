@@ -637,7 +637,10 @@ CK_TEST(a_key_that_is_read_but_not_yet_acted_on_says_so_rather_than_warning) {
     // plan documents, and accepting one silently so a reader believes it did
     // something. The list is the third answer.
     ScratchConfig scratch("not-yet");
-    scratch.write("[general]\non-exit = hold\n");
+    // A key that really is unread today. This was `on-exit` until WP-13 wired
+    // that one up — which is exactly the rot the test below guards, and the
+    // reason this one must not assume any given key stays unread forever.
+    scratch.write("[printer]\nask-cache = 4\n");
     CK_CHECK(load_settings(scratch.path()).warnings.empty());
     const std::vector<std::string> pending = ckm::keys_not_honoured_yet();
     const auto names = [&pending](const std::string& key) {
@@ -645,7 +648,7 @@ CK_TEST(a_key_that_is_read_but_not_yet_acted_on_says_so_rather_than_warning) {
             if (entry.find(key) != std::string::npos) return true;
         return false;
     };
-    CK_CHECK(names("on-exit"));
+    CK_CHECK(names("ask-cache"));
     // Every entry names the package it waits for, so the list cannot rot into
     // "someday".
     for (const std::string& entry : pending) CK_CHECK(entry.find('(') != std::string::npos);
@@ -668,6 +671,11 @@ CK_TEST(the_not_yet_honoured_list_does_not_claim_a_key_that_is_honoured) {
         CK_CHECK(entry.find("[printer] mode") == std::string::npos);
         CK_CHECK(entry.find("spool-limit") == std::string::npos);
         CK_CHECK(entry.find("max-fps") == std::string::npos);
+        // Joined them with WP-13: server.cpp's self-exit path reads on-exit to
+        // decide remove-or-hold and sets `TermClosed.hold`. It sat on this list
+        // afterwards, so `ckmux check-config` — which prints the list — told
+        // readers the key was dead while it was deciding what their windows did.
+        CK_CHECK(entry.find("on-exit") == std::string::npos);
     }
     // And a key that is honoured is still read without complaint.
     ScratchConfig scratch("honoured");
