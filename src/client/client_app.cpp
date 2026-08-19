@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -33,6 +34,17 @@ constexpr const char* kVersion = "0.0.1 (M1)";
 w::TerminalView* terminal_view_of(w::Window* window) {
     if (window == nullptr) return nullptr;
     return dynamic_cast<w::TerminalView*>(window->content());
+}
+
+// Where a tiling's boundary falls on an extent of `extent` cells (WP-30).
+//
+// An EDGE, deliberately, rather than a width: both windows either side of a
+// boundary ask for the same fraction and get the same cell back, so the tiles
+// still meet exactly and still fill the desktop. Rounding each window's WIDTH
+// on its own does not — two halves of 79 columns each round to 40, and the
+// arrangement that was a filled tiling comes back one column too wide.
+int tile_edge(double fraction, int extent) {
+    return static_cast<int>(std::llround(fraction * static_cast<double>(extent)));
 }
 
 // The choices the settings dialog offers, each label beside the value it
@@ -743,6 +755,11 @@ void ClientApp::forget_terminals() {
     // comparing places in two different stacks.
     layout_seen_.clear();
     layout_reported_.clear();
+    // And which windows the server had already placed (WP-30). The terminals
+    // this held are gone from the desktop, and attaching again — to this
+    // session or another — is a reattach, which is precisely the moment a
+    // stored arrangement is meant to be laid back down.
+    layout_settled_.clear();
     refresh_footer();
 }
 
@@ -774,6 +791,11 @@ void ClientApp::close_window_for_terminal(const ckv::term::TerminalSubsession& t
     // ended, and asking the server to end it again would be an error frame.
     forgetting_terminals_ = true;
     terminal_windows_.erase(found);
+    // And this terminal stops being one whose place the server has settled
+    // (WP-30). An address, once freed, is one the next mirror may be allocated
+    // at, and a stale entry would tell `apply_layout` that a terminal it has
+    // never seen already belongs to the reader.
+    layout_settled_.erase(&terminal);
     titles_.erase(window);
     (void)desktop_->remove_window(window);
     forgetting_terminals_ = false;
@@ -945,6 +967,9 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
         // would kill the very programs the session exists to keep.
         if (!forgetting_terminals_) terminal_session->close();
         terminal_windows_.erase(terminal_session);
+        // Its place is nobody's to remember once the window is gone — and the
+        // address may be a different terminal's tomorrow (WP-30).
+        layout_settled_.erase(terminal_session);
         titles_.erase(terminal_window);
         w::schedule_self_detach(*terminal_window, app_);
         // Focus and the footer both follow whatever the desktop activates
@@ -1182,6 +1207,14 @@ std::vector<WindowPlacement> ClientApp::capture_layout() const {
     // more than the top two), and the stack is what a layout has to state.
     // `snapshot()` walks the children, which is the stack, bottom-most first.
     const w::Desktop::Snapshot snapshot = desktop_->snapshot();
+    // And whether what the reader is looking at is a filled, non-overlapping
+    // tiling — ckVision's own answer (U4-b), asked once for the whole desktop
+    // because that is what it is about: a tiling is a property of the
+    // ARRANGEMENT, so either every participating window is in the answer or it
+    // is empty. Asking per window would be asking one question n times, and
+    // deriving it here a second time would be a rule that could disagree with
+    // the one the reader's shadows are drawn from (`child_casts_shadow`).
+    const std::vector<w::Desktop::TileFraction> tiling = desktop_->filled_tile_fractions();
     arrangement.reserve(snapshot.windows.size());
     for (const w::Desktop::WindowSnapshot& window : snapshot.windows) {
         const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window.window);
@@ -1190,9 +1223,13 @@ std::vector<WindowPlacement> ClientApp::capture_layout() const {
         // window whose GROW POLICY keeps it filling the desktop, which is a
         // standing arrangement decision this client makes for itself rather
         // than a place a reader put a window and expects to find it in again.
-        arrangement.push_back(WindowPlacement{terminal, window.bounds,
-                                              static_cast<std::uint16_t>(arrangement.size()),
-                                              window.zoomed});
+        WindowPlacement placement{terminal, window.bounds,
+                                  static_cast<std::uint16_t>(arrangement.size()), window.zoomed,
+                                  TileShare{}};
+        for (const w::Desktop::TileFraction& share : tiling)
+            if (share.window == window.window)
+                placement.tile = TileShare{share.x, share.y, share.width, share.height};
+        arrangement.push_back(placement);
     }
     return arrangement;
 }
@@ -1214,6 +1251,145 @@ void ClientApp::report_layout_if_settled() {
     if (layout_seen_ == layout_reported_) return;
     layout_reported_ = layout_seen_;
     options_.report_layout(layout_reported_);
+}
+
+ckv::Rect ClientApp::restored_bounds(const WindowPlacement& placed, ckv::Rect area) const {
+    if (placed.tile.filled()) {
+        // The same SHARE of this desktop that the window had of the last one.
+        // A 50/50 split stays 50/50 whatever size the reader has reattached at,
+        // where replaying the stored cell rect would leave a strip of bare
+        // desktop on a wider terminal and an overlap on a narrower one.
+        const int left = area.x + tile_edge(placed.tile.x, area.width);
+        const int right = area.x + tile_edge(placed.tile.x + placed.tile.width, area.width);
+        const int top = area.y + tile_edge(placed.tile.y, area.height);
+        const int bottom = area.y + tile_edge(placed.tile.y + placed.tile.height, area.height);
+        // A desktop too small to give every tile a whole cell still gets a
+        // window per tile: a zero-sized window is not a smaller share, it is
+        // one a reader can neither see nor reach.
+        return ckv::Rect{left, top, std::max(1, right - left), std::max(1, bottom - top)};
+    }
+
+    // An ordinary floating window. Its SIZE is what the reader made it, and
+    // nothing below changes that unless they asked for it to be changed.
+    //
+    // **Several windows that each need moving move independently**, rather than
+    // shifting as one group with their relative offsets preserved. plans/12
+    // left this open and named independent movement the simpler default; it is
+    // also the more defensible one. A group shift is bounded by the WORST
+    // window in it, so one oversized window would drag every other window off
+    // the place its reader put it — turning one window's problem into
+    // everybody's, and moving windows that were already perfectly inside the
+    // desktop and needed nothing. And the arrangement in which relative offsets
+    // genuinely carry meaning is a deliberate one, which is precisely the
+    // filled tiling above: that case is restored as a whole and proportionally,
+    // and never reaches this rule. What is left here is windows a reader placed
+    // one at a time, which is how they are best put back.
+    ckv::Rect rect = placed.rect;
+    // The move, which always happens and only ever goes up and left. `min` IS
+    // that rule — it can lower a coordinate and never raise one — so a window
+    // hanging off the right edge is pulled left by exactly its overhang, one
+    // hanging off the bottom is pulled up by its own, and a window already
+    // inside is not touched at all.
+    rect.x = std::min(rect.x, area.x + area.width - rect.width);
+    rect.y = std::min(rect.y, area.y + area.height - rect.height);
+    // And no further than the corner. This fires for a window WIDER or TALLER
+    // than the desktop, where the shift above would push its own left edge out
+    // of sight chasing a right edge that cannot be reached — the top-left is
+    // where such a window shows the most of itself. It also catches an
+    // arrangement stored on a desktop with less chrome than this one has:
+    // toward the content area's origin is the direction that brings a window
+    // in, whichever side it was hanging off.
+    rect.x = std::max(rect.x, area.x);
+    rect.y = std::max(rect.y, area.y);
+    // Only now, only if it STILL does not fit, and only if the reader opted in:
+    // the largest size that does. A distinct second operation, always after the
+    // move and never instead of it — and off by default, because a window too
+    // big for a smaller terminal is still the size its reader made it, and
+    // reattaching on the bigger one puts it back exactly as it was. Shrinking
+    // it would not be undone by anything.
+    if (options_.settings.resize_windows_to_fit) {
+        rect.width = std::min(rect.width, area.width);
+        rect.height = std::min(rect.height, area.height);
+    }
+    return rect;
+}
+
+void ClientApp::apply_layout(const std::vector<WindowPlacement>& arrangement) {
+    if (desktop_ == nullptr) return;
+    // The desktop as it is NOW, chrome excluded — which is the whole difference
+    // between restoring an arrangement and replaying one. Every case below is
+    // measured against this rather than against whatever the reader's terminal
+    // was the last time they were here.
+    const ckv::Rect area = desktop_->content_area();
+    // Bottom of the stack first, because the stack is restored by activating
+    // each window in turn and activation RAISES: applied in ascending z-order,
+    // the last one activated ends up on top, which is where the arrangement
+    // says it was. Sorted rather than indexed, since a `z_order` is only ever a
+    // comparison with the others in the same statement.
+    std::vector<const WindowPlacement*> ordered;
+    ordered.reserve(arrangement.size());
+    for (const WindowPlacement& placed : arrangement) ordered.push_back(&placed);
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const WindowPlacement* left, const WindowPlacement* right) {
+                         return left->z_order < right->z_order;
+                     });
+
+    bool restored_any = false;
+    for (const WindowPlacement* const placed : ordered) {
+        if (placed->terminal == nullptr) continue;
+        w::Window* const window = window_showing(placed->terminal);
+        // A terminal this client has no window for yet — the server naming a
+        // place before anything has been opened to put in it. Left unsettled on
+        // purpose, so the next statement about it still counts.
+        if (window == nullptr) continue;
+        // Once per terminal, and after this the window is the reader's. See
+        // `layout_settled_`: the server states an arrangement back to the very
+        // client that reported it, so a policy applied twice would answer a
+        // reader's own drag by moving the window somewhere else.
+        if (!layout_settled_.insert(placed->terminal).second) continue;
+        // A zero-size rect is the wire's "nobody has ever placed this window"
+        // (plans/05), not an arrangement with a sizeless window in it. The
+        // cascade placement this client already gave it stands — but the server
+        // HAS now spoken about this terminal, so it settles like any other and
+        // the reader owns it from here.
+        if (placed->rect.width <= 0 || placed->rect.height <= 0) continue;
+        if (placed->zoomed) {
+            // Maximized against the current desktop, which is the entire point:
+            // the rect it filled belonged to the terminal it was maximized on.
+            // `refresh_zoom_area` for a window that already is one, because a
+            // second `toggle_zoom` would RESTORE it — the opposite of what the
+            // arrangement asked for.
+            if (window->zoomed())
+                window->refresh_zoom_area(area);
+            else
+                window->toggle_zoom(area);
+        } else {
+            // Un-maximized first, so the rect below is the window's own bounds
+            // rather than something recorded underneath a zoom nobody asked to
+            // keep.
+            if (window->zoomed()) window->toggle_zoom(area);
+            window->set_bounds(restored_bounds(*placed, area));
+        }
+        // Geometry unconditionally; the STACK only when nothing is in front of
+        // it. `Desktop::activate` raises a window above every other window, a
+        // dialog included — and a dialog is above the arrangement whatever the
+        // arrangement covers, which is the same reason one is not a
+        // participant in a filled tiling. Restoring a reader's stacking is
+        // worth doing; doing it out from under the dialog they are reading is
+        // not, and that is not hypothetical: it put a terminal window over the
+        // modal asking whether to close that very terminal.
+        if (!app_.is_modal()) desktop_->activate(window);
+        restored_any = true;
+    }
+    // Activation left the topmost restored window active, and the keys belong
+    // in its terminal rather than on the frame around it — but only if the keys
+    // were in a terminal to begin with. A reader part-way through a menu, or
+    // answering a dialog, or reading history in copy mode, is not somebody
+    // whose focus an arrangement may move: a layout has an opinion about where
+    // the windows are and none at all about where somebody is typing.
+    if (restored_any && !app_.is_modal() &&
+        dynamic_cast<w::TerminalView*>(app_.focused()) != nullptr)
+        focus_active_terminal();
 }
 
 void ClientApp::focus_active_terminal() {
@@ -1563,30 +1739,28 @@ void ClientApp::show_settings() {
         w::FieldDescriptor{.label = "  Runs ~/.zprofile and ~/.profile, so a terminal here has the Dock's PATH.",
                            .kind = w::FieldKind::Note});
 
-    // The picture limit. Its unit is in the label because a bare number in a
-    // field is a question ("of what?"), and the note underneath answers the
-    // one a reader actually has: why a limit exists at all, and what happens
-    // when a terminal is over it.
+    // The picture limit and the grace, then ONE paragraph answering both — and
+    // the shape is a vertical budget rather than a preference. This dialog has
+    // to keep fitting a 24-row terminal, which leaves it 22 rows, and it was
+    // already asking for all of them: a `Column` puts a blank row between every
+    // item, so each field and each note paragraph costs two rows, not one.
+    // Consecutive notes are ONE item (ckVision groups them into a paragraph
+    // with no spacing), so merging these two notes into one paragraph pays for
+    // the checkbox below exactly, with nothing a reader was told left out. The
+    // lines stay in field order, so each still answers the field above it.
+    //
+    // Each unit is in its label, because a bare number in a field is a question
+    // ("of what?"), and "a new terminal" says the other thing a reader has to
+    // know: changing these does nothing to the terminals already open.
     const std::size_t sixel_field = descriptor.fields.size();
     descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "&Largest picture a program may draw (megapixels):",
+        w::FieldDescriptor{.label = "&Largest picture a new terminal may draw (megapixels):",
                            .initial_text = std::to_string(options_.settings.sixel_max_megapixels),
                            .validate = [](const std::string& text) {
                                return ckm::parse_sixel_megapixels(text).has_value();
                            },
                            .kind = w::FieldKind::Text});
-    descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  Pictures larger than the window are cut off at its edge, so this only",
-        .kind = w::FieldKind::Note});
-    descriptor.fields.push_back(
-        w::FieldDescriptor{.label = "  stops an absurd one. Between " + std::to_string(ckm::kSixelMegapixelsMin) +
-                                    " and " + std::to_string(ckm::kSixelMegapixelsMax) +
-                                    "; new terminals only.",
-                           .kind = w::FieldKind::Note});
 
-    // How long a session's programs are given to end. The note says the thing a
-    // reader would otherwise find out the hard way: that nothing is killed at
-    // all unless they ask for it at the moment they end a session.
     const std::size_t grace_field = descriptor.fields.size();
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "&Give programs this long to quit (seconds):",
@@ -1595,13 +1769,32 @@ void ClientApp::show_settings() {
                                return ckm::parse_int_in_range(text, 0, 600).has_value();
                            },
                            .kind = w::FieldKind::Text});
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "  Pictures larger than the window are cut off at its edge (" +
+                                    std::to_string(ckm::kSixelMegapixelsMin) + "-" +
+                                    std::to_string(ckm::kSixelMegapixelsMax) + ").",
+                           .kind = w::FieldKind::Note});
     descriptor.fields.push_back(w::FieldDescriptor{
-        .label = "  When you end a session. Nothing is killed unless you tick that box.",
+        .label = "  Ending a session kills nothing unless you tick that dialog's box.",
         .kind = w::FieldKind::Note});
 
+    // What a reattach does with a window too big for the terminal the reader
+    // has come back on (WP-30). No note of its own: the label says when it
+    // happens and that moving comes first, which is the whole setting, and a
+    // row spent here is a row the fields above would have to give up.
+    //
+    // `&R`, not `&S`: `&Start` above and the `&Save` button already hold S, and
+    // two claims on one mnemonic is a key that does whichever the walk reaches
+    // first.
+    const std::size_t fit_field = descriptor.fields.size();
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "&Resize oversized windows on reattach if moving is not enough",
+                           .kind = w::FieldKind::Check,
+                           .initial_checked = options_.settings.resize_windows_to_fit});
+
     // The clock and the theme: chrome rather than terminal behaviour, which is
-    // why they are last, and why the note above says only the two settings
-    // over it wait for a new terminal. These two change as the dialog closes.
+    // why they are last. The settings above wait for a new terminal — their own
+    // labels say so — while these two change as the dialog closes.
     //
     // Combo boxes rather than radio groups, although three visible
     // alternatives would otherwise be a radio group's job: two of those cost
@@ -1631,9 +1824,9 @@ void ClientApp::show_settings() {
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
         w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
-        [this, login_field, sixel_field, grace_field, clock_field, theme_field](
+        [this, login_field, sixel_field, grace_field, fit_field, clock_field, theme_field](
             w::DialogResult result) {
-            if (!result.accepted || result.checked.size() <= login_field ||
+            if (!result.accepted || result.checked.size() <= fit_field ||
                 result.values.size() <= sixel_field || result.selected.size() <= theme_field)
                 return;
             // One report between them: a home directory that cannot be written
@@ -1650,6 +1843,7 @@ void ClientApp::show_settings() {
                 if (const std::optional<int> seconds =
                         ckm::parse_int_in_range(result.values[grace_field], 0, 600))
                     stored = apply_kill_grace_seconds(*seconds) && stored;
+            stored = apply_resize_windows_to_fit(result.checked[fit_field]) && stored;
             stored = apply_clock_mode(choice_value(kClockChoices, result.selected[clock_field],
                                                    options_.settings.clock)) &&
                      stored;
@@ -1679,6 +1873,17 @@ bool ClientApp::apply_kill_grace_seconds(int seconds) {
     options_.settings.kill_grace_seconds = seconds;
     return ckm::save_setting(ckm::platform::config_file_path(), "general", "kill-grace-seconds",
                              std::to_string(seconds));
+}
+
+bool ClientApp::apply_resize_windows_to_fit(bool resize) {
+    if (options_.settings.resize_windows_to_fit == resize) return true;
+    options_.settings.resize_windows_to_fit = resize;
+    // Nothing on screen moves. This decides what the NEXT reattach does with a
+    // window that no longer fits, and re-laying the desktop out the moment a
+    // reader ticked a box would be the setting doing something it does not
+    // claim to do (WP-30).
+    return ckm::save_setting(ckm::platform::config_file_path(), "general",
+                             "resize-windows-to-fit", ckm::bool_setting(resize));
 }
 
 bool ClientApp::apply_sixel_max_megapixels(int megapixels) {

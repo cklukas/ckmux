@@ -118,6 +118,13 @@ public:
         u16(value.height);
     }
 
+    void tile(const TileFraction& value) {
+        u16(value.x);
+        u16(value.y);
+        u16(value.width);
+        u16(value.height);
+    }
+
     void cursor(const CursorOp& value) {
         u16(value.column);
         u16(value.row);
@@ -294,6 +301,20 @@ public:
         Rect value;
         value.x = i16();
         value.y = i16();
+        value.width = u16();
+        value.height = u16();
+        return value;
+    }
+
+    // Read as written and NOT clamped to `kTileFractionWhole`. A fraction past
+    // the whole is a peer that has miscomputed one, and the restore it feeds
+    // places a window past the desktop's edge — which is a place a reader can
+    // drag a window to anyway, so there is nothing here to make safe. Clamping
+    // would hide the arithmetic mistake instead of showing it.
+    TileFraction tile() {
+        TileFraction value;
+        value.x = u16();
+        value.y = u16();
         value.width = u16();
         value.height = u16();
         return value;
@@ -585,6 +606,7 @@ void write(Writer& w, const TerminalState& s) {
     w.rect(s.rect);
     w.u16(s.z_order);
     w.u8(s.zoomed);
+    w.tile(s.tile);
     w.cursor(s.cursor);
     w.u32(s.modes);
     w.runs(s.grid);
@@ -614,6 +636,7 @@ void read(Reader& r, TerminalState& s) {
     s.rect = r.rect();
     s.z_order = r.u16();
     s.zoomed = r.u8();
+    s.tile = r.tile();
     s.cursor = r.cursor();
     s.modes = r.u32();
     s.grid = r.runs();
@@ -650,10 +673,13 @@ void read(Reader& r, Attached& m) {
     m.snapshot.desktop_columns = r.u16();
     m.snapshot.desktop_rows = r.u16();
     m.snapshot.focused_term = r.u64();
-    // Seventy-nine bytes is a terminal state with no title, no grid, no
+    // Eighty-seven bytes is a terminal state with no title, no grid, no
     // history, no images, no print jobs and no diagnostic — every fixed field
-    // and the four counts that say the variable ones are empty.
-    const std::uint32_t terminals = r.count(79);
+    // and the four counts that say the variable ones are empty. It moves with
+    // every fixed field added: WP-30's eight-byte tile share took it from
+    // seventy-nine, and a bound left behind is a hostile count checked against
+    // a smaller entry than this codec can actually produce.
+    const std::uint32_t terminals = r.count(87);
     m.snapshot.terminals.reserve(terminals);
     for (std::uint32_t i = 0; i < terminals && r.ok(); ++i) {
         TerminalState state;
@@ -682,11 +708,12 @@ void write_layout_entries(Writer& w, const std::vector<LayoutEntry>& entries) {
         w.rect(entry.rect);
         w.u16(entry.z_order);
         w.u8(entry.zoomed);
+        w.tile(entry.tile);
     }
 }
 void read_layout_entries(Reader& r, std::vector<LayoutEntry>& entries) {
-    // 8 term + 8 rect + 2 z_order + 1 zoomed.
-    const std::uint32_t count = r.count(19);
+    // 8 term + 8 rect + 2 z_order + 1 zoomed + 8 tile.
+    const std::uint32_t count = r.count(27);
     entries.reserve(count);
     for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
         LayoutEntry entry;
@@ -694,6 +721,7 @@ void read_layout_entries(Reader& r, std::vector<LayoutEntry>& entries) {
         entry.rect = r.rect();
         entry.z_order = r.u16();
         entry.zoomed = r.u8();
+        entry.tile = r.tile();
         if (r.ok()) entries.push_back(entry);
     }
 }
@@ -1156,11 +1184,11 @@ std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines) {
 std::size_t encoded_size(const TerminalState& state) {
     // Everything `write(Writer&, const TerminalState&)` puts down that is not
     // the grid or the history: 8 term + 2 index + 2 title length + 1 flags +
-    // 2 columns + 2 rows + 8 rect + 2 z_order + 1 zoomed + 7 cursor +
+    // 2 columns + 2 rows + 8 rect + 2 z_order + 1 zoomed + 8 tile + 7 cursor +
     // 4 modes + 4 image count + 1 printer mode + 1 scope + 1 state +
     // 4 printer bytes + 4 job count + 8 clipboard serial + 1 exited +
     // 4 exit status + 1 hold + 1 diagnostic kind + 2 diagnostic length.
-    constexpr std::size_t kFixed = 71;
+    constexpr std::size_t kFixed = 79;
     // 8 per image id; 8 job + 1 kind + 4 bytes + 4 lines + 8 at per job.
     return kFixed + state.title.size() + state.diagnostic.size() + encoded_size(state.grid) +
            encoded_size(state.scrollback) + 8 * state.images.size() +

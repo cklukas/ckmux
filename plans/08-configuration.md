@@ -65,6 +65,12 @@ clock           = seconds      # seconds | minutes | off — the clock at the
                                # right end of the menu bar, with a calendar
                                # that drops out of it when clicked
                                # (Settings ▸ General…)
+resize-windows-to-fit = false  # reattaching on a smaller terminal always MOVES
+                               # a window up and left to bring it into the
+                               # desktop; this decides whether one that still
+                               # does not fit is then shrunk to what does.
+                               # Off, so a window keeps the size you gave it
+                               # (Settings ▸ General…, WP-30)
 
 [terminal]
 term            = auto         # value of $TERM inside terminals (see plan 04)
@@ -124,6 +130,13 @@ waits for.
 
 - **Client-side options** (theme, keys, clock, clipboard) are read by each
   client at startup — re-attach to apply changes.
+- **`resize-windows-to-fit` is read at the moment it is needed**, which is
+  every reattach: it decides what the restoration policy does with a window
+  that is still too large after being moved (WP-30), and the reader who ticks
+  the box in `Settings ▸ General…` gets that answer on their next attach
+  rather than on their next `ckmux`. Nothing on screen moves when it changes,
+  because the setting is about laying an arrangement back down and not about
+  the one already laid.
 - **Server-side options** (scrollback, shell, on-exit, kill-empty-session,
   max-fps) are read by the server at *server* start and sent per-terminal at
   creation; changing them affects new terminals, not existing ones (honest
@@ -137,8 +150,8 @@ waits for.
 - **A dialog may write this file back.** Printer settings are edited in
   `Terminal ▸ Printer Settings…` ([06](06-ui-design.md)); `Global` /
   `Save as default` persists them. `login-shell`, `sixel-max-megapixels`,
-  `clock`, `kill-grace-seconds` and `theme` are edited in
-  `Settings ▸ General…`. The write is key-targeted — matching `key = value`
+  `clock`, `kill-grace-seconds`, `resize-windows-to-fit` and `theme` are
+  edited in `Settings ▸ General…`. The write is key-targeted — matching `key = value`
   lines are rewritten in place (*every* matching line, since the file is read
   back last-line-wins and a Save that lands on the losing line is a Save the
   reader cannot see), a missing key joins its section, and a missing section

@@ -1287,7 +1287,8 @@ namespace {
 ckm::proto::LayoutEntry placed(std::uint64_t term, std::int16_t x, std::int16_t y,
                                std::uint16_t width, std::uint16_t height, std::uint16_t z,
                                std::uint8_t zoomed = 0) {
-    return ckm::proto::LayoutEntry{term, ckm::proto::Rect{x, y, width, height}, z, zoomed};
+    return ckm::proto::LayoutEntry{term, ckm::proto::Rect{x, y, width, height}, z, zoomed,
+                                   ckm::proto::TileFraction{}};
 }
 
 // The entry for one terminal, whatever order the message carried them in: the

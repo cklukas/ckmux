@@ -416,6 +416,11 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
                                    std::to_string(settings.kill_grace_seconds)));
         }
         if (key == "clock") return enumerated(settings.clock, kClockModes);
+        // [general], where plans/08 documents it and where `Settings ▸
+        // General…` writes it — the one place a key may be read from, since
+        // M-T1 was a key parsed under a section the dialog did not write to and
+        // a reader blamed for a line ckmux had written itself.
+        if (key == "resize-windows-to-fit") return boolean(settings.resize_windows_to_fit);
     } else if (section == "terminal") {
         if (key == "term") {
             settings.term = plain.empty() ? std::string("auto") : plain;

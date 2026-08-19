@@ -82,6 +82,16 @@ namespace ckm::proto {
 // nothing already on this wire changes shape; a build that does not know it
 // would refuse it as an unknown type, which is exactly what the one version
 // integer is for — and there is no such build, because v3 has shipped nowhere.
+//
+// Still v3 for `LayoutEntry.tile` and `TerminalState.tile` (WP-30), which DO
+// change the shape of something already on this wire — and the paragraph above
+// is why that is the right call rather than a v4: the version integer exists so
+// that two builds can tell whether they can talk, v3 has shipped nowhere, and a
+// second number for a wire nobody has ever spoken would say the same thing
+// twice. WP-28 left this field unadded on purpose, because a field nothing
+// writes is the shaped-and-dead state M-R3 named; it arrives here with its
+// producer (the client's tile query) and its consumer (the proportional
+// restore) in the same change.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -244,6 +254,45 @@ struct Rect {
 
 Rect to_wire(const ckv::Rect& rect);
 ckv::Rect from_wire(const Rect& rect);
+
+// What a whole content area is worth, in the units `TileFraction` counts.
+// Ten-thousandths: a 50/50 split is 5000, a third is 3333, and the worst
+// rounding error that leaves on a hundred-column desktop is a hundredth of a
+// cell. Fixed point rather than a float on the wire because every other number
+// here is an integer and a codec should not have to agree about an exponent.
+inline constexpr std::uint16_t kTileFractionWhole = 10'000;
+
+// One window's share of a FILLED TILING — the arrangement ckVision's
+// `Desktop::filled_tile_fractions()` recognizes: every window inside the
+// content area, none overlapping, and the whole area covered.
+//
+// This is the tag WP-29 was to carry and WP-28 deliberately left unadded until
+// something wrote and read it (plans/12 WP-30). It travels as a fraction rather
+// than as a flag beside the absolute rect because the fraction is the answer
+// that survives a change of desktop: a 50/50 split reported as {0, 0, 5000,
+// 10'000} and {5000, 0, 5000, 10'000} is still a 50/50 split laid back down on
+// a desktop of any other size, which replaying the old cell rects would not be.
+//
+// It is also ckVision's own answer rather than a second detection of the same
+// fact. Re-deriving "was this a filled tiling?" from the rects at the far end
+// would be a rule that could disagree with the one the reader's shadows were
+// drawn from (`Desktop::child_casts_shadow`, whose comment argues exactly this).
+//
+// Zero extent means "this window was not part of a filled tiling", the same
+// shape of sentinel `Rect`'s zero size uses for "nobody has placed this yet".
+// x + width and y + height are each at most `kTileFractionWhole`.
+struct TileFraction {
+    std::uint16_t x = 0;
+    std::uint16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+
+    // Whether this entry states a share at all. Both extents, because a tiling
+    // with a window of no height in it is not one either.
+    bool filled() const noexcept { return width != 0 && height != 0; }
+
+    friend bool operator==(const TileFraction&, const TileFraction&) = default;
+};
 
 // One run of identical cells. The grid and the scrollback are both sequences
 // of these: a terminal's rows are mostly repetition, and a run length is two
@@ -436,6 +485,12 @@ struct TerminalState {
     Rect rect;
     std::uint16_t z_order = 0;
     std::uint8_t zoomed = 0;
+    // And what share of a filled tiling that window held, when the arrangement
+    // it was reported in was one (WP-30). The rect above says where it WAS; this
+    // says what it was a half or a third OF, which is the only one of the two
+    // that still means something on a desktop of a different size. Zero extent
+    // is an ordinary floating window, restored from the rect.
+    TileFraction tile;
     CursorOp cursor;
     std::uint32_t modes = 0;  // ModeBit values, the whole set rather than a delta
     std::vector<CellRun> grid;
@@ -553,6 +608,12 @@ struct LayoutEntry {
     Rect rect;
     std::uint16_t z_order = 0;
     std::uint8_t zoomed = 0;
+    // The share of a filled tiling this window held at the moment the
+    // arrangement was reported, or zero extent for one that was floating
+    // (WP-30). The three are read in order — zoomed, then tiled, then the plain
+    // rect — because they are three different questions about one window and
+    // only the first that answers yes decides where it goes back.
+    TileFraction tile;
 
     friend bool operator==(const LayoutEntry&, const LayoutEntry&) = default;
 };

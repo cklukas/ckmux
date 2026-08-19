@@ -140,6 +140,38 @@ CK_TEST(login_shell_false_is_read_from_the_general_section) {
     CK_CHECK(loaded.warnings.empty());
 }
 
+CK_TEST(resize_windows_to_fit_is_off_unless_the_general_section_asks_for_it) {
+    // WP-30's one setting, and the whole reason it has a default worth pinning:
+    // reattaching on a smaller terminal always MOVES a window to bring it into
+    // the desktop, and shrinking one that still does not fit is a change to the
+    // size its reader chose. So it happens only when they ask.
+    ScratchConfig scratch("fit");
+    CK_CHECK(!Settings{}.resize_windows_to_fit);
+
+    scratch.write("[general]\nresize-windows-to-fit = true\n");
+    const ckm::LoadedSettings asked = load_settings(scratch.path());
+    CK_CHECK(asked.settings.resize_windows_to_fit);
+    CK_CHECK(asked.warnings.empty());
+
+    // And it lives in [general] — where plans/08 documents it, where the struct
+    // says it is, and where `Settings ▸ General…` writes it. Parsed anywhere
+    // else it would be a second live copy of one setting with the dialog
+    // writing to the other, which is exactly M-T1.
+    ScratchConfig elsewhere("fit-elsewhere");
+    elsewhere.write("[terminal]\nresize-windows-to-fit = true\n");
+    const ckm::LoadedSettings misplaced = load_settings(elsewhere.path());
+    CK_CHECK(!misplaced.settings.resize_windows_to_fit);
+    CK_CHECK(misplaced.warnings.size() == 1U);
+    if (misplaced.warnings.size() == 1U)
+        CK_CHECK(misplaced.warnings[0].find("belongs in [general], not [terminal]") !=
+                 std::string::npos);
+
+    // A key that IS honoured, so `check-config` must not tell a reader who set
+    // it that nothing will happen.
+    for (const std::string& waiting : ckm::keys_not_honoured_yet())
+        CK_CHECK(waiting.find("resize-windows-to-fit") == std::string::npos);
+}
+
 CK_TEST(comments_blank_lines_and_loose_spacing_are_all_read_through) {
     ScratchConfig scratch("shapes");
     scratch.write(

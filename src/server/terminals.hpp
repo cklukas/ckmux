@@ -48,6 +48,13 @@ struct WindowLayout {
     // at once (plans/05 `SetLayout`).
     std::uint16_t z_order = 0;
     bool zoomed = false;
+    // And what share of a filled tiling the window held, if the arrangement it
+    // was reported in was one (WP-30). Stored beside the rect rather than
+    // instead of it: the two answer different questions — where the window was,
+    // and what fraction of the desktop it was — and which of them a reattaching
+    // client uses is that client's policy, not this server's. Zero extent is a
+    // window that was simply floating.
+    proto::TileFraction tile;
 
     friend bool operator==(const WindowLayout&, const WindowLayout&) = default;
 };

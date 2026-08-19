@@ -89,6 +89,12 @@ std::vector<Message> every_message() {
     state.rect = Rect{-2, 3, 40, 12};
     state.z_order = 5;
     state.zoomed = 1;
+    // The right-hand half of a 50/50 split, which is what a reattaching client
+    // restores proportionally rather than from the rect above (WP-30). A codec
+    // that dropped it would put a tiled reader's windows back at absolute cell
+    // positions from a terminal they may no longer be using.
+    state.tile = TileFraction{kTileFractionWhole / 2, 0, kTileFractionWhole / 2,
+                              kTileFractionWhole};
     state.cursor = CursorOp{7, 9, 2, 1, 1};
     state.modes = static_cast<std::uint32_t>(ModeBit::MouseReporting) |
                   static_cast<std::uint32_t>(ModeBit::MouseEncodingSgr) |
@@ -127,8 +133,8 @@ std::vector<Message> every_message() {
 
     LayoutDelta layout;
     layout.session = 4;
-    layout.entries.push_back(LayoutEntry{11, Rect{1, 2, 30, 10}, 1, 0});
-    layout.entries.push_back(LayoutEntry{12, Rect{-5, 0, 20, 8}, 2, 1});
+    layout.entries.push_back(LayoutEntry{11, Rect{1, 2, 30, 10}, 1, 0, TileFraction{}});
+    layout.entries.push_back(LayoutEntry{12, Rect{-5, 0, 20, 8}, 2, 1, TileFraction{}});
     layout.focused_term = 12;
     layout.desktop_columns = 100;
     layout.desktop_rows = 30;
@@ -151,8 +157,8 @@ std::vector<Message> every_message() {
     messages.emplace_back(ZoomTerm{11, 1});
 
     SetLayout report;
-    report.entries.push_back(LayoutEntry{11, Rect{-6, 4, 44, 14}, 0, 0});
-    report.entries.push_back(LayoutEntry{12, Rect{3, 0, 22, 7}, 1, 1});
+    report.entries.push_back(LayoutEntry{11, Rect{-6, 4, 44, 14}, 0, 0, TileFraction{}});
+    report.entries.push_back(LayoutEntry{12, Rect{3, 0, 22, 7}, 1, 1, TileFraction{}});
     messages.emplace_back(std::move(report));
 
     messages.emplace_back(RenameTerminal{11, "build"});
@@ -260,9 +266,15 @@ CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
     // signed field that had been written as unsigned would come back as 65533
     // rather than -3, placing the window at the far side of a desktop nobody
     // has.
-    arrangement.push_back(LayoutEntry{101, Rect{-3, -1, 40, 12}, 0, 0});
-    arrangement.push_back(LayoutEntry{102, Rect{9, 5, 25, 8}, 1, 0});
-    arrangement.push_back(LayoutEntry{103, Rect{0, 0, 80, 24}, 2, 1});
+    arrangement.push_back(LayoutEntry{101, Rect{-3, -1, 40, 12}, 0, 0, TileFraction{}});
+    arrangement.push_back(LayoutEntry{102, Rect{9, 5, 25, 8}, 1, 0, TileFraction{}});
+    arrangement.push_back(LayoutEntry{103, Rect{0, 0, 80, 24}, 2, 1, TileFraction{}});
+    // And the tile shares, which travel beside the rects rather than instead of
+    // them (WP-30): the left half of a 50/50 split, a window that was floating,
+    // and a maximized one. Zero extent is how the wire says "there was no
+    // tiling", so the middle entry deliberately leaves it at the default.
+    arrangement[0].tile = TileFraction{0, 0, kTileFractionWhole / 2, kTileFractionWhole};
+    arrangement[2].tile = TileFraction{0, 0, kTileFractionWhole, kTileFractionWhole};
 
     SetLayout reported;
     reported.entries = arrangement;
@@ -289,6 +301,15 @@ CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
     // would put a maximized window under the ones it covers.
     CK_CHECK(decoded_report.entries[2].term == 103);
     CK_CHECK(decoded_report.entries[2].zoomed == 1);
+    // The tile share survives both ways, and its absence is a value rather than
+    // a gap: the floating window comes back saying "no tiling" and answers
+    // `filled()` with false, which is what sends it down the move-to-fit path
+    // instead of the proportional one.
+    CK_CHECK(decoded_report.entries[0].tile.width == kTileFractionWhole / 2);
+    CK_CHECK(decoded_report.entries[0].tile.height == kTileFractionWhole);
+    CK_CHECK(decoded_report.entries[0].tile.filled());
+    CK_CHECK(!decoded_report.entries[1].tile.filled());
+    CK_CHECK(decoded_statement.entries[2].tile.filled());
 
     // A session whose last window closed reports no windows, which is a
     // statement and not an absence of one: a report that could not say "none

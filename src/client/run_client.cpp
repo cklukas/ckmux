@@ -2,6 +2,7 @@
 #include "client/run_client.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -34,6 +35,26 @@ int wait_for_work(ckv::ui::Application& app, int socket_fd, bool want_write, int
             pollfd{socket_fd, static_cast<short>(POLLIN | (want_write ? POLLOUT : 0)), 0});
     if (waiting.empty()) return 0;
     return ::poll(waiting.data(), static_cast<nfds_t>(waiting.size()), timeout_ms);
+}
+
+// One of a tile fraction's four numbers, wire to window layer (WP-30). The wire
+// counts ten-thousandths of a content area because every other number on it is
+// an integer; the window layer counts fractions of one because that is what
+// ckVision's own `Desktop::TileFraction` answers in. This function is the whole
+// of the difference, and it lives here for the same reason the id translation
+// below it does: this file is the seam between the two vocabularies.
+double tile_share(std::uint16_t fixed) {
+    return static_cast<double>(fixed) / static_cast<double>(proto::kTileFractionWhole);
+}
+
+// The same conversion the other way. Written as `!(share > 0.0)` rather than
+// `share <= 0.0` so that a NaN — which compares false against everything — is
+// answered with "no share" instead of being handed to `llround`.
+std::uint16_t tile_fixed(double share) {
+    if (!(share > 0.0)) return 0;
+    const long long scaled =
+        std::llround(share * static_cast<double>(proto::kTileFractionWhole));
+    return static_cast<std::uint16_t>(std::clamp<long long>(scaled, 0, proto::kTileFractionWhole));
 }
 
 }  // namespace
@@ -293,8 +314,18 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             // only ever compared with the others in the same message.
             const std::optional<std::uint64_t> id = session.id_of(*placed.terminal);
             if (!id) continue;
-            entries.push_back(proto::LayoutEntry{*id, proto::to_wire(placed.rect), placed.z_order,
-                                                 static_cast<std::uint8_t>(placed.zoomed ? 1 : 0)});
+            // The tile share travels with the rect rather than instead of it
+            // (WP-30). Both, because they answer different questions and the
+            // far end decides which one applies: the rect is where the window
+            // was on THIS desktop, and the share is what fraction of any
+            // desktop it should have. A window that was floating carries a zero
+            // share, which is how the wire says "there was no tiling".
+            entries.push_back(proto::LayoutEntry{
+                *id, proto::to_wire(placed.rect), placed.z_order,
+                static_cast<std::uint8_t>(placed.zoomed ? 1 : 0),
+                proto::TileFraction{tile_fixed(placed.tile.x), tile_fixed(placed.tile.y),
+                                    tile_fixed(placed.tile.width),
+                                    tile_fixed(placed.tile.height)}});
         }
         session.report_layout(std::move(entries));
     };
@@ -395,6 +426,43 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         // local one. The child's own caption replaces the name as soon as it
         // sets one.
         if (client != nullptr) (void)client->open_terminal({});
+    };
+
+    // And where the reader left those windows (WP-30) — the same translation
+    // `report_layout` above does, run the other way, and here for the same
+    // reason: the session layer knows wire ids and the window layer knows
+    // windows, so a terminal is named by the mirror it is showing on the way in
+    // exactly as it is on the way out.
+    session.on_layout = [&session, &client](const std::vector<proto::LayoutEntry>& entries,
+                                            ServerSession::LayoutStatement statement) {
+        if (client == nullptr) return;
+        // Only a snapshot is a reattach, and only a reattach lays windows out.
+        //
+        // A `Delta` is the server's record moving while the reader watches, and
+        // the reader is the one who moved it — so there is nothing in one to
+        // restore, and acting on it can only ever take a window, a raise or the
+        // keyboard away from somebody mid-gesture. That is not a theoretical
+        // risk: it buried the close-terminal dialog behind the very terminal it
+        // was asking about, and swallowed the keystrokes that open the Terminal
+        // Report, because a terminal opened after the snapshot has its place
+        // first stated by a delta a fraction of a second into the session.
+        if (statement != ServerSession::LayoutStatement::Snapshot) return;
+        std::vector<WindowPlacement> arrangement;
+        arrangement.reserve(entries.size());
+        for (const proto::LayoutEntry& entry : entries) {
+            // A place for a terminal this client holds no mirror for is a place
+            // for a window that does not exist — a terminal that closed while
+            // the statement was in flight, or one this client has not been
+            // announced yet. Left out rather than guessed at; the window layer
+            // leaves such a terminal unplaced, so a later statement still counts.
+            const ckv::term::TerminalSubsession* const terminal = session.terminal(entry.term);
+            if (terminal == nullptr) continue;
+            arrangement.push_back(WindowPlacement{
+                terminal, proto::from_wire(entry.rect), entry.z_order, entry.zoomed != 0,
+                TileShare{tile_share(entry.tile.x), tile_share(entry.tile.y),
+                          tile_share(entry.tile.width), tile_share(entry.tile.height)}});
+        }
+        client->apply_layout(arrangement);
     };
 
     // An empty session gets a terminal; a session with programs in it gets left

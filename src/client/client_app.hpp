@@ -22,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -73,6 +74,28 @@ struct SessionRow {
     bool attached = false;
 };
 
+// One window's share of a FILLED TILING — ckVision's
+// `Desktop::filled_tile_fractions()` for a single window, carried in the same
+// units it answers in: offsets from `content_area()`'s own origin, each in
+// [0, 1], with x + width and y + height at most 1 (WP-30).
+//
+// The window layer holds this rather than the wire's fixed-point form for the
+// same reason it holds `ckv::Rect` rather than `proto::Rect`: this class knows
+// desktops, not wires, and `run_client.cpp` is where one becomes the other.
+struct TileShare {
+    double x = 0.0;
+    double y = 0.0;
+    double width = 0.0;
+    double height = 0.0;
+
+    // Whether this window was part of a filled tiling at all. Zero extent is
+    // the ordinary floating window — the arrangement was not a tiling, or this
+    // window was not one of its participants.
+    bool filled() const noexcept { return width > 0.0 && height > 0.0; }
+
+    friend bool operator==(const TileShare&, const TileShare&) = default;
+};
+
 // One terminal window's place in the arrangement, as the WINDOW layer sees it
 // (WP-29). The terminal is named by the subsession the window is showing rather
 // than by a wire id, because this class does not know wire ids and must not
@@ -93,6 +116,13 @@ struct WindowPlacement {
     ckv::Rect rect;
     std::uint16_t z_order = 0;
     bool zoomed = false;
+    // And what fraction of the desktop it was, when the arrangement it belongs
+    // to is a filled tiling (WP-30). Beside the rect rather than instead of it,
+    // because the two are answers to different questions: the rect says where
+    // the window was on the desktop it was measured on, and this says what
+    // share of ANY desktop it should have — which is the only one of the two
+    // that survives a reader reattaching at a different size.
+    TileShare tile;
 
     friend bool operator==(const WindowPlacement&, const WindowPlacement&) = default;
 };
@@ -301,6 +331,35 @@ public:
     // disabled for exactly as long as it stays zero.
     void set_attached_session(std::uint64_t id, std::string name);
     std::uint64_t attached_session() const noexcept { return attached_session_; }
+    // Puts this session's windows back where the reader left them (WP-30) —
+    // the other half of `report_layout`, and what the whole layout cluster
+    // exists for. Called with the arrangement the ATTACH SNAPSHOT carried, and
+    // only that: a `LayoutDelta` is the server's record moving while the reader
+    // watches, which is never a reattach and never something to lay down (see
+    // `ServerSession::LayoutStatement`).
+    //
+    // **Three cases, and only the first that answers decides:**
+    //
+    //   * A window that was **maximized** is restored maximized, against the
+    //     desktop as it is NOW rather than the one it was maximized on.
+    //   * A window that was part of a **filled tiling** is restored at the same
+    //     PROPORTION of the new desktop: a 50/50 split stays a 50/50 split at
+    //     any size, where replaying its old cell rect would leave a gap or an
+    //     overlap the moment the reader's terminal is not the size it was.
+    //   * An ordinary **floating** window keeps its stored SIZE and is MOVED —
+    //     up and left, only as far as it takes — to bring it as far inside the
+    //     new desktop as it goes. Only then, only if it still does not fit, and
+    //     only if `[general] resize-windows-to-fit` says so, is it resized down
+    //     to what fits. The move always happens; the resize is a second step
+    //     that is off by default, because a reader's window stays the size they
+    //     made it unless they asked otherwise.
+    //
+    // **A window's place is restored once per attachment**, and after that the
+    // reader owns it. Not every snapshot is a reattach: a mirror that falls
+    // behind is healed by asking for one, which arrives down this same path
+    // with every window already on screen and the reader part-way through
+    // whatever they were doing. See `layout_settled_`.
+    void apply_layout(const std::vector<WindowPlacement>& arrangement);
     // Takes down every terminal window and leaves what is behind them running.
     // This is what LEAVING a session means: the programs in it carry on, and
     // this client simply stops showing them. Not `close_terminal`, which ends
@@ -420,6 +479,12 @@ private:
     // desktop nobody is touching costs nothing on the wire however long the
     // timer runs.
     void report_layout_if_settled();
+    // Where one stored placement goes on the desktop as it is now — the
+    // geometry half of `apply_layout`, with no side effects, so the policy can
+    // be reasoned about (and tested) as the function of two rectangles it is.
+    // `area` is the current `content_area()`; zoom is the caller's business,
+    // because maximizing is not a rect a window is set to but a state it enters.
+    ckv::Rect restored_bounds(const WindowPlacement& placed, ckv::Rect area) const;
     void show_key_reference();
     // The name the New Session prompt offers, from the sessions last seen.
     std::string suggested_session_name() const;
@@ -465,6 +530,9 @@ private:
     bool apply_login_shell(bool login_shell);
     bool apply_sixel_max_megapixels(int megapixels);
     bool apply_kill_grace_seconds(int seconds);
+    // Read at the moment a layout is applied rather than at startup, so a
+    // reader who ticks the box and reattaches gets the answer they just chose.
+    bool apply_resize_windows_to_fit(bool resize);
     // These two also change what is on screen at once — the clock and the
     // colours are what the reader is looking at while they choose.
     bool apply_clock_mode(ClockMode mode);
@@ -530,6 +598,21 @@ private:
     std::vector<WindowPlacement> layout_seen_;
     std::vector<WindowPlacement> layout_reported_;
     ckv::ui::Application::TimerId layout_timer_ = 0;
+    // And WP-30's one memory: the terminals whose windows have been placed from
+    // a snapshot already, so that a place is restored once per attachment and
+    // the reader owns it afterwards.
+    //
+    // What it guards is the HEAL. A mirror that loses track asks for every
+    // terminal whole again, and that answer is an `Attached` — the same message
+    // a reattach arrives on, down the same path, except that every window is
+    // already on screen where the reader put it and the reader is in the middle
+    // of using them. Without this, a dropped frame would pick the whole desktop
+    // up and put it back, mid-session, for no reason a reader could see.
+    //
+    // Keyed by subsession rather than by window because that is what a
+    // placement names, and cleared with the windows in `forget_terminals()`:
+    // the next session's arrangement is a different desktop's.
+    std::set<const ckv::term::TerminalSubsession*> layout_settled_;
     // The window whose confirmation the reader has already answered, so the
     // second close() pass does not ask again — as an address AND as an
     // identity. An address alone is a claim about a window that may have been

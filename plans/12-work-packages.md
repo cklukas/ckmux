@@ -95,7 +95,7 @@ take first.
 | 19 | **U4-a** — Window Switcher Bar (new ckVision widget) | ckVision | 3–4 d | **Done** (2026-08-19, ckVision `fae8f97`) | — |
 | 20 | **U4-b** — Tile Horizontally/Vertically/Grid + filled-layout query | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `0c06c3f`) | — |
 | 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Done** (2026-08-19, ckVision `0c06c3f`) | — |
-| 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | **Ready** | WP-28 ✓, WP-29 ✓, U4-b ✓ |
+| 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | **Done** (2026-08-19) | WP-28 ✓, WP-29 ✓, U4-b ✓ |
 | 23 | **WP-31** — Tile Horizontally / Vertically / Grid commands in ckmux | ckmux | 0.5–1 d | **Ready** | U4-b ✓ |
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Ready** | U4-a ✓ |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Ready** | U4-c ✓ |
@@ -716,12 +716,15 @@ as specified:
   the second step; a maximized window and a 50/50 tiled pair both reattach
   correctly proportioned on a differently sized desktop.
 
-  **Open for whoever implements**: the move rule is specified for one
-  window. Several floating windows that all need to move on the same
-  reattach could either keep their relative offsets (shift as one group) or
-  each find its own nearest fit independently — the request above does not
-  settle which, and it is worth confirming rather than guessing; independent
-  movement is the simpler default absent a preference.
+  **Settled when it was implemented (2026-08-19): independently.** Each
+  floating window finds its own nearest fit; there is no group shift. A
+  group shift is bounded by the WORST window in it, so one oversized window
+  would drag every other one off the place its reader put it — turning one
+  window's problem into everybody's. And the arrangement where relative
+  offsets genuinely carry meaning is the deliberate one, which is precisely
+  the filled tiling: that is restored as a whole and proportionally, and
+  never reaches this rule. What is left is windows a reader placed one at a
+  time, which is how they are best put back.
 
 **U4-a — Window Switcher Bar** *(ckVision)*. A new dockable widget: every
 open window listed by title, click to activate and raise, right-click for a

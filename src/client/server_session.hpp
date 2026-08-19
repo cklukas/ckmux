@@ -62,6 +62,33 @@ public:
     // answered, and an answer nobody surfaces is indistinguishable from a
     // server that has hung.
     std::function<void(const proto::Error&)> on_error;
+    // Which of the two situations a layout statement came out of. They carry
+    // the same shape and mean entirely different things, so the caller is told
+    // which rather than left to guess (WP-30).
+    enum class LayoutStatement {
+        // The attach snapshot: the arrangement a client has just been handed,
+        // for windows it has just opened. This is a REATTACH, and the only
+        // moment there is anything to lay down.
+        Snapshot,
+        // The server's tick, while this client is watching. There is at most
+        // one watcher per session (plans/03's takeover) and it is the client
+        // that reported the arrangement, so this is normally that client's own
+        // report coming home — news about the server's record, never an
+        // instruction to move a window the reader is looking at.
+        Delta,
+    };
+
+    // Where this session's windows belong, as the server holds it (WP-30).
+    //
+    // Both situations reach it, tagged, because both are the server stating an
+    // arrangement and only one of them is a reattach. Each hands over the WHOLE
+    // arrangement, because a `z_order` is a position among windows and a
+    // partial list is one nothing can lay down.
+    //
+    // A `Snapshot` statement is announced AFTER `on_terminal_opened` for every
+    // terminal in it, and that order is load-bearing: a place stated before the
+    // window it is about exists is a place nothing can be put in.
+    std::function<void(const std::vector<proto::LayoutEntry>&, LayoutStatement)> on_layout;
 
     explicit ServerSession(Send send);
 

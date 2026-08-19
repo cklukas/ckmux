@@ -1132,6 +1132,28 @@ CK_TEST(a_layout_report_goes_out_once_per_change_and_never_while_unattached) {
     watcher.greet();
     std::size_t refusals = 0;
     watcher.session.on_error = [&refusals](const ckm::proto::Error&) { ++refusals; };
+    // What the server states back about the arrangement — the snapshot's at
+    // attach time, and every `LayoutDelta` after it. Recorded rather than laid
+    // out: this client draws nothing, and the seam it hands the statement to is
+    // the same one a drawing client puts windows from (WP-30).
+    std::vector<ckm::proto::LayoutEntry> stated;
+    // And which SITUATION each statement came out of. The two carry the same
+    // shape and mean different things — a snapshot is a reattach and has
+    // something to lay down, a delta is the server's record moving while the
+    // reader watches — and a real client restores from the first and never the
+    // second. Acting on a delta buried a dialog behind the terminal it was
+    // asking about, so the tag the gate rests on is pinned here.
+    std::size_t snapshots = 0;
+    std::size_t deltas = 0;
+    watcher.session.on_layout =
+        [&](const std::vector<ckm::proto::LayoutEntry>& entries,
+            ckm::client::ServerSession::LayoutStatement statement) {
+            stated = entries;
+            if (statement == ckm::client::ServerSession::LayoutStatement::Snapshot)
+                ++snapshots;
+            else
+                ++deltas;
+        };
 
     ckm::proto::LayoutEntry placed;
     placed.term = terminal.id();
@@ -1162,21 +1184,21 @@ CK_TEST(a_layout_report_goes_out_once_per_change_and_never_while_unattached) {
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 2U);
 
     // And the server filed it: it states the arrangement back on its tick, with
-    // the rect this client reported. Left in `unread` on purpose — restoring a
-    // layout is WP-30's, and this client deliberately does not act on one, so
-    // the `LayoutDelta` is a message it can see arrive and does nothing with.
+    // the rect this client reported.
     const auto stated_where_the_window_moved_to = [&] {
-        for (const ckm::proto::Message& message : watcher.unread) {
-            const auto* const layout = std::get_if<ckm::proto::LayoutDelta>(&message);
-            if (layout == nullptr || layout->entries.size() != 1U) continue;
-            if (layout->entries.front().term == terminal.id() &&
-                layout->entries.front().rect == moved.rect)
-                return true;
-        }
-        return false;
+        return stated.size() == 1U && stated.front().term == terminal.id() &&
+               stated.front().rect == moved.rect;
     };
     CK_CHECK(run_until(server, clock, watcher, stated_where_the_window_moved_to));
     CK_CHECK(refusals == 0U);
+    // A `LayoutDelta` is a message this build understands, so it never lands in
+    // the pile of ones nothing claimed.
+    CK_CHECK(watcher.count_of<ckm::proto::LayoutDelta>() == 0U);
+    // Exactly one snapshot — the attach — and the moves came as deltas. A
+    // build that tagged a delta as a snapshot would hand a live desktop to the
+    // restoration policy every time the reader nudged a window.
+    CK_CHECK(snapshots == 1U);
+    CK_CHECK(deltas >= 1U);
 
     server.terminals().close_all();
     forget(socket);
@@ -1226,6 +1248,76 @@ CK_TEST(an_arrangement_is_news_again_after_a_takeover_took_the_session_away) {
     CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
     early.session.report_layout({placed});
     CK_CHECK(early.sent_count(ckm::proto::MessageType::SetLayout) == 2U);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_tile_share_survives_the_server_and_comes_back_on_the_reattach_snapshot) {
+    // WP-30's wire addition, over the path it exists for. The share is what
+    // makes a 50/50 split still a 50/50 split on a terminal of another size, so
+    // it has to outlive the client that measured it exactly as the rect does —
+    // and it is the SNAPSHOT that has to carry it, because a reattach is a
+    // client arriving with no history at all.
+    const std::filesystem::path socket = private_socket("layout-tile");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    // The left half of a filled 50/50 tiling, reported as ckVision's own query
+    // answers it: the rect it happens to occupy right now, AND the share it is
+    // of the desktop. Both, because they answer different questions and only
+    // the reattaching client decides which one applies.
+    ckm::proto::LayoutEntry tiled;
+    tiled.term = terminal.id();
+    tiled.rect = ckm::proto::Rect{0, 1, 40, 22};
+    tiled.tile = ckm::proto::TileFraction{0, 0, ckm::proto::kTileFractionWhole / 2,
+                                          ckm::proto::kTileFractionWhole};
+    watcher.session.report_layout({tiled});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 1U);
+
+    // A reader coming back — on another connection, which is the takeover that
+    // reattaching to a session in use IS (plans/03). Its snapshot is the only
+    // thing it has ever been told about this session.
+    Client returning;
+    CK_CHECK(returning.connect(socket));
+    returning.greet();
+    std::vector<ckm::proto::LayoutEntry> restored;
+    // Only the snapshot's statement, which is the one a reattach lays down —
+    // the same gate `run_client.cpp` applies, so this test proves the path a
+    // reader actually reattaches through rather than one no client uses.
+    returning.session.on_layout =
+        [&restored](const std::vector<ckm::proto::LayoutEntry>& entries,
+                    ckm::client::ServerSession::LayoutStatement statement) {
+            if (statement == ckm::client::ServerSession::LayoutStatement::Snapshot)
+                restored = entries;
+        };
+    // Let the report reach the server before asking for the snapshot that has
+    // to contain it; the pump the attach runs through is what carries it.
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return terminal.layout().tile.filled(); }));
+    returning.session.attach(0, ckv::Size{120, 40}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, returning, [&] { return returning.session.attached(); }));
+
+    CK_CHECK(restored.size() == 1U);
+    if (restored.size() == 1U) {
+        CK_CHECK(restored.front().term == terminal.id());
+        // The rect the reader's old terminal gave it, unchanged and unclamped —
+        // this server neither draws a window nor makes one safe.
+        CK_CHECK(restored.front().rect == tiled.rect);
+        // And the share, which is the number that means anything on the 120x40
+        // desktop this client just declared.
+        CK_CHECK(restored.front().tile == tiled.tile);
+        CK_CHECK(restored.front().tile.filled());
+    }
 
     server.terminals().close_all();
     forget(socket);

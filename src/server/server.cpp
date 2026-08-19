@@ -556,6 +556,12 @@ void Server::handle(Client& client, const proto::Message& message) {
             layout.rect = entry.rect;
             layout.z_order = entry.z_order;
             layout.zoomed = entry.zoomed != 0;
+            // Recorded exactly as reported, and — like the rect — never
+            // recomputed here (WP-30). Whether an arrangement was a filled
+            // tiling is ckVision's answer about the desktop the reader was
+            // looking at; this server has no desktop and could only guess at it
+            // from rects whose content area it does not know.
+            layout.tile = entry.tile;
             (void)terminal->set_layout(layout);
         }
         // What actually changed goes out on the tick, in one message for the
@@ -1102,7 +1108,8 @@ void Server::announce_layout() {
             // mirror cannot apply.
             const WindowLayout& held = terminal->layout();
             layout.entries.push_back(proto::LayoutEntry{
-                id, held.rect, held.z_order, static_cast<std::uint8_t>(held.zoomed ? 1 : 0)});
+                id, held.rect, held.z_order, static_cast<std::uint8_t>(held.zoomed ? 1 : 0),
+                held.tile});
             terminal->note_layout_announced();
         }
         send(*watcher, layout);
@@ -1356,6 +1363,11 @@ void Server::send_snapshot(Client& client) {
         state.rect = placed.rect;
         state.z_order = placed.z_order;
         state.zoomed = static_cast<std::uint8_t>(placed.zoomed ? 1 : 0);
+        // And the share of a filled tiling it held, which is the one number a
+        // client reattaching at a DIFFERENT size can still use (WP-30): a 50/50
+        // split is 50/50 on any desktop, where the rect beside it is only true
+        // of the one it was measured on.
+        state.tile = placed.tile;
         // A snapshot IS the announcement, so the tick that follows it does not
         // restate the same arrangement in a `LayoutDelta`.
         terminal->note_layout_announced();

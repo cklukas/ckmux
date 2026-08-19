@@ -193,7 +193,49 @@ bool ServerSession::handle(const proto::Message& message) {
             const auto held = terminals_.find(id);
             if (held != terminals_.end() && on_terminal_opened) on_terminal_opened(*held->second);
         }
+        // And where all of it belongs (WP-30). Last, because every window it
+        // names has to exist before there is anything to place: the loop above
+        // is what opens them, and a layout stated before it would be describing
+        // a desktop that is still empty.
+        //
+        // From the snapshot's own per-terminal fields rather than from a
+        // message of its own — the arrangement is part of the state a
+        // reattaching client is handed, not news about it (plans/03: window
+        // layout is session state, owned by the server).
+        if (on_layout) {
+            std::vector<proto::LayoutEntry> arrangement;
+            arrangement.reserve(attached->snapshot.terminals.size());
+            for (const proto::TerminalState& state : attached->snapshot.terminals)
+                arrangement.push_back(proto::LayoutEntry{state.term, state.rect, state.z_order,
+                                                         state.zoomed, state.tile});
+            on_layout(arrangement, LayoutStatement::Snapshot);
+        }
         if (on_attached) on_attached(session_);
+        return true;
+    }
+    if (const auto* layout = std::get_if<proto::LayoutDelta>(&message)) {
+        // The session's arrangement, restated on the server's tick — and passed
+        // on as `Delta`, which is the whole of what makes it safe. Nothing is
+        // laid down from one (see `LayoutStatement`, and `run_client.cpp`'s
+        // handler): there is at most one watcher per session and it is the
+        // client that reported this very arrangement, so a statement here is
+        // normally its own report coming home.
+        //
+        // Acting on one cost three regressions, and the shape of them is worth
+        // recording. A terminal opened AFTER the snapshot — which is every
+        // terminal of a freshly made session — first has its place stated by a
+        // delta, roughly a settle interval plus a tick after its window
+        // appeared. Restoring "the first place the server states" therefore
+        // ran while the reader was part-way through a menu or reading a
+        // dialog: the raise put a terminal window over the modal asking about
+        // it, and the focus move ate the keystrokes opening it. A layout has no
+        // opinion about where somebody is typing.
+        //
+        // The session is checked because the message names one and this client
+        // watches exactly one: an arrangement for a session it is not showing
+        // describes windows it does not have.
+        if (layout->session == session_ && on_layout)
+            on_layout(layout->entries, LayoutStatement::Delta);
         return true;
     }
     if (const auto* detached = std::get_if<proto::Detached>(&message)) {

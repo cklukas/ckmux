@@ -177,6 +177,28 @@ ClientOptions watching_layout(LayoutReports& reports) {
     return options;
 }
 
+// --- WP-30: the arrangement the server states back --------------------------
+
+// One placement as the server would state it, composed the way
+// `run_client.cpp` composes it off the wire: a terminal is named by the
+// subsession its window is showing, because the window layer has no wire ids.
+ckm::client::WindowPlacement stored(ckv::widgets::Window* window, ckv::Rect rect,
+                                    std::uint16_t z_order = 0, bool zoomed = false,
+                                    ckm::client::TileShare tile = {}) {
+    return ckm::client::WindowPlacement{launched_terminal_of(window), rect, z_order, zoomed, tile};
+}
+
+// And the reverse, which the client keeps to itself: the window a terminal is
+// being shown in. Found by asking each window what it shows rather than by
+// index, because a restore reorders the stack and an index would then name a
+// different window than the one the assertion is about.
+ckv::widgets::Window* showing(ClientApp& client, const ckv::term::TerminalSubsession* terminal) {
+    if (terminal == nullptr) return nullptr;
+    for (ckv::widgets::Window* window : client.desktop().windows())
+        if (launched_terminal_of(window) == terminal) return window;
+    return nullptr;
+}
+
 }  // namespace
 
 CK_TEST(the_client_opens_with_a_menu_bar_a_footer_and_one_terminal) {
@@ -1182,4 +1204,182 @@ CK_TEST(a_zoomed_window_is_reported_as_zoomed_and_unzooming_reports_it_back) {
     layout_tick(f);
     CK_CHECK(reports.size() == 3U);
     CK_CHECK(!reports.back().front().zoomed);
+}
+
+CK_TEST(a_window_left_in_the_bottom_right_reattaches_shifted_up_and_left_at_its_own_size) {
+    // WP-30's move rule, and the case it was written for: a reader arranges a
+    // window near the bottom-right of a large terminal, comes back on a smaller
+    // one, and finds it fully visible — moved, and at exactly the size they
+    // made it. The checkbox is off, which is the default.
+    Fixture f;
+    f.app.step(0);
+    ckv::widgets::Window* const window = f.client.desktop().windows()[0];
+    const ckv::Rect area = f.client.desktop().content_area();
+    CK_CHECK(!f.client.settings().resize_windows_to_fit);
+
+    // Where the server says the reader left it: 20 columns past the right edge
+    // of the desktop they have now, and 5 rows past the bottom.
+    const ckv::Rect where_they_left_it{area.x + area.width - 10, area.y + area.height - 5, 30, 10};
+    f.client.apply_layout({stored(window, where_they_left_it)});
+
+    // Shifted up and left by exactly the overhang — no further, which is what
+    // "only as far as needed" means — and not resized by a single cell.
+    CK_CHECK(window->bounds() ==
+             (ckv::Rect{area.x + area.width - 30, area.y + area.height - 10, 30, 10}));
+    CK_CHECK(window->bounds().right() == area.right());
+    CK_CHECK(window->bounds().bottom() == area.bottom());
+
+    // And a window that was already inside is not touched at all: the rule can
+    // lower a coordinate and never raise one, so a window that fits has nothing
+    // done to it.
+    Fixture fits;
+    fits.app.step(0);
+    ckv::widgets::Window* const inside = fits.client.desktop().windows()[0];
+    const ckv::Rect room = fits.client.desktop().content_area();
+    const ckv::Rect comfortable{room.x + 3, room.y + 2, 20, 6};
+    fits.client.apply_layout({stored(inside, comfortable)});
+    CK_CHECK(inside->bounds() == comfortable);
+}
+
+CK_TEST(a_window_still_too_large_after_the_move_is_resized_only_when_the_reader_asked) {
+    // The second step, and it is a distinct one. The move above always happens;
+    // this decides whether anything follows it — and it is off by default,
+    // because a window too big for today's terminal is still the size its
+    // reader made it, and coming back on the bigger one restores it exactly.
+    // Shrinking it would not be undone by anything.
+    const ckv::Rect too_big{4, 4, 140, 40};  // wider and taller than either desktop below
+
+    {
+        ConfiguredFixture off(test_options());
+        off.app.step(0);
+        ckv::widgets::Window* const window = off.client.desktop().windows()[0];
+        const ckv::Rect area = off.client.desktop().content_area();
+        off.client.apply_layout({stored(window, too_big)});
+        // Moved as far as it goes — the content area's own corner, since there
+        // is nowhere further — and left at its real size, still hanging off
+        // both edges. That overhang is the honest answer, not a bug.
+        CK_CHECK(window->bounds() == (ckv::Rect{area.x, area.y, too_big.width, too_big.height}));
+    }
+
+    ClientOptions asked = test_options();
+    asked.settings.resize_windows_to_fit = true;
+    ConfiguredFixture on(asked);
+    on.app.step(0);
+    ckv::widgets::Window* const window = on.client.desktop().windows()[0];
+    const ckv::Rect area = on.client.desktop().content_area();
+    on.client.apply_layout({stored(window, too_big)});
+    // Moved FIRST and then shrunk: the origin is the corner the move reached,
+    // and the size is the largest that fits there. A resize instead of a move
+    // would have left it at 4,4 and taken more off the size than it had to.
+    CK_CHECK(window->bounds() == area);
+}
+
+CK_TEST(an_arrangement_laid_down_under_a_dialog_leaves_the_dialog_in_front) {
+    // The regression this pins cost three end-to-end menu tests. A layout
+    // statement arriving while the reader had a dialog open raised a terminal
+    // window over it and took the keyboard with it — so the modal asking
+    // whether to close a terminal ended up behind that very terminal, and the
+    // keystrokes opening a menu went to a shell instead.
+    //
+    // Geometry is safe to lay down whenever: a window that moves under a dialog
+    // is still under it. The STACK and the FOCUS are not, because a dialog is
+    // above the arrangement whatever the arrangement covers.
+    Fixture f;
+    f.app.step(0);
+    ckv::widgets::Window* const window = f.client.desktop().windows()[0];
+    const ckv::Rect area = f.client.desktop().content_area();
+
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+    ckv::ui::View* const answering = f.app.focused();
+
+    const ckv::Rect somewhere{area.x + 5, area.y + 3, 24, 8};
+    f.client.apply_layout({stored(window, somewhere)});
+    f.app.step(0);
+
+    // The window went where the arrangement said — that half is never in doubt.
+    CK_CHECK(window->bounds() == somewhere);
+    // And the dialog is still in front, still holding the keys, still readable.
+    CK_CHECK(f.app.is_modal());
+    CK_CHECK(f.app.focused() == answering);
+    std::string screen;
+    const ckv::FrameView frame = f.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    CK_CHECK(screen.find("Start terminals") != std::string::npos);
+    CK_CHECK(screen.find("Save") != std::string::npos);
+}
+
+CK_TEST(a_maximized_window_and_a_fifty_fifty_pair_come_back_proportioned_on_a_new_desktop) {
+    // The proportional half of the policy, end to end: ckVision's own tile
+    // query fills the share in (`capture_layout`), and the restore lays that
+    // share back down on a desktop of a different size. A 50/50 split reattaches
+    // as a 50/50 split, where replaying the stored cell rects would leave a
+    // strip of bare desktop on a wider terminal and an overlap on a narrower.
+    LayoutReports reports;
+    ConfiguredFixture f(watching_layout(reports));
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 2U);
+
+    // An exact, desktop-filling tiling — which is what makes the query answer
+    // at all. It is measured, not flagged: a window dragged off the grid stops
+    // being part of one immediately (ckVision U4-b).
+    f.client.desktop().tile_vertically();
+    f.app.step(0);
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(!reports.empty());
+    if (reports.empty()) return;
+    const std::vector<ckm::client::WindowPlacement> arranged = reports.back();
+    CK_CHECK(arranged.size() == 2U);
+    if (arranged.size() != 2U) return;
+    for (const ckm::client::WindowPlacement& placed : arranged) {
+        CK_CHECK(placed.tile.filled());
+        CK_CHECK(placed.tile.width > 0.49 && placed.tile.width < 0.51);
+        CK_CHECK(placed.tile.height > 0.99);
+    }
+
+    // The reader comes back on a terminal of another size entirely.
+    f.terminal.resize(Size{80, 24});
+    f.app.step(0);
+    const ckv::Rect area = f.client.desktop().content_area();
+    f.client.apply_layout(arranged);
+
+    // Still a 50/50 split, and still an exact one: the two windows meet on a
+    // single boundary and together fill the desktop. That is why the fraction
+    // is applied as two EDGES rather than as an origin and a width — rounding
+    // each width on its own gives two halves that overlap by a column.
+    // Which band is which comes from the share itself rather than from the
+    // order the report happens to be in — that order is the z-stack, and the
+    // stack says nothing about who is on the left.
+    const bool zero_is_left = arranged[0].tile.x < arranged[1].tile.x;
+    ckv::widgets::Window* const left = showing(f.client, arranged[zero_is_left ? 0 : 1].terminal);
+    ckv::widgets::Window* const right = showing(f.client, arranged[zero_is_left ? 1 : 0].terminal);
+    CK_CHECK(left != nullptr && right != nullptr);
+    if (left == nullptr || right == nullptr) return;
+    CK_CHECK(left->bounds().x == area.x);
+    CK_CHECK(left->bounds().y == area.y);
+    CK_CHECK(left->bounds().height == area.height);
+    CK_CHECK(right->bounds().right() == area.right());
+    CK_CHECK(right->bounds().height == area.height);
+    CK_CHECK(left->bounds().right() == right->bounds().x);
+    CK_CHECK(left->bounds().width + right->bounds().width == area.width);
+
+    // And the maximized case, which is read first and answers on its own: the
+    // window fills the desktop as it is NOW rather than the rect it filled on
+    // the terminal it was maximized on.
+    Fixture maximized;
+    maximized.app.step(0);
+    ckv::widgets::Window* const window = maximized.client.desktop().windows()[0];
+    const ckv::Rect filled_then = maximized.client.desktop().content_area();
+    maximized.terminal.resize(Size{60, 20});
+    maximized.app.step(0);
+    const ckv::Rect filled_now = maximized.client.desktop().content_area();
+    CK_CHECK(filled_now != filled_then);
+    maximized.client.apply_layout({stored(window, filled_then, 0, /*zoomed=*/true)});
+    CK_CHECK(window->zoomed());
+    CK_CHECK(window->bounds() == filled_now);
 }

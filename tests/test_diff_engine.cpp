@@ -625,7 +625,12 @@ CK_TEST(the_size_a_snapshot_will_take_is_known_before_it_is_written) {
     bare.term = 12;
     attached.snapshot.terminals.push_back(std::move(bare));
 
-    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 79U);
+    // 79 fixed bytes plus the two counts that say the grid and the history are
+    // empty. It was 71 + 8 before WP-30 put an eight-byte tile share on every
+    // terminal state; the decoder's own per-entry minimum moved by the same
+    // eight, and the two are checked against each other by this number being
+    // written down twice on purpose.
+    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 87U);
     const std::string frame = ckm::proto::encode(attached);
     CK_CHECK(!frame.empty());
     CK_CHECK(frame.size() ==

@@ -138,6 +138,20 @@ struct Settings {
     // more use with a second hand than without. `minutes` and `off` are the
     // other two answers (Settings ▸ General…).
     ClockMode clock = ClockMode::Seconds;
+    // [general] resize-windows-to-fit. What happens to a window that is still
+    // too large for the desktop AFTER a reattach has moved it as far up and
+    // left as it can (WP-30).
+    //
+    // Off, and deliberately: a reader's window stays the size they set it to
+    // unless they asked otherwise. Reattaching on a smaller terminal then
+    // leaves such a window at its real size with a corner hanging off the
+    // edge, which is honest — the window IS that big — and reattaching on the
+    // larger one again puts it back exactly as it was. On, the window is
+    // shrunk to the largest size that fits, which is a change to the
+    // arrangement the reader made and never something to do without being
+    // asked. The MOVE is not optional and happens either way; this decides only
+    // whether a second, resizing step follows it.
+    bool resize_windows_to_fit = false;
 
     // --- [terminal] -----------------------------------------------------
     // $TERM inside terminals. `auto` lets ckmux choose what it can honestly
