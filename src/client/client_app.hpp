@@ -22,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -269,6 +270,21 @@ struct ClientOptions {
     // compare. A push would need its own route from the session layer into the
     // window layer, which is the seam this file exists to keep closed.
     std::function<std::string(const ckv::term::TerminalSubsession& terminal)> custom_title;
+    // What a terminal's child exited with, where the host can say. The seam
+    // carries `state()` but no number — `TerminalSubsession` has no
+    // `exit_status()` — and the banner's whole point is to say WHICH status,
+    // because `[exit 0]` and `[exit 1]` are different news to a reader
+    // (plans/06:668). A server-backed client reads it off the mirror; a client
+    // with no server reads it off its own subsession; neither is a fact this
+    // layer can get for itself, which is why it is asked for rather than
+    // derived. No callback means no number, and the badge says `[exited]`.
+    std::function<std::optional<int>(const ckv::term::TerminalSubsession& terminal)> exit_status;
+    // Run this terminal's command again, in the window it is already in
+    // (WP-13, plans/06:668's `Enter restart`). Set only where something can
+    // honour it: an attached client sends `RespawnTerminal`, and a client with
+    // no server has nobody to ask — so an unset callback is what takes the
+    // hint off the footer rather than offering a key that does nothing.
+    std::function<void(const ckv::term::TerminalSubsession& terminal)> request_respawn;
     // Moves one terminal to another session, so its program keeps running
     // somewhere this desktop is not showing. `to_new_session` outranks
     // `destination`: the reader asked for a fresh one.
@@ -817,6 +833,13 @@ private:
         // title again" has a current answer to fall back to rather than the
         // stale one from whenever the reader pinned it.
         std::string fallback;
+        // What the frame says about a program that has ended: `[exit 1]`, or
+        // `[exited]` when nothing can supply the number (WP-13, plans/06:668).
+        // A fourth string rather than a rewrite of `child`, for the reason the
+        // other three are separate: the child's last claimed title is still
+        // wanted underneath the badge, and a respawn must be able to take the
+        // badge off without having lost the name.
+        std::string badge;
         std::string child;
         std::string custom;
         // The number in "Terminal 3", kept as a number so that `^B 3` can find

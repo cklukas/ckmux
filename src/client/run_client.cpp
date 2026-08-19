@@ -328,6 +328,28 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         const RemoteTerminalSubsession* const remote = session.terminal(*id);
         return remote == nullptr ? std::string{} : remote->mirror().custom_title();
     };
+    // What the child exited with, for the frame's `[exit N]` badge (WP-13).
+    // Read off the mirror, which learned it from `TermClosed` and keeps it —
+    // the seam carries `state()` but no number, so without this the badge
+    // could only say that something ended, not what.
+    options.client.exit_status =
+        [&session](const ckv::term::TerminalSubsession& terminal) -> std::optional<int> {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return std::nullopt;
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        return remote == nullptr ? std::nullopt : remote->mirror().exit_status();
+    };
+    // `Enter restart` on a held window: the same command, in the same window,
+    // which is the server's to do because the server owns the child. Set only
+    // here — a client with no server leaves it unset, and the footer stops
+    // offering the key rather than offering one that does nothing.
+    options.client.request_respawn = [&session](const ckv::term::TerminalSubsession& terminal) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::RespawnTerminal ask;
+        ask.term = *id;
+        session.request(ask);
+    };
     options.client.move_terminal = [&session](ckv::term::TerminalSubsession& terminal,
                                               std::uint64_t destination, bool to_new_session) {
         const std::optional<std::uint64_t> id = session.id_of(terminal);

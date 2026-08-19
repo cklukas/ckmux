@@ -820,3 +820,37 @@ CK_TEST(a_string_longer_than_its_length_field_is_refused_rather_than_truncated) 
     CK_CHECK(good.size() == kHeaderBytes + 8);
     CK_CHECK(!oversize);
 }
+
+CK_TEST(an_error_code_this_build_does_not_define_survives_the_wire_intact) {
+    // The old-client-meets-new-server case, which no build in this fleet
+    // reproduces: both ends of every other test here know every code, so none
+    // of them can tell a decoder that passes an unknown value through from one
+    // that rejects the frame. The difference matters — a pass-through shows the
+    // reader a correct sentence under a generic category, while a rejection
+    // drops the connection over a message the server was right to send.
+    //
+    // Written when WP-13 added `LimitReached = 5`. The value below is not a
+    // code this build defines and is not expected to become one; what is being
+    // pinned is that `Error::code` is a `std::uint16_t` on the wire and in the
+    // struct, decoded with no validation against the enum, so a code added by
+    // a NEWER peer arrives whole rather than as a protocol error.
+    ckm::proto::Error future;
+    future.code = 9999;
+    future.context = "SomethingThisBuildHasNeverHeardOf";
+    future.human = "the server said something newer than this client";
+
+    const std::string bytes = ckm::proto::encode(future);
+    ckm::proto::Message decoded;
+    const ckm::proto::DecodeResult result = ckm::proto::decode(bytes, decoded);
+    CK_CHECK(result.error == ckm::proto::DecodeError::None);
+    const auto* const back = std::get_if<ckm::proto::Error>(&decoded);
+    CK_CHECK(back != nullptr);
+    if (back != nullptr) {
+        CK_CHECK(back->code == 9999);
+        // The sentence is the part a reader actually reads, and it is the part
+        // that must survive: a client that cannot name the category can still
+        // show what the server said.
+        CK_CHECK(back->human == future.human);
+        CK_CHECK(back->context == future.context);
+    }
+}

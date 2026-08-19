@@ -1839,3 +1839,139 @@ CK_TEST(a_maximized_window_and_a_fifty_fifty_pair_come_back_proportioned_on_a_ne
     CK_CHECK(window->zoomed());
     CK_CHECK(window->bounds() == filled_now);
 }
+
+// --- WP-13: the exit banner --------------------------------------------------
+
+namespace {
+
+// A client whose terminals hold after their child ends, running a program that
+// ends at once. `/usr/bin/false` is chosen for the status: `[exit 1]` and
+// `[exit 0]` are different news to a reader, so a test that used `true` could
+// not tell a badge that reports the status from one that prints a zero.
+ClientOptions exiting_options() {
+    ClientOptions options = test_options();
+    options.settings.shell = "/usr/bin/false";
+    return options;
+}
+
+// Waits for the child to be reaped, bounded. A real process is involved, so
+// the only honest way to wait for one is to wait — with the bound failing the
+// test rather than hanging it.
+bool pump_until_exited(ConfiguredFixture& f, int milliseconds = 4000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        f.clock.advance(200'000'000);
+        f.app.step(f.clock.now_nanos());
+        for (ckv::widgets::Window* window : f.client.desktop().windows()) {
+            auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(window->content());
+            if (view == nullptr) continue;
+            using State = ckv::core::TerminalSubsessionState;
+            const State state = view->session().state();
+            if (state == State::Exited || state == State::Failed) return true;
+        }
+        ::usleep(2000);
+    }
+    return false;
+}
+
+// Exact rather than substring, deliberately — see the footer test below.
+bool has_exact_label(const std::vector<std::string>& labels, std::string_view wanted) {
+    for (const std::string& label : labels)
+        if (label == wanted) return true;
+    return false;
+}
+
+ckv::widgets::Window* first_terminal_window(ClientApp& client) {
+    for (ckv::widgets::Window* window : client.desktop().windows())
+        if (dynamic_cast<ckv::widgets::TerminalView*>(window->content()) != nullptr) return window;
+    return nullptr;
+}
+
+}  // namespace
+
+CK_TEST(a_window_whose_program_ended_wears_the_status_it_ended_with) {
+    // plans/06:668 — "dim border, title badge `[exit 1]`". The number is the
+    // point: a reader looking at a build loop needs to know whether it passed.
+    ConfiguredFixture f{[] {
+        ClientOptions options = exiting_options();
+        // The host supplies the number, because the seam carries `state()` and
+        // no status. Without this the badge can only say that something ended.
+        options.exit_status = [](const ckv::term::TerminalSubsession&) { return 1; };
+        return options;
+    }()};
+    CK_CHECK(pump_until_exited(f));
+    ckv::widgets::Window* const window = first_terminal_window(f.client);
+    CK_CHECK(window != nullptr);
+    if (window != nullptr) CK_CHECK(window->title().find("[exit 1]") != std::string::npos);
+}
+
+CK_TEST(a_status_nobody_can_supply_is_said_as_exited_rather_than_as_zero) {
+    // No `exit_status` callback — a client with no server, or one whose mirror
+    // never learned the number. `[exit 0]` would be a lie: it says the program
+    // succeeded, which is exactly the claim that cannot be made here.
+    ConfiguredFixture f{exiting_options()};
+    CK_CHECK(pump_until_exited(f));
+    ckv::widgets::Window* const window = first_terminal_window(f.client);
+    CK_CHECK(window != nullptr);
+    if (window != nullptr) {
+        CK_CHECK(window->title().find("[exited]") != std::string::npos);
+        CK_CHECK(window->title().find("[exit 0]") == std::string::npos);
+    }
+}
+
+CK_TEST(a_held_window_offers_restart_only_where_something_can_honour_it) {
+    // The footer and the key binding ask the same question, so a reader is
+    // never offered a key that does nothing. A client with no server has
+    // nobody to ask for a respawn, so the hint is absent there and present
+    // where a `request_respawn` exists.
+    {
+        ConfiguredFixture without{exiting_options()};
+        CK_CHECK(pump_until_exited(without));
+        // Exact, not contains: the ordinary terminal footer carries
+        // "^B x close term", which a substring test for "x close" matches —
+        // so a contains-check here would pass while the held footer was never
+        // shown at all. It did, until this was tightened.
+        const std::vector<std::string> labels = without.client.footer_labels();
+        CK_CHECK(has_exact_label(labels, "x close"));
+        CK_CHECK(!has_exact_label(labels, "Enter restart"));
+    }
+    {
+        ConfiguredFixture with{[] {
+            ClientOptions options = exiting_options();
+            options.request_respawn = [](const ckv::term::TerminalSubsession&) {};
+            return options;
+        }()};
+        CK_CHECK(pump_until_exited(with));
+        const std::vector<std::string> labels = with.client.footer_labels();
+        CK_CHECK(has_exact_label(labels, "Enter restart"));
+        CK_CHECK(has_exact_label(labels, "x close"));
+    }
+}
+
+CK_TEST(enter_restarts_a_held_window_and_x_closes_it) {
+    // The two keys, pressed the way a reader presses them — through the
+    // application's own event path, not by calling a handler (ckVision's rule).
+    // They reach ckmux at all only because the view offers keys to its host
+    // once the child is gone; while it is alive every key belongs to the child.
+    int restarts = 0;
+    ConfiguredFixture f{[&restarts] {
+        ClientOptions options = exiting_options();
+        options.request_respawn = [&restarts](const ckv::term::TerminalSubsession&) { ++restarts; };
+        return options;
+    }()};
+    CK_CHECK(pump_until_exited(f));
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+
+    CK_CHECK(f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}}));
+    CK_CHECK(restarts == 1);
+    // Restarting does not close the window — that is the whole of "in the same
+    // window", and a respawn that took the window with it would be a new
+    // terminal wearing the old one's place.
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+
+    CK_CHECK(f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "x"}}));
+    f.app.step(f.clock.now_nanos());
+    CK_CHECK(terminal_window_count(f.client) == 0U);
+    // And closing did not also ask for a restart on the way out.
+    CK_CHECK(restarts == 1);
+}

@@ -109,7 +109,7 @@ take first.
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
-| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **In progress (ckmux-be, /tmp/cc-socks/76113.sock)** | WP-8 ✓ |
+| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Done** (2026-08-20) | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-12 ✓ |
 | 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
 | 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
@@ -672,17 +672,27 @@ readers the key was dead while it was deciding what their windows did; removed
 2026-08-19, and the audit test that pins the other four corrected keys now
 pins this one too.
 
-Genuinely remaining: **respawn-in-window** — `RespawnTerminal` still has
-neither producer nor handler, existing only as an enum value and a variant
-member, and `Terminal` does not retain the `TerminalSpec` it was launched
-from, so "the same command in the same window" (plans/06:668) needs the spec
-kept before it can be relaunched. Then the **exit banner** with its
-`Enter restart · x close` footer, which is client-side and sequences behind
-WP-39's work in `client_app.cpp`. And the per-session **terminal limit**
-carried over from WP-8, which still has no key in
-[08](08-configuration.md) — it belongs with the policy that decides what an
-over-limit request is told, and [03](03-session-model.md) documents the
-default as 64.
+All three landed 2026-08-20. **Respawn-in-window**: `Terminal` now retains
+the spec it was launched from, `Terminals::respawn` relaunches in place at the
+window's CURRENT size and refuses a living child, and the handler drops the
+differ before re-announcing under the same id — same window means same id,
+because a client's window is keyed on it. **The per-session terminal limit**
+arrived as `[general] max-terminals` (default 64, the number plans/03 states)
+with a new `ErrorCode::LimitReached`, because "you named something real and
+the answer is still no" is a different sentence from "no such thing".
+**The exit banner** is the frame badge `[exit 1]` — `[exited]` where nothing
+can supply the number, rather than a zero that would claim success — with the
+footer offering `Enter restart · x close` only where something can honour it.
+
+Two things had to be built underneath it. The keys needed ckVision's
+`on_key_after_exit` (`be08363`): a `TerminalView` writes what it is given to
+its child, so both keys were being written into a child that had already
+exited, and the class being `final` meant a host could not reach the decision
+by subclassing. And nothing refreshed the footer when a child ended — the
+title poll is the moment ckmux LEARNS of an exit, so the hint is refreshed
+there, or it would appear only when some unrelated event happened to redraw
+the footer, which for a reader watching a build finish is never.
+
 **WP-14 — Notifications and help.** *Ready* — WP-12 is `Done`, and nothing
 here needs a server. `NotificationCenter` toasts; help pages
 complete, with their key tables generated from the same registry that

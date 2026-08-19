@@ -106,6 +106,17 @@ Value choice_value(const std::array<Choice<Value>, N>& choices, int index, Value
 // waiting at a prompt it has not drawn, anything reading stdin — is still
 // Ready, and is exactly the kind of thing a reader would not want closed
 // silently.
+// Whether this window's program has ended. Exited and Failed both count: to a
+// reader a command that could not start and one that ran and stopped are the
+// same situation — a window with nothing behind it — and both are offered the
+// same two keys.
+bool child_has_ended(const w::TerminalView* view) {
+    if (view == nullptr) return false;
+    using State = ckv::core::TerminalSubsessionState;
+    const State state = view->session().state();
+    return state == State::Exited || state == State::Failed;
+}
+
 bool child_is_live(w::Window* window) {
     w::TerminalView* const view = terminal_view_of(window);
     if (view == nullptr) return false;
@@ -1467,6 +1478,37 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
 
     w::Window* const terminal_window = window.get();
     ckv::term::TerminalSubsession* const terminal_session = &session;
+    // The two keys a held window offers (plans/06:668), claimed through
+    // ckVision's `on_key_after_exit` — which exists because a `TerminalView`
+    // writes what it is given to its child, and a child that has exited is not
+    // there to receive it. Consulted only once the subsession has ended, so a
+    // live terminal's keys are still entirely its own.
+    //
+    // Both are offered only where something can honour them: `request_respawn`
+    // is unset in a client with no server, and the footer asks the same
+    // question before printing the hint, so the advertisement and the binding
+    // cannot come to disagree.
+    const std::weak_ptr<void> alive_for_keys = alive_;
+    terminal_view->on_key_after_exit = [this, alive_for_keys, terminal_session,
+                                        terminal_window](const ckv::KeyEvent& event) {
+        if (alive_for_keys.expired()) return false;
+        if (event.action != ckv::KeyAction::Press) return false;
+        if (event.chord.key == ckv::Key::Enter) {
+            if (!options_.request_respawn) return false;
+            options_.request_respawn(*terminal_session);
+            return true;
+        }
+        if (event.chord.key == ckv::Key::Char && event.chord.modifiers == ckv::Modifier::None &&
+            (event.chord.text == "x" || event.chord.text == "X")) {
+            // Through the window's own close, so a held window leaves by
+            // exactly the path the frame's × uses; `close_request` lets it go
+            // without a confirmation because the child is already gone.
+            terminal_window->close();
+            return true;
+        }
+        return false;
+    };
+
     window->close_request = [this, terminal_window] {
         if (!child_is_live(terminal_window)) return true;
         // [general] confirm-kill = false means the reader has said they do
@@ -1506,7 +1548,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
             refresh_footer();
         });
     };
-    titles_[terminal_window] = TerminalTitle{fallback_title, {}, {}, number};
+    titles_[terminal_window] = TerminalTitle{fallback_title, {}, {}, {}, number};
     desktop_->add_window(std::move(window));
     app_.set_focus(terminal_view);
     refresh_footer();
@@ -1702,9 +1744,18 @@ std::string ClientApp::effective_title(const TerminalTitle& title) {
     // program hands the caption back — on exit, or when it simply stops
     // claiming one — so the window returns to the name ckmux gave it rather
     // than keeping stale text forever.
-    if (!title.custom.empty()) return title.custom;
-    return title.child.empty() ? title.fallback : title.child;
+    const std::string name =
+        !title.custom.empty() ? title.custom
+                              : (title.child.empty() ? title.fallback : title.child);
+    // And the badge, which outranks nothing and is appended to whatever the
+    // name turned out to be (plans/06:668). `[exit 1]` and `[exit 0]` are
+    // different news — one is a build that failed and one is a build that
+    // finished — so the number is stated when the host can supply it, and
+    // `[exited]` stands in when it cannot rather than inventing a zero.
+    if (!title.badge.empty()) return name + " " + title.badge;
+    return name;
 }
+
 
 void ClientApp::refresh_terminal_titles() {
     if (desktop_ == nullptr) return;
@@ -1739,11 +1790,32 @@ void ClientApp::refresh_terminal_titles() {
             refresh_copy_mode_caption();
             continue;
         }
-        if (wanted == entry->second.child && pinned == entry->second.custom)
+        // The badge is recomputed on the same poll as the title, because it
+        // answers the same question at the same moment: a child that exits
+        // between two ticks changes both, and a caption assembled from two
+        // readings taken a tick apart can flicker between them.
+        std::string badge;
+        if (child_has_ended(view)) {
+            const std::optional<int> status = options_.exit_status && terminal != nullptr
+                                                  ? options_.exit_status(*terminal)
+                                                  : std::nullopt;
+            badge = status.has_value() ? "[exit " + std::to_string(*status) + "]" : "[exited]";
+        }
+        if (wanted == entry->second.child && pinned == entry->second.custom &&
+            badge == entry->second.badge)
             continue;  // nothing changed
         entry->second.child = wanted;
         entry->second.custom = pinned;
+        const bool badge_changed = badge != entry->second.badge;
+        entry->second.badge = badge;
         window->set_title(effective_title(entry->second));
+        // A child that ended changed what this window offers, not just what it
+        // is called. The footer is asked again here because this poll is the
+        // moment ckmux LEARNS about the exit — nothing pushes it, so without
+        // this the hint would appear only when some unrelated event happened
+        // to refresh the footer, which for a reader watching a build finish is
+        // never.
+        if (badge_changed) refresh_footer();
     }
 }
 
@@ -2097,6 +2169,24 @@ void ClientApp::refresh_footer() {
         keys.emplace_back("y copy", ckv::ui::kInvalidCommand, 70);
         keys.emplace_back("/ search", ckv::ui::kInvalidCommand, 60);
         keys.emplace_back("q exit", ckv::ui::kInvalidCommand, 50);
+        footer_->set_items(std::move(keys));
+        return;
+    }
+    // A window whose program has ended offers two keys and nothing else
+    // reachable from inside it (plans/06:668). Said before the context table,
+    // because the prefix chords the table would advertise are still true but
+    // are not what a reader is looking at: they are looking at a dead window
+    // and want to know what to do with it.
+    //
+    // `Enter restart` appears only where something can honour it — a client
+    // with no server has nobody to ask — so the footer and the key binding ask
+    // the same question and cannot come to disagree.
+    if (w::Window* const active = desktop_ == nullptr ? nullptr : desktop_->active_window();
+        child_has_ended(terminal_view_of(active))) {
+        std::vector<w::StatusLineItem> keys;
+        if (options_.request_respawn)
+            keys.emplace_back("Enter restart", ckv::ui::kInvalidCommand, 90);
+        keys.emplace_back("x close", ckv::ui::kInvalidCommand, 80);
         footer_->set_items(std::move(keys));
         return;
     }
