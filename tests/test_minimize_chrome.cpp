@@ -139,6 +139,20 @@ std::size_t index_of_command(const ckv::widgets::MenuBarItem& menu, ckv::ui::Com
     return menu.items.size();
 }
 
+// The menu with this title, or nullptr. By TITLE, never by position: this
+// case used to read `menus()[2]` and went red the day another package
+// inserted a View menu ahead of Window — the rules it asserts were untouched
+// and the test was simply looking in the wrong menu. A position in a
+// structure other sessions can extend is a test with a scheduled failure
+// date, and the items below are already found by command id for the same
+// reason.
+const ckv::widgets::MenuBarItem* menu_titled(const ckv::widgets::MenuBar& bar,
+                                             std::string_view title) {
+    for (const ckv::widgets::MenuBarItem& menu : bar.menus())
+        if (menu.label == title) return &menu;
+    return nullptr;
+}
+
 }  // namespace
 
 // --- WP-34: the bar appears whenever something is hidden -------------------
@@ -211,13 +225,16 @@ CK_TEST(the_window_menu_offers_minimize_beside_zoom) {
     ckv::widgets::MenuBar* const bar = menu_bar(f.client);
     CK_CHECK(bar != nullptr);
     if (bar == nullptr) return;
-    const ckv::widgets::MenuBarItem& window_menu = bar->menus()[2];
+    const ckv::widgets::MenuBarItem* const window_menu = menu_titled(*bar, "&Window");
+    CK_CHECK(window_menu != nullptr);
+    if (window_menu == nullptr) return;
 
-    const std::size_t zoom = index_of_command(window_menu, id_of(f.app, ckv::ui::std_command_keys::kZoom));
+    const std::size_t zoom =
+        index_of_command(*window_menu, id_of(f.app, ckv::ui::std_command_keys::kZoom));
     const std::size_t minimize =
-        index_of_command(window_menu, id_of(f.app, ckv::ui::std_command_keys::kMinimize));
-    CK_CHECK(zoom < window_menu.items.size());
-    CK_CHECK(minimize < window_menu.items.size());
+        index_of_command(*window_menu, id_of(f.app, ckv::ui::std_command_keys::kMinimize));
+    CK_CHECK(zoom < window_menu->items.size());
+    CK_CHECK(minimize < window_menu->items.size());
     // Beside, not merely present: the two verbs are the two controls the
     // window draws together on its own frame, and a menu that separated them
     // would be describing a different window.

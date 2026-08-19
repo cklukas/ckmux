@@ -365,8 +365,16 @@ CK_TEST(help_all_keybindings_is_in_the_help_menu_and_opens_the_listing) {
     const ckv::ui::CommandId all =
         f.app.commands().id_for(ckm::client::commands::kAllKeys).value_or(ckv::ui::kInvalidCommand);
     CK_CHECK(all != ckv::ui::kInvalidCommand);
+    // Found by title rather than by `menus().back()`, for the reason
+    // test_minimize_chrome learned the hard way: a package that adds a
+    // top-level menu must not turn this into a failure about something else.
+    const ckv::widgets::MenuBarItem* help_menu = nullptr;
+    for (const ckv::widgets::MenuBarItem& menu : bar->menus())
+        if (menu.label == "&Help") help_menu = &menu;
+    CK_CHECK(help_menu != nullptr);
+    if (help_menu == nullptr) return;
     bool in_help_menu = false;
-    for (const ckv::widgets::MenuItem& item : bar->menus().back().items)
+    for (const ckv::widgets::MenuItem& item : help_menu->items)
         if (item.command() == all) in_help_menu = true;
     CK_CHECK(in_help_menu);
 
