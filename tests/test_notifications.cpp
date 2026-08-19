@@ -1,0 +1,246 @@
+// Copyright (c) 2026 C. Klukas. All rights reserved.
+//
+// What a reader is told without being asked anything (WP-14).
+//
+// The case this exists for is the silent one: a reader's session is taken over
+// from another terminal, or ends under them, and every window they had
+// disappears. The server says why — `Detached` carries a reason and a line of
+// text — and until this package the client threw it away, because the only
+// place it could have gone was stderr, and an attached client's stderr IS the
+// screen ckVision is drawing on. So the account goes to a notification over
+// the desktop, and these tests are about it being there, saying the right
+// thing, and going away again at the right time (or not at all, for the one
+// class that must wait for the reader).
+#if !defined(_WIN32)
+
+#include <string>
+#include <string_view>
+
+#include "client/client_app.hpp"
+#include "common/proto.hpp"
+#include "cvision/term/headless_terminal.hpp"
+#include "cvision/testing/cktest.hpp"
+#include "cvision/widgets/common_components.hpp"
+
+using ckm::client::ClientApp;
+using ckm::client::ClientOptions;
+using ckv::ManualClock;
+using ckv::Size;
+using ckv::ui::Application;
+
+namespace {
+
+constexpr std::int64_t kSecond = 1'000'000'000;
+constexpr std::int64_t kToastLife = 5 * kSecond;
+
+ClientOptions test_options() {
+    ClientOptions options;
+    options.settings.shell = "/bin/cat";
+    options.toast_nanos = kToastLife;
+    return options;
+}
+
+struct Fixture {
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client{app, test_options()};
+
+    void settle() { app.step(clock.now_nanos()); }
+    // Moves time and lets the application deliver what is now due — a toast
+    // expires on a ckVision timer, and a clock nobody steps is a clock nothing
+    // reads.
+    void advance(std::int64_t nanos) {
+        clock.advance(nanos);
+        app.step(clock.now_nanos());
+        app.step(clock.now_nanos());  // the teardown is posted, not called
+    }
+    std::size_t posted() const {
+        const auto* centre = const_cast<ClientApp&>(client).notifications();
+        return centre == nullptr ? 0U : centre->notifications().size();
+    }
+    std::string first_line() const {
+        const auto* centre = const_cast<ClientApp&>(client).notifications();
+        if (centre == nullptr || centre->notifications().empty()) return {};
+        return centre->notifications()[0].text;
+    }
+};
+
+}  // namespace
+
+// --- What a detach says ----------------------------------------------------
+
+CK_TEST(a_session_taken_over_says_so_and_names_the_session) {
+    Fixture f;
+    f.settle();
+    f.client.set_attached_session(7, "build");
+
+    f.client.report_detached(ckm::proto::DetachReason::Takeover,
+                             "taken over by another client on this machine");
+    f.settle();
+
+    CK_CHECK(f.posted() == 1U);
+    CK_CHECK(f.first_line() == "'build' was taken over by another client on this machine");
+    // Persistent: the reader this is for is the one who was not at the
+    // keyboard when it happened, and a line that had already faded would leave
+    // them an empty desktop with no account of it.
+    const auto* centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    CK_CHECK(centre->notifications()[0].persistent);
+    CK_CHECK(centre->notifications()[0].severity == ckv::widgets::NotificationSeverity::Warning);
+}
+
+CK_TEST(a_session_that_ended_and_a_server_that_stopped_each_say_which) {
+    Fixture f;
+    f.settle();
+    f.client.set_attached_session(7, "build");
+    f.client.report_detached(ckm::proto::DetachReason::SessionKilled, "ended by another client");
+    f.settle();
+    CK_CHECK(f.first_line() == "'build' ended: ended by another client");
+
+    Fixture g;
+    g.settle();
+    g.client.set_attached_session(9, "notes");
+    g.client.report_detached(ckm::proto::DetachReason::ServerShutdown, "the server is shutting down");
+    g.settle();
+    // Not named after the session: the server going takes every session with
+    // it, so naming one of them would be describing the smaller half.
+    CK_CHECK(g.first_line() == "The ckmux server stopped: the server is shutting down");
+}
+
+CK_TEST(a_detach_the_reader_asked_for_says_nothing) {
+    // They pressed the key. The picker is already on its way, and a line
+    // telling them what they just did is furniture.
+    Fixture f;
+    f.settle();
+    f.client.set_attached_session(7, "build");
+    f.client.report_detached(ckm::proto::DetachReason::User, "you asked");
+    f.settle();
+    CK_CHECK(f.posted() == 0U);
+    CK_CHECK(f.client.notifications() == nullptr);
+}
+
+CK_TEST(a_session_with_no_name_still_gets_an_account_of_what_happened) {
+    // A client can be taken over before any list has named the session it was
+    // watching. The sentence has to work without the name rather than reading
+    // "'' was taken over".
+    Fixture f;
+    f.settle();
+    f.client.report_detached(ckm::proto::DetachReason::Takeover, "taken over by another client");
+    f.settle();
+    CK_CHECK(f.first_line() == "This session was taken over by another client");
+}
+
+// --- How long one stays ----------------------------------------------------
+
+CK_TEST(an_ordinary_toast_takes_itself_away) {
+    Fixture f;
+    f.settle();
+    f.client.notify("Took over 'build'");
+    f.settle();
+    CK_CHECK(f.posted() == 1U);
+
+    f.advance(kToastLife / 2);
+    CK_CHECK(f.posted() == 1U);  // not yet
+
+    f.advance(kToastLife);
+    CK_CHECK(f.posted() == 0U);
+    // And the surface goes with it: an idle ckmux carries no notification
+    // chrome at all, so nothing sits over the reader's windows taking clicks.
+    CK_CHECK(f.client.notifications() == nullptr);
+}
+
+CK_TEST(the_one_the_reader_must_not_miss_stays_until_it_is_dismissed) {
+    Fixture f;
+    f.settle();
+    f.client.set_attached_session(7, "build");
+    f.client.report_detached(ckm::proto::DetachReason::Takeover, "taken over");
+    f.settle();
+
+    f.advance(kToastLife * 10);
+    CK_CHECK(f.posted() == 1U);
+
+    // Dismissed by the reader, which is the only thing that takes it.
+    auto* centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    centre->dismiss(0);
+    f.settle();
+    f.settle();
+    CK_CHECK(f.client.notifications() == nullptr);
+}
+
+CK_TEST(nothing_is_posted_for_an_empty_line) {
+    Fixture f;
+    f.settle();
+    f.client.notify("");
+    f.settle();
+    CK_CHECK(f.client.notifications() == nullptr);
+}
+
+// --- Where it sits ---------------------------------------------------------
+
+CK_TEST(a_toast_stays_inside_the_desktops_own_content_area) {
+    Fixture f;
+    f.settle();
+    f.client.notify("Config reloaded");
+    f.settle();
+
+    const auto* centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    const ckv::Rect where = centre->absolute_bounds();
+    const ckv::Rect area = f.client.desktop().content_area();
+
+    // Top-right, and inside the area rather than over the chrome: a toast that
+    // covered the window bar would be sitting on the one row a reader reaches
+    // for to get a minimized terminal back (WP-34).
+    CK_CHECK(where.y >= area.y);
+    CK_CHECK(where.y + where.height <= area.y + area.height);
+    CK_CHECK(where.x + where.width == area.x + area.width);
+    CK_CHECK(where.x >= area.x);
+    CK_CHECK(where.height == 1);
+}
+
+CK_TEST(two_lines_make_a_two_row_surface_and_one_removal_shrinks_it) {
+    Fixture f;
+    f.settle();
+    f.client.notify("first", ckv::widgets::NotificationSeverity::Info, /*persistent=*/true);
+    f.client.notify("second", ckv::widgets::NotificationSeverity::Info, /*persistent=*/true);
+    f.settle();
+
+    auto* centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    CK_CHECK(centre->absolute_bounds().height == 2);
+
+    centre->dismiss(0);
+    f.settle();
+    f.settle();
+    centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    // The host hears about a change it did not make and re-sizes: without
+    // that, the surface would keep a row for a line that is gone.
+    CK_CHECK(centre->absolute_bounds().height == 1);
+    CK_CHECK(centre->notifications()[0].text == "second");
+}
+
+CK_TEST(a_toast_never_takes_the_keyboard_from_the_program) {
+    // The whole point of a notification rather than a message box: it is news,
+    // not a question, so it must not be a focus stop between the reader and
+    // the terminal they are typing into.
+    Fixture f;
+    f.settle();
+    ckv::ui::View* const focused_before = f.app.focused();
+    f.client.notify("Config reloaded");
+    f.settle();
+    CK_CHECK(f.app.focused() == focused_before);
+    const auto* centre = f.client.notifications();
+    CK_CHECK(centre != nullptr);
+    if (centre == nullptr) return;
+    CK_CHECK(centre->focus_policy() == ckv::ui::FocusPolicy::None);
+}
+
+#endif  // !defined(_WIN32)
