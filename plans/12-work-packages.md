@@ -103,7 +103,7 @@ take first.
 | 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `720e0eb`) | — |
 | 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `da11baa`, gated) | U4-i ✓ |
 | 25c2 | **U4-o** — A standard `ckv.window.minimize` command and its `Desktop` handler | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`, gated) | U4-i ✓ |
-| 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | **Ready** | U4-i |
+| 25d | **U4-k** — The minimize animation, and what animation IS in this toolkit | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `3135907`) | U4-i ✓ |
 | 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-i ✓, U4-j ✓, U4-o ✓ |
 | 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-l ✓ |
@@ -1120,7 +1120,29 @@ library's command, declared LAST in `CommandRegistry` so no existing id moves,
 with a `Desktop::minimize_active_window()` default handler beside `kZoom`'s
 that refuses a window whose `minimizable()` is false.
 
-**U4-k — The minimize animation** *(ckVision)*. The frame shrinks and flies to
+**U4-k — The minimize animation** *(ckVision)*. **Done** — ckVision
+`3135907`: `ui::Animation` plus `Desktop::set_minimize_target_provider`,
+recorded as D-060. The mechanism turned out to BE the package. An animation
+here *describes a change that has already happened*: the caller applies the end
+state first and the frames decorate a desktop that is already correct. Every
+constraint below then falls out of that one decision rather than being defended
+separately — a host that never gets a timer tick is right because the state
+never depended on a frame, "interrupt" is only "stop drawing", and
+`set_minimize_animation_duration(0)` is a complete disable that does not even
+ask the host where the window goes. The destination is a provider because a
+`Desktop` does not know what lists its windows; no provider, no flight, so
+every application written before this is unchanged. ckmux consumes it by
+pointing the provider at the window bar's own entry for that window.
+
+*Gated by the test-coordinator session:* 145/145 Debug and 144/144 ASan+UBSan,
+examples ON, `install_package_smoke` excluded as it cannot pass sanitized. Two
+of the 18 cases are meaningless unsanitized and are named in that lane rather
+than folded into a total, the mechanism being a callback armed by an object
+that can go away first.
+
+The original statement of the package follows.
+
+The frame shrinks and flies to
 the entry it will live in, Windows-95 style, and back on restore. ckVision has
 no animation machinery at all today — `Application::start_timer` is the whole
 mechanism — so this package is as much about deciding what animation *is* in
