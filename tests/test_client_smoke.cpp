@@ -816,11 +816,17 @@ CK_TEST(a_right_click_on_the_switcher_bar_acts_on_that_window_not_the_active_one
     // reader may name a window whether or not there is anywhere to move it.
     CK_CHECK(!menu->items()[6].enabled_flag());
     CK_CHECK(!menu->items()[6].disabled_reason().empty());
-    CK_CHECK(menu->items()[3].enabled_flag());
+    // Named as well as indexed. This assertion was left pointing at index 3
+    // when Minimize shifted every row down one, and index 3 is a SEPARATOR —
+    // which is enabled, so it went on passing while testing nothing about
+    // Rename at all. An index alone cannot notice that it has stopped being
+    // about what its comment says.
+    CK_CHECK(menu->items()[4].label() == "Re&name…");
+    CK_CHECK(menu->items()[4].enabled_flag());
 
     // Maximize, chosen from the BACKGROUND row. Command dispatch would have
     // maximized `second`, which is the window the reader did not point at.
-    menu->items()[0].action()();
+    menu->items()[1].action()();
     f.app.step(0);
     CK_CHECK(first->zoomed());
     CK_CHECK(!second->zoomed());
