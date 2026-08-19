@@ -68,6 +68,14 @@ namespace ckm::proto {
 // terminal that asked for it rather than guessed at; and `TermDiagnostic`, the
 // message that carries a terminal's newest complaint while a client is
 // watching.
+//
+// Still v3, same reason: `NewTerminal.host_sixel` (field report, 2026-08-18).
+// `Attach.host_sixel` alone meant every pane a client ever opened was bound
+// to whatever the outer terminal's Sixel probe had or had not answered by the
+// moment that one connection-level message went out — and DA1's reply is
+// asynchronous, so a session that connected before it landed advertised no
+// Sixel to every child it ever ran, for the rest of that connection's life,
+// however long after the answer actually arrived a reader opened a pane.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -622,6 +630,12 @@ struct NewTerminal {
     std::uint64_t session = 0;
     std::string command;
     Rect rect;
+    // Whether the client's outer terminal reports Sixel, read fresh at the
+    // moment this request was built — see `Attach.host_sixel` and the note
+    // on `kProtocolVersion` above for why a pane cannot trust the
+    // connection-level answer alone. Nonzero is yes; zero is no or unknown,
+    // which advertise alike.
+    std::uint8_t host_sixel = 0;
     friend bool operator==(const NewTerminal&, const NewTerminal&) = default;
 };
 

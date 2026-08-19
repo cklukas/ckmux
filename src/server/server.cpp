@@ -529,8 +529,15 @@ void Server::handle(Client& client, const proto::Message& message) {
         spec.command = request->command;
         // The opener's own display decides what the child is told about
         // graphics (WP-16): the reader in front of THIS client is the reader
-        // the picture is for.
-        spec.host_sixel = client.host_sixel;
+        // the picture is for. Read off this request rather than
+        // `client.host_sixel` (Attach's own, connection-level answer): the
+        // capability probe that answer depends on is asynchronous and this
+        // client may have connected before it resolved, which `Attach` alone
+        // could never recover from for any pane opened afterward. Kept in
+        // sync with the connection-level belief too, since a takeover or a
+        // second client attaching to this session reads that one instead.
+        spec.host_sixel = request->host_sixel != 0;
+        client.host_sixel = spec.host_sixel;
         // Where a shell opens, and what it is told about its machine. The
         // server is the one that knows both, because it is the process that will
         // hold the child (plans/02) — a client's own environment is its own.

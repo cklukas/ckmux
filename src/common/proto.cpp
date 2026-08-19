@@ -444,11 +444,13 @@ void write(Writer& w, const NewTerminal& m) {
     w.u64(m.session);
     w.str(m.command);
     w.rect(m.rect);
+    w.u8(m.host_sixel);
 }
 void read(Reader& r, NewTerminal& m) {
     m.session = r.u64();
     m.command = r.str();
     m.rect = r.rect();
+    m.host_sixel = r.u8();
 }
 
 void write(Writer& w, const MoveTerminal& m) {

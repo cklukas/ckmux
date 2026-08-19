@@ -173,6 +173,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     options.client.request_new_terminal = [&session, &shell_for_new_terminals]() {
         proto::NewTerminal ask;
         ask.command = shell_for_new_terminals;
+        ask.host_sixel = session.host_sixel() ? 1 : 0;
         session.request(ask);
         return true;
     };
@@ -382,6 +383,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         if (!session.terminal_ids().empty()) return;
         proto::NewTerminal ask;
         ask.command = shell_for_new_terminals;
+        ask.host_sixel = session.host_sixel() ? 1 : 0;
         session.request(ask);
     };
 

@@ -142,11 +142,19 @@ public:
     void set_profile(ckv::term::TerminalCapabilityProfile profile) {
         profile_ = std::move(profile);
     }
-    // Whether this client's OUTER terminal reported Sixel, carried on every
-    // `Attach` (WP-16): the server folds it into what the children this
-    // client opens are told they may draw. Set once by the client, from the
-    // host terminal's own capability report.
+    // Whether this client's OUTER terminal reported Sixel, carried on
+    // `Attach` and on every `NewTerminal` (WP-16): the server folds it into
+    // what the children this client opens are told they may draw. The
+    // capability answer arrives asynchronously — DA1's reply chief among it
+    // — so this is read fresh at the moment each such request is built
+    // rather than trusted from whatever `Attach` carried at connection time,
+    // which a pane opened seconds or minutes later must not still be bound
+    // by (field report, 2026-08-18: every terminal a client ever opened
+    // advertised no Sixel to its child, regardless of what the real host
+    // answered, because only Attach carried this and nothing ever resent it
+    // once the probe actually came back).
     void set_host_sixel(bool reported) noexcept { host_sixel_ = reported; }
+    bool host_sixel() const noexcept { return host_sixel_; }
 
 private:
     RemoteTerminalSubsession& ensure_terminal(std::uint64_t id);

@@ -694,6 +694,54 @@ CK_TEST(a_host_that_shows_no_graphics_opens_children_that_are_told_not_to_draw) 
     forget(socket);
 }
 
+CK_TEST(a_pane_opened_after_the_hosts_sixel_probe_resolves_still_gets_told_it_can_draw) {
+    // The capability probe DA1's parameter 4 depends on is asynchronous
+    // (run_client.cpp), so a client's outer-terminal Sixel answer may not be
+    // known yet at the moment it attaches — Attach.host_sixel = 0, honestly,
+    // because "unknown" and "no" advertise alike. What must not follow is
+    // every pane THAT SESSION EVER OPENS believing the host cannot draw,
+    // forever, once the answer does arrive (field report, 2026-08-18): a
+    // later `NewTerminal` carries its own host_sixel, read fresh, so a pane
+    // opened after the probe resolves is not bound by what Attach said
+    // before it had an answer.
+    const std::filesystem::path socket = private_socket("sixel-race");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    watcher.session.set_host_sixel(false);  // unknown yet, at attach time
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    // The probe answers, after the attach already went out.
+    watcher.session.set_host_sixel(true);
+
+    ckm::proto::NewTerminal request;
+    request.command = "printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30";
+    request.host_sixel = watcher.session.host_sixel() ? 1 : 0;
+    watcher.session.request(request);
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return !watcher.session.terminal_ids().empty(); }));
+
+    const std::vector<std::uint64_t> ids = watcher.session.terminal_ids();
+    CK_CHECK(!ids.empty());
+    if (ids.empty()) {
+        server.terminals().close_all();
+        forget(socket);
+        return;
+    }
+    ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
+    CK_CHECK(mirrored != nullptr);
+    CK_CHECK(run_until(server, clock, watcher, [&] { return mirrored != nullptr && !mirrored->rasters().empty(); }));
+    if (mirrored != nullptr) CK_CHECK(!mirrored->rasters().empty());
+    server.terminals().close_all();
+    forget(socket);
+}
+
 // --- R8: what a reattaching reader used to lose ----------------------------
 
 CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_dead) {
