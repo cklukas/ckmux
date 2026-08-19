@@ -113,7 +113,12 @@ void end_process(::pid_t child) {
 struct Reader {
     std::unique_ptr<ckv::term::PosixTerminalSubsession> client;
 
-    bool start(const std::filesystem::path& socket) {
+    // The host terminal's own size. Defaulted to something roomy so every
+    // existing case is unchanged, and settable because the interesting
+    // question for a dialog is what happens when the screen is SMALL — the
+    // case no arithmetic test can ask, because an assertion over known cell
+    // heights has already decided the content's size before asking it.
+    bool start(const std::filesystem::path& socket, ckv::Size cells = ckv::Size{110, 32}) {
         ckv::term::TerminalLaunchSpec spec =
             ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
         spec.working_directory = "/tmp";
@@ -121,7 +126,7 @@ struct Reader {
                             {"SHELL", "/bin/sh"},       {"HOME", "/tmp"},
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
         spec.profile = ckv::term::embedded_xterm_sixel_profile();
-        spec.profile.cells = ckv::Size{110, 32};
+        spec.profile.cells = cells;
         spec.profile.cell_pixels = ckv::Size{9, 18};
         spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
         ckv::term::TerminalSubsessionOptions options;
@@ -868,6 +873,63 @@ CK_TEST(a_shift_click_into_a_pane_is_reserved_for_selection_not_forwarded) {
         CK_CHECK(reader.screen().find("How are you?") != std::string::npos);
     }
 
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(the_settings_dialog_shows_its_buttons_on_a_cramped_terminal) {
+    // The assertion no arithmetic test in this project can make, and the one
+    // a reader made by looking: on a small host, with the window switcher bar
+    // taking a row, are Save and Cancel ACTUALLY ON THE SCREEN?
+    //
+    // Every layout test we have pins cells and offsets against known heights
+    // — which is exactly why none of them could have caught a dialog whose
+    // content measures itself (wrapped notes) and so out-measures the space
+    // it was given. A sibling project lost the last two paragraphs of a pane
+    // for the same reason with every one of its offset assertions green; what
+    // found it was running the binary on an 18-row terminal. This is that,
+    // automated: real binary, real pty, buttons read off the decoded grid.
+    //
+    // 80x24 is the size the reader reported, and the switcher bar appears at
+    // two terminals — leaving the desktop 21 rows for a dialog drawn for 22,
+    // which is precisely the case U4-g's scrolling exists to survive.
+    const std::filesystem::path socket = private_socket("cramped-settings");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket, ckv::Size{80, 24}));
+    CK_CHECK(reader.sees("Terminal 1"));
+    // A second terminal, so the switcher bar is on screen and the desktop is
+    // one row shorter than the dialog wants.
+    reader.press("\x02" "c");
+    CK_CHECK(reader.sees("Terminal 2"));
+
+    // ^B m opens the menu bar on Session; three Rights reach Settings; Down
+    // then Enter opens General… — the same walk the other menu cases use.
+    reader.press("\x02" "m");
+    reader.press("\x1b[B");
+    reader.press("\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[B");
+    reader.press("\r");
+
+    const std::string screen = reader.screen();
+    // The dialog is up — its first field, which is above the fold.
+    CK_CHECK(screen.find("Start terminals") != std::string::npos);
+    // Its buttons are on the screen WITH it, which is the whole point: before
+    // U4-g a dialog taller than the desktop simply lost its bottom rows, and
+    // what a reader lost with them was every way of answering it.
+    CK_CHECK(screen.find("Save") != std::string::npos);
+    CK_CHECK(screen.find("Cancel") != std::string::npos);
+    // And the last field is NOT on screen, which is what proves the buttons
+    // above are visible because the form scrolled rather than because it
+    // happened to fit. `Colour theme` is the final row of the form.
+    CK_CHECK(screen.find("Colour theme") == std::string::npos);
+
+    reader.press("\x1b");
     reader.quit();
     end_process(server);
     forget(socket);
