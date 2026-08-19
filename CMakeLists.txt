@@ -163,6 +163,7 @@ ckmux_strict(ckmux_common)
 # from headless tests; only the thin terminal host needs a real backend. This
 # mirrors how ckVision's own examples are structured, for the same reason.
 add_library(ckmux_client STATIC
+    src/client/cli.cpp
     src/client/client_app.cpp
     src/client/commands.cpp
     src/client/copy_mode.cpp

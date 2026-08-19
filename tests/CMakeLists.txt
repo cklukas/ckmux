@@ -72,7 +72,12 @@ ckmux_strict(ckmux_tests)
 # (`open_terminal_at_startup`, default true) unless the test injects its own
 # `terminal_source`. test_remote_terminal injects at all three of its client
 # sites, forks nothing, and is the one client suite that is honestly `unit`.
-set(CKMUX_LABELS_test_cli "script;e2e")
+# test_cli gained `pty` with WP-11: its subcommands used to bounce off the
+# unknown-argument refusal and touch nothing, and now `ckmux new` makes a
+# session whose first terminal is a real child. Measured at 4 PTY children
+# across 3 processes, not inferred — a suite that changes category mid-package
+# is exactly what this block exists to catch.
+set(CKMUX_LABELS_test_cli "script;pty;e2e")
 set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
 set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")

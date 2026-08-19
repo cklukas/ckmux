@@ -108,7 +108,7 @@ take first.
 | 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
-| 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
+| 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
 | 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
@@ -631,9 +631,25 @@ CLI's reference (typeset for 80 columns, measured by `test_cli.cpp`), and the
 unknown-argument refusal points at `--help` instead of listing subcommands
 in a second place. `kill-server` is WP-2's and has been real since then —
 deliberately over its own connect path, so running it twice does not start a
-server in order to kill it. Everything else in that list still arrives at the
-unknown-argument refusal, which is what `main()`'s dispatch says today
-(`src/main.cpp`): five subcommands to write, not six.
+server in order to kill it. All five landed 2026-08-19
+(`src/client/cli.hpp`/`.cpp`, dispatched from `main()`): `ls` and
+`kill-session` connect without starting a server, because a question that
+brings its own subject into existence answers itself; `new` does start one,
+since a reader asking for a session on a machine with none is asking for a
+server too. A name that names two sessions is refused rather than guessed —
+the id is the identity (plans/03) — and `attach` resolves its name BEFORE a
+clock or a terminal is constructed, so `ckmux attach typo` in a script is a
+sentence and an exit status rather than an abort on a missing tty.
+
+Two defects were found by running it rather than by reading it. The
+`NewSession` handler read neither `command` nor `spawn_first` — and
+`spawn_first` DEFAULTS to on — so `ckmux new 'make -j8'` would have made an
+empty session and dropped the command; fixed server-side (`49d1878`) and
+pinned by `a_command_given_to_new_reaches_the_session_it_made`. And
+`test_cli` changed CATEGORY with this package: a session with a terminal in
+it forks a real child, so the suite went from 0 PTY children to 4 across 3
+processes and is now `script;pty;e2e` — measured with an interposed
+`forkpty`, not inferred.
 **WP-12 — Config v1 remainder.** *Done, 2026-08-17.* Every key in
 [08-configuration.md](08-configuration.md)'s table is read, validated and
 defaulted; `bind`/`unbind` work and a rebinding reaches dispatch, the footer,

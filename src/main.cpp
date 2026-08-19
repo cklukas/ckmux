@@ -22,7 +22,9 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "client/cli.hpp"
 #include "client/client_app.hpp"
 #include "client/run_client.hpp"
 #include "client/server_connection.hpp"
@@ -59,6 +61,19 @@ void print_cli_help() {
         "                     none is listening. Quitting the client leaves the server\n"
         "                     and every program in it running; run ckmux again to\n"
         "                     return to them.\n"
+        "  ckmux ls           The sessions a server holds, one per line. Says so\n"
+        "                     rather than starting one when none is running.\n"
+        "  ckmux new [-s name] [command]\n"
+        "                     A session, made without attaching to it. Prints its\n"
+        "                     name; the server names it when you do not. A command\n"
+        "                     runs in its first terminal, through your shell.\n"
+        "  ckmux attach <name|id>\n"
+        "                     Straight to one session, past the picker. Takes the\n"
+        "                     name `ckmux ls` prints, or an id.\n"
+        "  ckmux kill-session <name|id>\n"
+        "                     Ask every program in one session to end, then drop it.\n"
+        "  ckmux check-config Parse the configuration and report, starting nothing.\n"
+        "                     Exits non-zero when the file has problems.\n"
         "  ckmux kill-server  End the server and every terminal in it.\n"
         "  ckmux --help       This page (also -h, help).\n"
         "  ckmux --version    The build identity, which client and server compare\n"
@@ -161,9 +176,42 @@ int main(int argc, char** argv) {
         std::printf("%.*s\n", static_cast<int>(identity.size()), identity.data());
         return 0;
     }
-    if (argc >= 2 && argv[1][0] != '\0') {
-        // Every other subcommand arrives with WP-11. Saying so beats a client
-        // starting up and ignoring what was typed.
+    // `ckmux attach <name>`'s session, resolved below before anything is
+    // drawn. Zero is every other invocation, where the picker decides.
+    std::uint64_t attach_to = 0;
+    // The WP-11 subcommands. Parsed before anything connects, so a mistyped
+    // flag is answered at the shell rather than after a socket round trip.
+    if (argc >= 2 && ckm::client::is_cli_subcommand(argv[1])) {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
+        for (int index = 1; index < argc; ++index) arguments.emplace_back(argv[index]);
+        const ckm::client::CliRequest request = ckm::client::parse_cli(arguments);
+        if (!request.ok()) {
+            std::fprintf(stderr, "ckmux: %s\nUsage: %s\n", request.problem.c_str(),
+                         request.usage.c_str());
+            return 2;
+        }
+        if (request.subcommand == "ls") return ckm::client::run_ls(socket);
+        if (request.subcommand == "check-config")
+            return ckm::client::run_check_config(ckm::platform::config_file_path());
+        if (request.subcommand == "kill-session")
+            return ckm::client::run_kill_session(socket, request);
+        if (request.subcommand == "new")
+            return ckm::client::run_new(socket, ckm::platform::executable_path(argv[0]), request);
+        // `attach` falls through to the client below with its session already
+        // chosen — it IS the ordinary client, which is the whole point. The
+        // lookup happens HERE, before a clock or a terminal is constructed:
+        // resolving it further down would put "no such session" behind
+        // `PosixTerminal`'s demand for a real tty, so `ckmux attach typo` in a
+        // script would abort on the terminal instead of answering the typo.
+        if (request.subcommand == "attach") {
+            attach_to = ckm::client::resolve_attach_target(socket, request);
+            if (attach_to == 0) return 1;
+        }
+    }
+    if (argc >= 2 && argv[1][0] != '\0' && !ckm::client::is_cli_subcommand(argv[1])) {
+        // A word this build does not answer. Saying so beats a client starting
+        // up and ignoring what was typed.
         std::fprintf(stderr,
                      "ckmux: `%s` is not a subcommand this build has yet.\n"
                      "`ckmux --help` lists what is.\n",
@@ -236,5 +284,6 @@ int main(int argc, char** argv) {
     run.socket = socket;
     run.executable = ckm::platform::executable_path(argv[0]);
     run.client = std::move(options);
+    run.preselected_session = attach_to;
     return ckm::client::run_attached_client(terminal, clock, std::move(run));
 }

@@ -397,8 +397,9 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     //     is a genuine choice, and only a reader can make it. The picker offers
     //     taking it over, a new one, or carrying on with no session at all.
     bool startup_decided = false;
+    const std::uint64_t preselected = options.preselected_session;
     session.on_sessions = [&client, &session, &switch_to, &startup_decided, &waiting_for_a_new_session,
-                           &show_picker_when_the_list_arrives](
+                           &show_picker_when_the_list_arrives, preselected](
                               const std::vector<proto::SessionInfo>& sessions) {
         if (client == nullptr) return;
         std::vector<SessionRow> rows;
@@ -421,6 +422,21 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         }
         if (!startup_decided) {
             startup_decided = true;
+            // `ckmux attach <name>` bypasses the picker (plans/06:401). The id
+            // was resolved against this same list before the window opened, so
+            // the only way it is missing here is a session that ended in
+            // between — in which case this falls through to the ordinary
+            // startup rather than attaching to something else.
+            if (preselected != 0) {
+                const auto found = std::find_if(
+                    rows.begin(), rows.end(),
+                    [preselected](const SessionRow& row) { return row.id == preselected; });
+                if (found != rows.end()) {
+                    client->remember_sessions(rows);
+                    switch_to(preselected);
+                    return;
+                }
+            }
             if (rows.empty()) {
                 waiting_for_a_new_session = true;
                 startup_decided = false;

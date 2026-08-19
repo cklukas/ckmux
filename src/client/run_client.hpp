@@ -36,6 +36,12 @@ struct RunOptions {
     // here — that is the whole substitution — and anything else the host set is
     // left alone.
     ClientOptions client;
+    // `ckmux attach <name>`: the session to go to at startup, already resolved
+    // to an id by the CLI (client/cli.hpp) so that a name naming nothing is a
+    // refusal at the shell rather than a dialog over a desktop. Zero is the
+    // ordinary launch, where the picker or the sole session decides (WP-11,
+    // plans/06:401 — the CLI bypasses the picker for scripting).
+    std::uint64_t preselected_session = 0;
 };
 
 // Runs until the reader quits or the server goes away. Returns a process exit
