@@ -22,17 +22,17 @@ set(CKMUX_TEST_SOURCES
     test_minimize_chrome.cpp
     test_prefix.cpp
     test_process_stats.cpp
-    test_remote_terminal.cpp
     test_proto.cpp
+    test_remote_terminal.cpp
     test_rename_terminal.cpp
     test_rename_wire.cpp
     test_server_lifecycle.cpp
     test_server_loop.cpp
     test_server_terminals.cpp
     test_shell.cpp
-    test_stats_wire.cpp)
     test_stats_display.cpp
     test_stats_format.cpp
+    test_stats_wire.cpp)
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server ckvision::cvision)
@@ -91,12 +91,12 @@ set(CKMUX_LABELS_test_diff_engine "pty")
 set(CKMUX_LABELS_test_rename_wire "pty")
 set(CKMUX_LABELS_test_server_loop "pty")
 set(CKMUX_LABELS_test_server_terminals "pty")
+set(CKMUX_LABELS_test_stats_wire "pty")
 # Client side: a `ClientApp` built with no `terminal_source` opens a real
 # terminal window while it is being constructed, so the fixture has already
 # forked its child before the first case in the file runs.
 set(CKMUX_LABELS_test_client_smoke "pty")
 set(CKMUX_LABELS_test_command_reachability "pty")
-set(CKMUX_LABELS_test_stats_wire "pty")
 set(CKMUX_LABELS_test_copy_mode "pty")
 set(CKMUX_LABELS_test_minimize_chrome "pty")
 set(CKMUX_LABELS_test_prefix "pty")
@@ -107,13 +107,13 @@ set(CKMUX_LABELS_test_stats_display "pty")
 # in the fast lane rather than joining `pty`, whose reason is a sandbox with
 # no pseudo-terminals. Unlike the ClientApp suites above, its forks are its
 # own explicit `::fork()` calls, so reading the file does tell you.
+
+foreach(source ${CKMUX_TEST_SOURCES})
     get_filename_component(suite ${source} NAME_WE)
     add_test(NAME suite_${suite} COMMAND ckmux_tests --suite ${source})
     set(CKMUX_SUITE_LABELS "unit")
     if(DEFINED CKMUX_LABELS_${suite})
         set(CKMUX_SUITE_LABELS "${CKMUX_LABELS_${suite}}")
-
-foreach(source ${CKMUX_TEST_SOURCES})
     endif()
     set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}" TIMEOUT 120)
 endforeach()
