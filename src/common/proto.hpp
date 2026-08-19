@@ -92,6 +92,12 @@ namespace ckm::proto {
 // writes is the shaped-and-dead state M-R3 named; it arrives here with its
 // producer (the client's tile query) and its consumer (the proportional
 // restore) in the same change.
+// And still v3 for `TerminalState.custom_title` and `TermMeta.custom_title`,
+// which change the shape of two things already on this wire — same reasoning
+// again, and the same pairing rule WP-30 was held to: the field arrives with
+// its producer (`RenameTerminal`, which until now encoded and decoded and was
+// handled nowhere) and its consumer (the client's caption, which prefers it
+// over the child's title) in one change, rather than shaped and dead.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -463,6 +469,18 @@ struct TerminalState {
     std::uint64_t term = 0;
     std::uint16_t index = 0;
     std::string title;
+    // The name the READER gave this terminal, or empty for "none". Beside the
+    // title rather than instead of it, because they are two facts and both
+    // keep changing: `title` is whatever the child last claimed with OSC 0/2
+    // and goes on being claimed underneath an override, which is what makes
+    // "use the default title again" answerable with something current rather
+    // than with whatever the caption said when the reader pinned it.
+    //
+    // Session state, and therefore on this wire at all, for the reason the
+    // window layout is (plans/03): it has to survive a detach, and the next
+    // client to attach has to see the same name. A name kept only in the
+    // client that set it would vanish the moment its reader reattached.
+    std::string custom_title;
     std::uint8_t flags = 0;  // bell, activity — see TermMetaFlag
     std::uint16_t columns = 0;
     std::uint16_t rows = 0;
@@ -924,6 +942,11 @@ struct TermMeta {
     std::uint64_t term = 0;
     std::uint16_t index = 0;
     std::string title;
+    // As on `TerminalState`: the reader's own name for this terminal, empty
+    // for none. This message already STATES a title rather than delta-ing one,
+    // so it states both — the child's and the override — and a mirror applies
+    // what it is told.
+    std::string custom_title;
     std::uint8_t flags = 0;
     friend bool operator==(const TermMeta&, const TermMeta&) = default;
 };

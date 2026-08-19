@@ -12,6 +12,7 @@
 #include "common/shell.hpp"
 #include "platform/paths.hpp"
 
+#include "cvision/core/text.hpp"
 #include "cvision/widgets/application_shell.hpp"
 #include "cvision/widgets/dialog.hpp"
 #include "cvision/widgets/menu.hpp"
@@ -30,6 +31,16 @@ namespace u = ckv::ui;
 // pre-release; the number is deliberately the plan's own milestone number
 // rather than a marketing version.
 constexpr const char* kVersion = "0.0.1 (M1)";
+
+// How much of a child's own title a dialog will quote. The wire lets a
+// caption be four kilobytes; a dialog note is ONE ROW, clipped rather than
+// wrapped, so an unbounded quotation is a wall of the child's text with the
+// sentence around it lost off the end. The one place ckmux prints a child's
+// string somewhere other than a window frame therefore elides it, exactly as
+// the frame itself is length-bounded ([02-architecture.md](02-architecture.md)
+// security posture). Fifty-six columns plus its quotes and indent is 60, which
+// fits the 80-column terminal plans/06 sizes every dialog against.
+constexpr int kDialogTitleColumns = 56;
 
 w::TerminalView* terminal_view_of(w::Window* window) {
     if (window == nullptr) return nullptr;
@@ -274,6 +285,20 @@ void ClientApp::register_commands() {
             registry.set_enabled_predicate(move, [this] {
                 return options_.move_terminal && attached_session_ != 0;
             });
+        } else if (binding.key == commands::kRenameTerminal) {
+            // Aimed at the ACTIVE terminal, like Close Terminal beside it. The
+            // window bar's context menu aims at the row the reader pointed at
+            // instead, which is why that one is not wired as this command
+            // (`switcher_menu`, and ckVision's WindowSwitcherTarget for why).
+            const u::CommandId rename = declare(binding.key, binding.title, "Terminal", [this] {
+                show_rename_terminal_dialog(terminal_shown_by(active_terminal()));
+            });
+            // Nothing to name is a menu item that is plainly not available,
+            // not a dialog that opens onto no terminal. An empty desktop is
+            // exactly that state and a reader can reach it (close the last
+            // window), so it is asked rather than assumed.
+            registry.set_enabled_predicate(rename,
+                                           [this] { return active_terminal() != nullptr; });
         } else if (binding.key == commands::kMoveResize) {
             declare(binding.key, binding.title, "Window", [this] {
                 if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
@@ -446,7 +471,7 @@ void ClientApp::build_chrome() {
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal),
-         item(commands::kMoveTerminal), separator,
+         item(commands::kRenameTerminal), item(commands::kMoveTerminal), separator,
          item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
          separator, item(commands::kCopyMode), item(commands::kPaste), separator,
          item(commands::kSendPrefix)}};
@@ -572,6 +597,15 @@ void ClientApp::install_window_switcher(w::WindowSwitcherBar& bar) {
     });
     bar.set_help_context_key("ckmux.switcher");
 
+    // And the buttons stop twitching. A terminal's caption follows the program
+    // in it (plans/06), which for a shell means a rewrite at every prompt and
+    // for a build tool a rewrite per target; undamped, each of those re-sizes
+    // that button and slides every button after it. The two intervals are the
+    // reader-facing rule — at most one widening a second, at most one
+    // narrowing every half minute — and they live in ClientOptions so a test
+    // can turn them off and read natural widths.
+    bar.set_width_damping(options_.switcher_grow_nanos, options_.switcher_shrink_nanos);
+
     // The bar keeps its own list current through the desktop's window-change
     // notification — its `Desktop` constructor subscribed for us, which is why
     // nothing here polls. This second subscription answers ckmux's own
@@ -633,6 +667,18 @@ std::vector<ckv::widgets::MenuItem> ClientApp::switcher_menu(
                                             desktop_->activate(&clicked);
                                             focus_active_terminal();
                                             clicked.enter_move_mode();
+                                        }))
+                        .with_help("ckmux.switcher"));
+    items.push_back(w::MenuItem::separator());
+
+    // Naming the window is the reader's, and it is available wherever a
+    // terminal is: unlike Move to session… below, it needs nothing outside
+    // this desktop. `n` rather than `m`, which Move / Resize already holds in
+    // this menu.
+    items.push_back(w::MenuItem::action("Re&name…", target.bind([this, alive](w::Window& clicked) {
+                                            if (alive.expired()) return;
+                                            show_rename_terminal_dialog(
+                                                terminal_shown_by(&clicked));
                                         }))
                         .with_help("ckmux.switcher"));
     items.push_back(w::MenuItem::separator());
@@ -1180,7 +1226,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
             refresh_footer();
         });
     };
-    titles_[terminal_window] = TerminalTitle{fallback_title, {}, number};
+    titles_[terminal_window] = TerminalTitle{fallback_title, {}, {}, number};
     desktop_->add_window(std::move(window));
     app_.set_focus(terminal_view);
     refresh_footer();
@@ -1369,6 +1415,17 @@ ckv::widgets::Window* ClientApp::active_terminal() const {
     return desktop_ != nullptr ? desktop_->active_window() : nullptr;
 }
 
+std::string ClientApp::effective_title(const TerminalTitle& title) {
+    // The reader's name outranks everything, which is what makes it an
+    // override rather than one more writer of the same string. Underneath it
+    // the program's own claim outranks ckmux's, and an EMPTY claim is how a
+    // program hands the caption back — on exit, or when it simply stops
+    // claiming one — so the window returns to the name ckmux gave it rather
+    // than keeping stale text forever.
+    if (!title.custom.empty()) return title.custom;
+    return title.child.empty() ? title.fallback : title.child;
+}
+
 void ClientApp::refresh_terminal_titles() {
     if (desktop_ == nullptr) return;
     for (w::Window* window : desktop_->windows()) {
@@ -1381,22 +1438,145 @@ void ClientApp::refresh_terminal_titles() {
         // string — which on a client's mirror means rebuilding its whole
         // scrollback, several times a second, to ask what the caption is.
         const std::string wanted = view->session().status().title;
+        // And what the SESSION says the reader named it, where there is a
+        // session layer to ask. Polled beside the child's title rather than
+        // pushed, because the two answer the same question at the same moment
+        // and a caption assembled from two readings taken a tick apart is a
+        // caption that can flicker between them. An M1 client asks nobody: it
+        // owns the override itself, and `titles_` already holds it.
+        const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window);
+        const std::string pinned = options_.custom_title && terminal != nullptr
+                                       ? options_.custom_title(*terminal)
+                                       : entry->second.custom;
         // While its history is being read the caption belongs to copy mode,
-        // which writes the badge and the scroll position into it. The child's
-        // title is still recorded, so leaving copy mode restores whatever the
-        // program asked for in the meantime rather than a stale name.
+        // which writes the badge and the scroll position into it. Both names
+        // are still recorded, so leaving copy mode restores whatever the
+        // program — or the reader — asked for in the meantime rather than a
+        // stale name.
         if (window == copy_mode_window_) {
             entry->second.child = wanted;
+            entry->second.custom = pinned;
             refresh_copy_mode_caption();
             continue;
         }
-        if (wanted == entry->second.child) continue;  // nothing changed
+        if (wanted == entry->second.child && pinned == entry->second.custom)
+            continue;  // nothing changed
         entry->second.child = wanted;
-        // An empty title is how a program hands the caption back — on exit,
-        // or when it simply stops claiming one — so the window returns to the
-        // name ckmux gave it rather than keeping stale text forever.
-        window->set_title(wanted.empty() ? entry->second.fallback : wanted);
+        entry->second.custom = pinned;
+        window->set_title(effective_title(entry->second));
     }
+}
+
+void ClientApp::rename_terminal(ckv::term::TerminalSubsession* terminal, std::string name) {
+    // Looked up before anything is done with the terminal, not captured and
+    // trusted: this runs when a reader presses a button, and the terminal can
+    // have ended while the dialog stood open. A window that is already gone
+    // means there is nothing left to name — and it is also what makes the
+    // dereference below safe, since `window_showing` only compares addresses.
+    w::Window* const window = window_showing(terminal);
+    if (window == nullptr) return;
+    const auto entry = titles_.find(window);
+    if (entry == titles_.end()) return;
+    // The server next, where there is one, because the name is session state
+    // and the server is what makes it survive a detach (plans/03). What comes
+    // back through `custom_title` is then the same string, so the assignment
+    // below is not a second opinion — it is the one that stops the caption
+    // waiting a round trip to change.
+    if (options_.rename_terminal) options_.rename_terminal(*terminal, name);
+    entry->second.custom = std::move(name);
+    window->set_title(effective_title(entry->second));
+    // The window bar damps how often a button may change length, to stop a
+    // caption that a program rewrites at every prompt from re-flowing the row
+    // (plans/06). A rename is not that: the reader has just asked for this
+    // name, and a button that took half a minute to fit it would read as a
+    // command that did not work. So this one change is exempt, by telling the
+    // bar the change was asked for rather than observed.
+    if (switcher_ != nullptr) switcher_->settle_width(*window);
+}
+
+void ClientApp::show_rename_terminal_dialog(ckv::term::TerminalSubsession* terminal) {
+    if (terminal == nullptr || desktop_ == nullptr) return;
+    w::Window* const window = window_showing(terminal);
+    if (window == nullptr) return;
+    const auto entry = titles_.find(window);
+    if (entry == titles_.end()) return;
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Rename terminal";
+    w::FieldDescriptor name;
+    name.label = "&Name";
+    name.kind = w::FieldKind::Text;
+    // Whatever the caption says right now, whether that is the reader's own
+    // name or the one the program claimed. A field that started empty would
+    // make the commonest rename — adjusting a name that is nearly right —
+    // into retyping it.
+    name.initial_text = effective_title(entry->second);
+    descriptor.fields.push_back(std::move(name));
+
+    // What the reader is choosing between, said before they choose. A pinned
+    // caption looks no different from an unpinned one on screen, and the
+    // difference is the whole feature: the program goes on renaming itself
+    // underneath and simply stops being shown.
+    //
+    // Four short notes rather than two long ones. Consecutive notes are one
+    // paragraph to ckVision and each is ONE ROW — so a sentence longer than the
+    // dialog is clipped rather than wrapped, and the half that says what a
+    // button does is the half that goes. Each line here is written to fit the
+    // 80-column terminal plans/06 sizes every dialog against.
+    const auto note = [&descriptor](std::string line) {
+        w::FieldDescriptor field;
+        field.kind = w::FieldKind::Note;
+        field.label = std::move(line);
+        descriptor.fields.push_back(std::move(field));
+    };
+    note("The program in this terminal renames its own window; a name you");
+    note("give here is shown instead, until you change it.");
+    // What the third button hands the caption back TO, named rather than
+    // described: it is the program's CURRENT title, which is not necessarily
+    // the name this window started with and not necessarily what it said when
+    // the reader pinned it.
+    note("Use Default Title goes back to the program's own name, now:");
+    // On its own line, and elided, because this is a CHILD's string on ckmux's
+    // chrome. The wire lets a caption be four kilobytes; on one clipped row
+    // that would be a wall of the child's text and none of the sentence around
+    // it. The same reasoning that length-bounds the caption itself
+    // ([02-architecture.md](02-architecture.md) security posture), applied at
+    // the second place a child's text is drawn.
+    const std::string fallback = entry->second.child.empty() ? entry->second.fallback
+                                                             : entry->second.child;
+    note("  \"" + ckv::text::elide_to_width(fallback, kDialogTitleColumns) + "\"");
+
+    ckv::term::TerminalSubsession* const named = terminal;
+    const std::weak_ptr<void> alive = alive_;
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Rename", w::ButtonRole::Accept, {}});
+    // Dismiss rather than Neutral, and deliberately: `Dismiss` is "this
+    // dialog ends now, having run its handler", which is exactly what this
+    // button does — the reader has made their decision and there is nothing
+    // left to fill in. Cancel is the same role with nothing to run, which is
+    // what makes them siblings rather than one of them a special case.
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        "Use &Default Title", w::ButtonRole::Dismiss, [this, alive, named] {
+            if (alive.expired()) return;
+            // An empty name is the request: hand the caption back, and let
+            // it follow the program again. `rename_terminal` re-checks that
+            // the terminal is still there, which it may not be.
+            rename_terminal(named, {});
+        }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, alive, named](const w::DialogResult& result) {
+            if (alive.expired() || !result.accepted || result.values.empty()) return;
+            // An empty field is the same request the Default button makes, and
+            // is answered the same way rather than refused: a reader who
+            // cleared the name has said what they want as plainly as one who
+            // pressed the button for it.
+            rename_terminal(named, result.values.front());
+        });
+    retain_dialog(presentation);
 }
 
 std::vector<WindowPlacement> ClientApp::capture_layout() const {
@@ -1805,9 +1985,7 @@ void ClientApp::leave_copy_mode() {
     // it, and an expired token is the proof of exactly that.
     if (copy_mode_window_ != nullptr && !copy_mode_window_alive_.expired()) {
         const auto title = titles_.find(copy_mode_window_);
-        if (title != titles_.end())
-            copy_mode_window_->set_title(title->second.child.empty() ? title->second.fallback
-                                                                     : title->second.child);
+        if (title != titles_.end()) copy_mode_window_->set_title(effective_title(title->second));
     }
     copy_mode_window_ = nullptr;
     copy_mode_window_alive_.reset();
@@ -1828,8 +2006,7 @@ void ClientApp::refresh_copy_mode_caption() {
     if (copy_mode_window_alive_.expired()) return;
     const auto title = titles_.find(copy_mode_window_);
     const std::string base = title == titles_.end() ? copy_mode_window_->title()
-                             : title->second.child.empty() ? title->second.fallback
-                                                            : title->second.child;
+                                                   : effective_title(title->second);
     const int from_bottom = copy_mode_->cursor().y - (copy_mode_->history_size() - 1);
     copy_mode_window_->set_title(base + " — COPY " + std::to_string(from_bottom) + "/" +
                                  std::to_string(copy_mode_->history_size()));

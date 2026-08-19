@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "common/shell.hpp"
+#include "server/diff_engine.hpp"
 
 namespace ckm::server {
 namespace {
@@ -182,6 +183,23 @@ bool Terminal::set_layout(const WindowLayout& layout) noexcept {
     if (layout_ == layout) return false;
     layout_ = layout;
     layout_announced_ = false;
+    return true;
+}
+
+bool Terminal::set_custom_title(std::string title) {
+    // Clamped here rather than at the two places that send it, because this is
+    // where the name is KEPT: a server that stored four megabytes of caption
+    // and trimmed it on the way out would still be holding four megabytes per
+    // terminal for the life of the session. Through the same bound AND the
+    // same function the child's own title is clamped by, so the two producers
+    // cannot disagree by a byte — and so the cut lands on a character boundary
+    // rather than in the middle of a UTF-8 sequence, which is what a plain
+    // resize() would do to a caption with an umlaut near the limit.
+    const std::string_view kept = clamp_utf8(title, proto::kMaxTitleBytes);
+    if (kept.size() != title.size()) title.resize(kept.size());
+    if (custom_title_ == title) return false;
+    custom_title_ = std::move(title);
+    custom_title_announced_ = false;
     return true;
 }
 

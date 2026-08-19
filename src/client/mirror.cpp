@@ -73,6 +73,7 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
                                state.cursor.visible, state.cursor.blink};
     state_.modes = state.modes;
     state_.title = state.title;
+    custom_title_ = state.custom_title;
     bell_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
     activity_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
     printer_active_ = state.printer_state == proto::PrinterState::Capturing;
@@ -238,6 +239,15 @@ void TerminalMirror::apply(const proto::TermMeta& meta) {
         state_.title = meta.title;
         damage_.title = true;
     }
+    // Assigned, like the marks below and for the same reason: this message
+    // states the name as it now stands, and the message that says a reader
+    // handed it back is the same message with an empty string in it.
+    //
+    // No title damage raised for this one. `damage_.title` is what tells a
+    // TerminalView its child renamed itself; a custom title is not the child's
+    // and is read by the window layer on its own poll, so raising it here
+    // would be telling the view about something it does not draw.
+    custom_title_ = meta.custom_title;
     // The marks are assigned, not accumulated: the message states them as they
     // now stand, and the one that says a reader has caught up is the same
     // message with the bits off.

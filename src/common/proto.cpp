@@ -600,6 +600,7 @@ void write(Writer& w, const TerminalState& s) {
     w.u64(s.term);
     w.u16(s.index);
     w.str(s.title);
+    w.str(s.custom_title);
     w.u8(s.flags);
     w.u16(s.columns);
     w.u16(s.rows);
@@ -630,6 +631,7 @@ void read(Reader& r, TerminalState& s) {
     s.term = r.u64();
     s.index = r.u16();
     s.title = r.str();
+    s.custom_title = r.str();
     s.flags = r.u8();
     s.columns = r.u16();
     s.rows = r.u16();
@@ -673,13 +675,14 @@ void read(Reader& r, Attached& m) {
     m.snapshot.desktop_columns = r.u16();
     m.snapshot.desktop_rows = r.u16();
     m.snapshot.focused_term = r.u64();
-    // Eighty-seven bytes is a terminal state with no title, no grid, no
-    // history, no images, no print jobs and no diagnostic — every fixed field
-    // and the four counts that say the variable ones are empty. It moves with
-    // every fixed field added: WP-30's eight-byte tile share took it from
-    // seventy-nine, and a bound left behind is a hostile count checked against
+    // Eighty-nine bytes is a terminal state with no title, no custom title, no
+    // grid, no history, no images, no print jobs and no diagnostic — every
+    // fixed field and the four counts that say the variable ones are empty. It
+    // moves with every fixed field added: WP-30's eight-byte tile share took it
+    // from seventy-nine, and the custom title's own two-byte length took it
+    // from eighty-seven. A bound left behind is a hostile count checked against
     // a smaller entry than this codec can actually produce.
-    const std::uint32_t terminals = r.count(87);
+    const std::uint32_t terminals = r.count(89);
     m.snapshot.terminals.reserve(terminals);
     for (std::uint32_t i = 0; i < terminals && r.ok(); ++i) {
         TerminalState state;
@@ -780,12 +783,14 @@ void write(Writer& w, const TermMeta& m) {
     w.u64(m.term);
     w.u16(m.index);
     w.str(m.title);
+    w.str(m.custom_title);
     w.u8(m.flags);
 }
 void read(Reader& r, TermMeta& m) {
     m.term = r.u64();
     m.index = r.u16();
     m.title = r.str();
+    m.custom_title = r.str();
     m.flags = r.u8();
 }
 
@@ -1183,15 +1188,16 @@ std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines) {
 
 std::size_t encoded_size(const TerminalState& state) {
     // Everything `write(Writer&, const TerminalState&)` puts down that is not
-    // the grid or the history: 8 term + 2 index + 2 title length + 1 flags +
-    // 2 columns + 2 rows + 8 rect + 2 z_order + 1 zoomed + 8 tile + 7 cursor +
-    // 4 modes + 4 image count + 1 printer mode + 1 scope + 1 state +
-    // 4 printer bytes + 4 job count + 8 clipboard serial + 1 exited +
-    // 4 exit status + 1 hold + 1 diagnostic kind + 2 diagnostic length.
-    constexpr std::size_t kFixed = 79;
+    // the grid or the history: 8 term + 2 index + 2 title length +
+    // 2 custom-title length + 1 flags + 2 columns + 2 rows + 8 rect +
+    // 2 z_order + 1 zoomed + 8 tile + 7 cursor + 4 modes + 4 image count +
+    // 1 printer mode + 1 scope + 1 state + 4 printer bytes + 4 job count +
+    // 8 clipboard serial + 1 exited + 4 exit status + 1 hold +
+    // 1 diagnostic kind + 2 diagnostic length.
+    constexpr std::size_t kFixed = 81;
     // 8 per image id; 8 job + 1 kind + 4 bytes + 4 lines + 8 at per job.
-    return kFixed + state.title.size() + state.diagnostic.size() + encoded_size(state.grid) +
-           encoded_size(state.scrollback) + 8 * state.images.size() +
+    return kFixed + state.title.size() + state.custom_title.size() + state.diagnostic.size() +
+           encoded_size(state.grid) + encoded_size(state.scrollback) + 8 * state.images.size() +
            25 * state.print_jobs.size();
 }
 

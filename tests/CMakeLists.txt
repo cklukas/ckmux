@@ -21,6 +21,8 @@ set(CKMUX_TEST_SOURCES
     test_prefix.cpp
     test_proto.cpp
     test_remote_terminal.cpp
+    test_rename_terminal.cpp
+    test_rename_wire.cpp
     test_server_lifecycle.cpp
     test_server_loop.cpp
     test_server_terminals.cpp

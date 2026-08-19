@@ -32,6 +32,11 @@ enum class Action : unsigned char {
     NewTerminal,
     CloseTerminal,
     MoveTerminal,
+    // Naming a terminal is not the same as moving it, and it is a different
+    // verb from renaming a SESSION: one pins a window's caption, the other
+    // labels the thing the session picker lists. Two names because they are
+    // two commands, and a reader writes whichever they meant.
+    RenameTerminal,
     NextTerminal,
     PreviousTerminal,
     WindowList,

@@ -973,3 +973,111 @@ CK_TEST(a_roomy_terminal_shows_the_whole_settings_form_without_scrolling) {
     end_process(server);
     forget(socket);
 }
+
+CK_TEST(a_reader_names_a_terminal_and_the_name_stays_while_the_program_renames_itself) {
+    // WP-36 on a real screen, in a real ckmux, against a real server. The
+    // headless suites pin the precedence and the wire; this pins the one thing
+    // they cannot — that a reader can reach the command, see the prompt, type a
+    // name, and watch it hold while the program in that terminal goes on
+    // calling itself something else.
+    const std::filesystem::path socket = private_socket("rename");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    // The shell in that terminal names its own window, which is the ordinary
+    // case and the thing the override has to survive.
+    reader.press("printf '\\033]2;first\\007'\r");
+    CK_CHECK(reader.sees("first"));
+
+    // ^B , — the chord plans/06 gives it. The prompt starts from the caption
+    // the reader can see, so it is cleared before the new name is typed.
+    reader.press("\x02" ",");
+    CK_CHECK(reader.sees("Rename"));
+    CK_CHECK(reader.screen().find("Use Default Title") != std::string::npos);
+    for (int i = 0; i < 40; ++i) reader.client->send_input("\x7f");
+    reader.settle(300);
+    reader.press("the important one\r");
+    CK_CHECK(reader.sees("the important one"));
+
+    // The program renames itself again and is not shown: the reader's name is
+    // an override, not one more writer of the caption.
+    reader.press("printf '\\033]2;second\\007'\r");
+    reader.settle(600);
+    CK_CHECK(reader.screen().find("the important one") != std::string::npos);
+
+    // Use Default Title hands the caption back — to what the program is
+    // calling itself NOW, not to what it said when the name was pinned.
+    reader.press("\x02" ",");
+    CK_CHECK(reader.sees("Use Default Title"));
+    reader.press("\x1b" "d");  // the button's own mnemonic
+    CK_CHECK(reader.sees("second"));
+    CK_CHECK(reader.screen().find("the important one") == std::string::npos);
+
+    reader.press("\x02" "d");
+    CK_CHECK(reader.gone());
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(the_window_bars_context_menu_offers_a_rename_for_the_row_that_was_clicked) {
+    // The other route to the same command, and the one that must not act on
+    // `active_window()`: every entry on that menu is bound to the row it
+    // belongs to (ckVision's WindowSwitcherTarget), so renaming from a
+    // BACKGROUND row must name the background terminal.
+    const std::filesystem::path socket = private_socket("barrename");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+    reader.press("\x02" "c");
+    CK_CHECK(reader.sees("Terminal 2"));
+
+    const std::vector<std::string> lines = reader.rows();
+    CK_CHECK(lines.size() >= 2U);
+    if (lines.size() < 2U) return;
+    const std::size_t bar_row = lines.size() - 2;
+    const std::size_t at = lines[bar_row].find("Terminal 1");
+    CK_CHECK(at != std::string::npos);
+    if (at == std::string::npos) return;
+
+    // Right-click the row of the terminal that is NOT in front.
+    reader.right_click(static_cast<int>(bar_row), static_cast<int>(at) + 3);
+    CK_CHECK(reader.sees("Rename"));
+    // Clicked, not typed. This popup does not take the keyboard — the existing
+    // window-bar case dismisses it with a click for the same reason — so the
+    // reader's route to an item on it is the pointer.
+    //
+    // `find_cell` rather than an index into the row: the popup sits on a
+    // shaded desktop and inside a window frame, so the bytes before the word
+    // are not the columns before it, and "Rename…" is the only place that word
+    // appears on this screen.
+    const std::optional<std::pair<int, int>> entry = reader.find_cell("Rename…");
+    CK_CHECK(entry.has_value());
+    if (!entry) return;
+    reader.click(entry->first, entry->second);
+    CK_CHECK(reader.sees("Use Default Title"));
+    for (int i = 0; i < 40; ++i) reader.client->send_input("\x7f");
+    reader.settle(300);
+    reader.press("the background one\r");
+    CK_CHECK(reader.sees("the background one"));
+
+    // The one in front kept its own name, and the reader was never taken to
+    // the window they only pointed at.
+    CK_CHECK(reader.screen().find("Terminal 2") != std::string::npos);
+    CK_CHECK(reader.screen().find("Terminal 1") == std::string::npos);
+
+    reader.press("\x02" "d");
+    CK_CHECK(reader.gone());
+    end_process(server);
+    forget(socket);
+}

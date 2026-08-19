@@ -231,8 +231,9 @@ Notes on the parts that are easy to get wrong:
   n-th terminal) rather than selecting a handler, so there is nothing for a
   binding to point at. Asking is refused with that reason.
 - **Action names are exactly the actions that exist.** The list grows with
-  the packages that add them — `copy-mode` and `paste` arrived with WP-17 —
-  so every name a file can contain is a name that does something. Copy mode's
+  the packages that add them — `copy-mode` and `paste` arrived with WP-17,
+  `rename-terminal` with WP-36 — so every name a file can contain is a name
+  that does something. Copy mode's
   own keys are not among them: they are modal motions rather than commands,
   and are fixed in v1 ([06-ui-design.md](06-ui-design.md)).
 - **The theme is chosen in `Settings ▸ General…` and stored.** It used to be

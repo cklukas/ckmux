@@ -37,12 +37,17 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 26>& default_bindings() {
-    static const std::array<KeyBinding, 26> kBindings{{
+const std::array<KeyBinding, 27>& default_bindings() {
+    static const std::array<KeyBinding, 27> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {".", commands::kMoveTerminal, "&Move to Session…", "move to session", 0,
          Action::MoveTerminal},
+        // The chord plans/06 gives it, and the one a reader arriving from tmux
+        // already has in their fingers. The Session menu's own rename answers
+        // to `R`; these are two commands and they keep two keys.
+        {",", commands::kRenameTerminal, "&Rename Terminal…", "rename term", 0,
+         Action::RenameTerminal},
         // Mnemonics are per menu, and New already holds the Terminal menu's N
         // — so Next answers to its x, the way Cascade answers to its a.
         {"n", kNextWindow, "Ne&xt Terminal", "next", 70, Action::NextTerminal},
@@ -88,6 +93,7 @@ std::string_view command_for_action(Action action) {
         case Action::NewTerminal: return commands::kNewTerminal;
         case Action::CloseTerminal: return commands::kCloseTerminal;
         case Action::MoveTerminal: return commands::kMoveTerminal;
+        case Action::RenameTerminal: return commands::kRenameTerminal;
         case Action::NextTerminal: return kNextWindow;
         case Action::PreviousTerminal: return kPreviousWindow;
         case Action::WindowList: return kWindowList;

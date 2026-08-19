@@ -475,6 +475,34 @@ void Server::handle(Client& client, const proto::Message& message) {
             if (watcher->greeted) send_session_list(*watcher);
         return;
     }
+    if (const auto* request = std::get_if<proto::RenameTerminal>(&message)) {
+        Terminal* const terminal = terminals_.find(request->id);
+        if (terminal == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "RenameTerminal";
+            error.human = "no such terminal";
+            send(client, error);
+            return;
+        }
+        // An EMPTY name is not a refused rename, it is the other half of the
+        // feature: "use the default title again", which hands the caption back
+        // to whatever the child claims. A session name cannot be cleared —
+        // there the empty string means "leave it alone", because a session with
+        // no name is a row in the picker with nothing to point at — and this is
+        // the one place the two renames deliberately differ.
+        //
+        // Not refused for length either: `set_custom_title` clamps, on a
+        // character boundary and through the same function the child's own
+        // title goes through.
+        (void)terminal->set_custom_title(request->name);
+        // Nothing is sent from here. The announcement rides the tick, through
+        // the same edge-triggered `TermMeta` the marks and the child's title
+        // use — including to the client that asked, which needs to be told what
+        // the server actually stored rather than to assume its own request was
+        // honoured verbatim.
+        return;
+    }
     if (const auto* request = std::get_if<proto::Attach>(&message)) {
         attach(client, *request);
         return;
@@ -986,7 +1014,10 @@ void Server::announce_terminal_news() {
         Client* const watcher = client_attached_to(home->id);
         if (watcher == nullptr) continue;
 
-        if (!terminal->marks_announced()) {
+        // Either half is news: the marks, or the name the reader gave it. One
+        // message states both, so a rename costs the same single `TermMeta` a
+        // bell does rather than a message of its own.
+        if (!terminal->marks_announced() || !terminal->custom_title_announced()) {
             proto::TermMeta meta;
             meta.term = id;
             const auto position = std::find(home->terminals.begin(), home->terminals.end(), id);
@@ -997,12 +1028,18 @@ void Server::announce_terminal_news() {
             // disagree by a byte and leave a caption flipping once a tick.
             const ckv::term::TerminalStatus status = terminal->status();
             meta.title = std::string(clamp_utf8(status.title, proto::kMaxTitleBytes));
+            // Already clamped where it was stored, and stated in full: this
+            // message says what the caption IS, and a mirror applies what it
+            // is told. An empty string is the reader having handed the name
+            // back, which is a value and not an omission.
+            meta.custom_title = terminal->custom_title();
             meta.flags = static_cast<std::uint8_t>(
                 (terminal->bell_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Bell) : 0) |
                 (terminal->activity_marked() ? static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)
                                              : 0));
             send(*watcher, meta);
             terminal->note_marks_announced();
+            terminal->note_custom_title_announced();
         }
 
         // The child asked to put text on the reader's clipboard. Gated on the
@@ -1379,6 +1416,14 @@ void Server::send_snapshot(Client& client) {
         // it does not restate them: a `TermMeta` is sent when the pair changes,
         // and this has just said what the pair is.
         terminal->note_marks_announced();
+        // And the name the reader gave this terminal, which is the other half
+        // of what survives a detach. Here rather than in a message of its own
+        // for the reason the layout is: a name is part of the state a client
+        // arrives into, not news about it — and a client that had to wait for
+        // a `TermMeta` to learn it would show the child's title first and
+        // correct itself a tick later, in front of the reader.
+        state.custom_title = terminal->custom_title();
+        terminal->note_custom_title_announced();
         // The child's own life, which no delta can carry because it is not a
         // fact about a screen. A terminal whose child has ended and which is
         // STILL IN A SESSION is a held one by construction — `notice_exits`

@@ -770,19 +770,25 @@ CK_TEST(a_right_click_on_the_switcher_bar_acts_on_that_window_not_the_active_one
     if (menu == nullptr) return;
     // What a reader is offered, in the order they are offered it — the taskbar
     // vocabulary the request asked for.
-    CK_CHECK(menu->items().size() == 6U);
-    if (menu->items().size() != 6U) return;
+    CK_CHECK(menu->items().size() == 8U);
+    if (menu->items().size() != 8U) return;
     CK_CHECK(menu->items()[0].label() == "Ma&ximize");
     CK_CHECK(menu->items()[1].label() == "&Move / Resize");
     CK_CHECK(menu->items()[2].is_separator());
-    CK_CHECK(menu->items()[3].label() == "Move to &session…");
+    // Naming the window sits in a group of its own between what happens to the
+    // window on this desktop and what happens to the terminal behind it.
+    CK_CHECK(menu->items()[3].label() == "Re&name…");
     CK_CHECK(menu->items()[4].is_separator());
-    CK_CHECK(menu->items()[5].label() == "&Close");
+    CK_CHECK(menu->items()[5].label() == "Move to &session…");
+    CK_CHECK(menu->items()[6].is_separator());
+    CK_CHECK(menu->items()[7].label() == "&Close");
     // With no server there is nowhere for a program to be moved TO, so that row
     // is plainly unavailable rather than quietly inert — the same rule
-    // `Terminal ▸ Move terminal…` follows.
-    CK_CHECK(!menu->items()[3].enabled_flag());
-    CK_CHECK(!menu->items()[3].disabled_reason().empty());
+    // `Terminal ▸ Move terminal…` follows. Rename is not gated with it: a
+    // reader may name a window whether or not there is anywhere to move it.
+    CK_CHECK(!menu->items()[5].enabled_flag());
+    CK_CHECK(!menu->items()[5].disabled_reason().empty());
+    CK_CHECK(menu->items()[3].enabled_flag());
 
     // Maximize, chosen from the BACKGROUND row. Command dispatch would have
     // maximized `second`, which is the window the reader did not point at.

@@ -402,3 +402,78 @@ CK_TEST(the_drain_budget_is_for_the_pass_and_not_for_each_child) {
     CK_CHECK(!screen_text(second).empty());
     CK_CHECK(!screen_text(third).empty());
 }
+
+CK_TEST(the_name_a_reader_gives_a_terminal_is_kept_beside_what_the_child_claims) {
+    // A custom title is session state, so it lives on the terminal the session
+    // holds rather than in the client that set it (plans/03). What it must NOT
+    // do is replace what the child says: the override is resolved into a
+    // caption by the client, and "use the default title again" needs a current
+    // answer to hand back to.
+    Terminals terminals(test_settings());
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+    CK_CHECK(terminal.custom_title().empty());
+    // Nothing to announce until a reader names it, the same way a terminal
+    // nobody has moved has no place to state.
+    CK_CHECK(terminal.custom_title_announced());
+
+    CK_CHECK(terminal.set_custom_title("deploy"));
+    CK_CHECK(terminal.custom_title() == "deploy");
+    CK_CHECK(!terminal.custom_title_announced());
+    terminal.note_custom_title_announced();
+    CK_CHECK(terminal.custom_title_announced());
+
+    // Edge-triggered: an unchanged name costs no message. Without this a
+    // producer that restated it would ping-pong forever with the client that
+    // applies what it is told, which is what the layout's own flag exists for.
+    CK_CHECK(!terminal.set_custom_title("deploy"));
+    CK_CHECK(terminal.custom_title_announced());
+
+    // The child goes on naming itself underneath, and the two never meet.
+    terminal.session().feed_output("\x1b]2;make -j8\a");
+    CK_CHECK(pump_until(terminals, [&] { return terminal.status().title == "make -j8"; }));
+    CK_CHECK(terminal.custom_title() == "deploy");
+
+    // Empty is the reader handing the name back — a value, and news like any
+    // other. (A SESSION rename reads empty as "leave it alone", because a
+    // session with no name is a row in the picker with nothing to point at;
+    // this is the one place the two renames deliberately differ.)
+    CK_CHECK(terminal.set_custom_title(""));
+    CK_CHECK(terminal.custom_title().empty());
+    CK_CHECK(!terminal.custom_title_announced());
+
+    terminals.close_all();
+}
+
+CK_TEST(a_name_longer_than_the_wire_allows_is_cut_on_a_character_boundary) {
+    // Clamped where it is KEPT rather than on the way out: a server that
+    // stored megabytes per terminal and trimmed them at the socket would still
+    // be holding megabytes. Through the same function the child's own title
+    // goes through, so the cut cannot land inside a UTF-8 sequence and leave a
+    // caption ending in half a character.
+    Terminals terminals(test_settings());
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+
+    // Two-byte characters, so a byte-count cut lands mid-character unless
+    // something stops it. The limit is even and the character is two bytes, so
+    // an honest clamp ends exactly on the boundary.
+    std::string huge;
+    while (huge.size() < ckm::proto::kMaxTitleBytes + 64) huge += "ä";
+    CK_CHECK(terminal.set_custom_title(huge));
+    CK_CHECK(terminal.custom_title().size() <= ckm::proto::kMaxTitleBytes);
+    CK_CHECK(!terminal.custom_title().empty());
+    // Every byte is either an ASCII byte or part of a whole sequence: no
+    // trailing continuation byte without its leader.
+    const std::string& kept = terminal.custom_title();
+    std::size_t index = 0;
+    std::size_t characters = 0;
+    while (index < kept.size()) {
+        const unsigned char lead = static_cast<unsigned char>(kept[index]);
+        const std::size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0b110 ? 2 : (lead >> 4) == 0b1110 ? 3 : 4;
+        index += length;
+        ++characters;
+    }
+    CK_CHECK(index == kept.size());
+    CK_CHECK(characters > 0);
+
+    terminals.close_all();
+}

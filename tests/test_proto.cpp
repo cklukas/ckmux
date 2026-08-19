@@ -82,6 +82,10 @@ std::vector<Message> every_message() {
     state.term = 11;
     state.index = 2;
     state.title = "vim plans/05-protocol.md";
+    // The reader's own name for it, and deliberately not the same string as
+    // the child's title: the two travel together and a codec that carried one
+    // of them twice would round-trip cleanly if they matched.
+    state.custom_title = "protocol notes";
     state.flags = static_cast<std::uint8_t>(TermMetaFlag::Bell) |
                   static_cast<std::uint8_t>(TermMetaFlag::Activity);
     state.columns = 80;
@@ -142,7 +146,11 @@ std::vector<Message> every_message() {
 
     messages.emplace_back(TermOpened{11, 4, 2, Rect{1, 1, 40, 12}, "zsh", 80, 24});
     messages.emplace_back(TermClosed{11, 1, -9, 1});
-    messages.emplace_back(TermMeta{11, 2, "make", static_cast<std::uint8_t>(TermMetaFlag::Activity)});
+    // A custom title as well as the child's, and two different strings: a
+    // codec that wrote one field twice, or dropped the new one, would round-
+    // trip cleanly if they were equal.
+    messages.emplace_back(
+        TermMeta{11, 2, "make", "build", static_cast<std::uint8_t>(TermMetaFlag::Activity)});
     messages.emplace_back(NewTerminal{4, "htop", Rect{0, 0, 60, 20}});
     // Non-default force and grace, so a codec that silently drops either
     // field fails here rather than in a dialog whose checkbox stopped

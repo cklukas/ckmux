@@ -112,6 +112,16 @@ public:
     // whether the terminal has exited and draws the banner from that; what this
     // says is that the SERVER means to keep it.
     bool held() const noexcept { return hold_; }
+    // The name the READER gave this terminal, or empty for none — as the
+    // server last stated it, which is the only authority on it: a custom title
+    // is session state (plans/03), so this mirror holds it exactly as it holds
+    // the grid, and never decides it.
+    //
+    // Beside `title()` rather than folded into it, because they are two facts
+    // and both keep changing. The child goes on renaming itself underneath an
+    // override — that is what makes it an override — and the window layer is
+    // where the two are resolved into one caption.
+    const std::string& custom_title() const noexcept { return custom_title_; }
     // What a reader who is not in this terminal has missed (plans/05's
     // `TermMeta` flags), as the server last stated it.
     bool bell_marked() const noexcept { return bell_marked_; }
@@ -195,6 +205,7 @@ private:
     bool needs_snapshot_ = false;
     bool exited_ = false;
     bool hold_ = false;
+    std::string custom_title_;
     bool bell_marked_ = false;
     bool activity_marked_ = false;
     std::optional<int> exit_status_;

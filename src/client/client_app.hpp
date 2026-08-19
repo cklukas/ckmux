@@ -245,6 +245,29 @@ struct ClientOptions {
     // whatever ignored the asking.
     std::function<void(ckv::term::TerminalSubsession& terminal, bool force, int grace_seconds)>
         close_terminal_in_session;
+    // Pins one terminal's caption to a name the reader chose, or hands it
+    // back — an empty name means "use the default title again", which is
+    // exactly what the rename dialog's third button asks for.
+    //
+    // Unset is M1: the client owns its terminals, so it owns the override too
+    // and remembers it in `titles_`. An attached client sends `RenameTerminal`
+    // and lets the answer come back, because a custom title is SESSION state
+    // (plans/03): it has to survive a detach, and the other client watching
+    // the same session has to see it. A client that pinned a caption locally
+    // would be showing a name that vanished the moment the reader reattached,
+    // which is the one thing a multiplexer must not do with a name.
+    std::function<void(ckv::term::TerminalSubsession& terminal, const std::string& name)>
+        rename_terminal;
+    // What the session layer says one terminal's custom title currently is.
+    // Unset is M1 again: nobody else holds one, so the client's own record is
+    // the answer and this is not asked.
+    //
+    // A query rather than a notification because that is how a caption already
+    // reaches this class — `refresh_terminal_titles()` polls the child's title
+    // on a timer, and asking one more question on the same tick costs a string
+    // compare. A push would need its own route from the session layer into the
+    // window layer, which is the seam this file exists to keep closed.
+    std::function<std::string(const ckv::term::TerminalSubsession& terminal)> custom_title;
     // Moves one terminal to another session, so its program keeps running
     // somewhere this desktop is not showing. `to_new_session` outranks
     // `destination`: the reader asked for a fresh one.
@@ -296,6 +319,24 @@ struct ClientOptions {
     // recorded — a report lands between one and two intervals after the last
     // movement, so 150 to 300 ms.
     std::int64_t layout_settle_nanos = 150'000'000;
+    // How long a window bar button must hold still before it may change
+    // length again — wider after `switcher_grow_nanos`, narrower after
+    // `switcher_shrink_nanos` (ckVision `WindowSwitcherBar::set_width_damping`).
+    //
+    // A terminal's caption is not a stable string: a shell rewrites it at
+    // every prompt, and `make` writes its progress into one. Undamped, every
+    // one of those re-sizes that button and slides every button beside it,
+    // several times a second — the row becomes unreadable long before the
+    // titles do, and a reader aiming at a button hits the one that took its
+    // place.
+    //
+    // A second before widening and half a minute before narrowing, because
+    // the two are not equally urgent: a button that is too NARROW is showing
+    // an elided name and should catch up soon, while one that is too WIDE is
+    // showing the whole name with slack around it — which costs the reader
+    // nothing, and which the very next prompt is likely to need back.
+    std::int64_t switcher_grow_nanos = 1'000'000'000;
+    std::int64_t switcher_shrink_nanos = 30'000'000'000;
 };
 
 // The default child environment: TERM and friends per
@@ -471,6 +512,17 @@ private:
     // from the close dialog's "Move instead…" and from ^B . — the same
     // question either way, so the same dialog.
     void show_move_terminal_dialog(ckv::term::TerminalSubsession* terminal);
+    // The rename prompt for one terminal: a field holding whatever the caption
+    // says now, and three ways out — name it, hand the name back, or leave it
+    // alone. Holds the TERMINAL rather than the window for the reason the move
+    // dialog does: a terminal can end while its dialog is open, and the lookup
+    // failing IS the answer.
+    void show_rename_terminal_dialog(ckv::term::TerminalSubsession* terminal);
+    // Pins the caption, or — with an empty name — hands it back to whatever
+    // the program says it is. One function for both because they are one
+    // decision with two answers, and splitting them would be two places for
+    // the "tell the server, then apply it here" order to be got wrong.
+    void rename_terminal(ckv::term::TerminalSubsession* terminal, std::string name);
     // The window currently showing this terminal, or nullptr once it is gone.
     // Dialogs hold the terminal rather than the window, because a terminal
     // can end while its dialog is open — the lookup failing IS the answer.
@@ -607,8 +659,20 @@ private:
     // child stops asking; the second is what stops us rewriting the caption
     // on every single frame.
     struct TerminalTitle {
+        // The three, in the order they override each other. `fallback` is the
+        // name ckmux gave the window and nothing ever takes away; `child` is
+        // whatever the program in it last claimed with OSC 0/2, which is
+        // ordinary and volatile; `custom` is the reader's, and outranks both.
+        //
+        // Three rather than one string that gets overwritten, because they
+        // answer different questions and all three keep being asked. The child
+        // goes on renaming itself underneath a custom title — that is the
+        // whole point of the override being an override — so "use the default
+        // title again" has a current answer to fall back to rather than the
+        // stale one from whenever the reader pinned it.
         std::string fallback;
         std::string child;
+        std::string custom;
         // The number in "Terminal 3", kept as a number so that `^B 3` can find
         // the window a reader is looking at rather than the third one in the
         // desktop's insertion order. The two agree until a window in the
@@ -616,6 +680,13 @@ private:
         int number = 0;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
+    // What one terminal's window is called, given everything currently known
+    // about it: the reader's name if they set one, else the program's if it
+    // claimed one, else ckmux's own. The single answer, so the title poll, the
+    // rename and copy mode's badge cannot each have an opinion. Declared here
+    // rather than with the other methods because it reads the struct above and
+    // a nested type has to exist before a signature can name it.
+    static std::string effective_title(const TerminalTitle& title);
     ckv::widgets::MemoryHelpProvider help_;
     PrefixOverlay* overlay_ = nullptr;
     CopyModeView* copy_mode_ = nullptr;

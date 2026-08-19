@@ -223,6 +223,30 @@ public:
     bool layout_announced() const noexcept { return layout_announced_; }
     void note_layout_announced() noexcept { layout_announced_ = true; }
 
+    // The name the READER gave this terminal, or empty for none.
+    //
+    // Here rather than on the client for exactly the reason the layout above
+    // is here: a session outlives its clients, and a reader who named a
+    // terminal expects to find that name when they come back. It is also the
+    // only place two clients watching the same session can agree on it.
+    //
+    // It does not replace what the child says. `status().title` goes on
+    // recording whatever the program claims with OSC 0/2 underneath this, so
+    // "use the default title again" has a CURRENT answer to hand back to
+    // rather than whatever the caption happened to say when the reader pinned
+    // it — which is the whole difference between an override and one more
+    // writer of the same string.
+    //
+    // `set_custom_title` answers whether anything actually changed, and only a
+    // change clears the announcement — the same edge trigger the marks and the
+    // layout use, and for the same two reasons: an unchanged name costs no
+    // message, and a producer that restated one would ping-pong forever with
+    // the client that applies what it is told.
+    const std::string& custom_title() const noexcept { return custom_title_; }
+    bool set_custom_title(std::string title);
+    bool custom_title_announced() const noexcept { return custom_title_announced_; }
+    void note_custom_title_announced() noexcept { custom_title_announced_ = true; }
+
     // Whether the last thing to change this terminal's screen was a client
     // resizing it rather than its child saying something. Read once and
     // cleared, on the tick.
@@ -276,6 +300,10 @@ private:
     // And true until a window moves, for the same reason: a terminal whose
     // place nobody has stated has no place to state.
     bool layout_announced_ = true;
+    std::string custom_title_;
+    // True until a reader names it, once more for the same reason: a terminal
+    // nobody has named has no name to announce.
+    bool custom_title_announced_ = true;
 };
 
 // Every terminal this server owns.

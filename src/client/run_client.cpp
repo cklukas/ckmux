@@ -284,6 +284,30 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         ask.grace_seconds = static_cast<std::uint16_t>(std::max(0, grace_seconds));
         session.request(ask);
     };
+    // Naming a terminal, and handing the name back — one seam for both,
+    // because an empty name IS the request to use the default title again.
+    // Sent rather than applied here: a custom title is session state (plans/03)
+    // and the server is what makes it survive a detach and reach the other
+    // client watching the same session. What comes back is the answer.
+    options.client.rename_terminal = [&session](ckv::term::TerminalSubsession& terminal,
+                                                const std::string& name) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::RenameTerminal ask;
+        ask.id = *id;
+        ask.name = name;
+        session.request(ask);
+    };
+    // And the answer, read back off the mirror the server states it into. A
+    // query on the client's own title poll rather than a push, because the
+    // caption is assembled from this and the child's title together and two
+    // readings taken a tick apart could disagree.
+    options.client.custom_title = [&session](const ckv::term::TerminalSubsession& terminal) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return std::string{};
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        return remote == nullptr ? std::string{} : remote->mirror().custom_title();
+    };
     options.client.move_terminal = [&session](ckv::term::TerminalSubsession& terminal,
                                               std::uint64_t destination, bool to_new_session) {
         const std::optional<std::uint64_t> id = session.id_of(terminal);

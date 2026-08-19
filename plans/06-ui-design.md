@@ -45,14 +45,24 @@ ckVision (what exists vs. what we add) is in
   window returns to its ckmux name rather than keeping stale text. The title
   is sanitized and length-bounded by the emulator before it reaches the
   frame, so a hostile child cannot draw into the chrome
-  ([02-architecture.md](02-architecture.md) security posture). A user rename
-  (M3) will pin the caption and stop it following the child.
+  ([02-architecture.md](02-architecture.md) security posture).
+- **A reader's own name outranks the program's** (WP-36). `Terminal ▸ Rename
+  Terminal…`, `^B ,`, or `Rename…` on the window bar's context menu pins the
+  caption to a name the reader chose. It is an OVERRIDE and not a second writer
+  of the same string: the child goes on claiming titles underneath it and is
+  simply not shown, which is what lets the dialog's third button, **Use Default
+  Title**, hand the caption back to whatever the program is calling itself
+  *now* rather than to whatever it said at the moment the reader pinned it. An
+  empty name asks for the same thing, so a reader who clears the field is not
+  refused. The name is session state, kept by the server
+  ([03-session-model.md](03-session-model.md)): it survives a detach, and the
+  other client watching that session sees it too.
 - **Second-to-last row — window bar** (WP-32, over ckVision's
   `WindowSwitcherBar`): every open terminal listed by the caption it already
   carries, the current one highlighted. Click an entry to activate, raise and
   focus that terminal; right-click one for `Maximize`/`Restore`,
-  `Move / Resize`, `Move to session…` and `Close` — each acting on the
-  terminal whose entry was clicked, never on the one in front. That is not a
+  `Move / Resize`, `Rename…`, `Move to session…` and `Close` — each acting on
+  the terminal whose entry was clicked, never on the one in front. That is not a
   detail of the wiring: every standard window command reads `active_window()`,
   so a `Close` dispatched as a command from a background row would close the
   foreground terminal, which is why ckVision's `WindowSwitcherTarget::bind`
@@ -68,6 +78,22 @@ ckVision (what exists vs. what we add) is in
   `content_area()` and therefore every maximized window's bounds exclude both
   rows by the arithmetic that was already there; nothing declares the bar
   uncoverable.
+  **Its buttons do not twitch** (WP-36). An entry's box is as wide as its
+  caption, and a caption follows the program — which for a shell means a
+  rewrite at every prompt and for `make` a rewrite per target. Undamped, each
+  of those re-sizes that button and slides every button after it, several times
+  a second: the row becomes unreadable long before the titles do, and a reader
+  aiming at a button hits the one that took its place. So a box may get **wider
+  at most once a second and narrower at most once every thirty seconds**,
+  measured from its own last change (ckVision's
+  `WindowSwitcherBar::set_width_damping`). The two waits differ because the two
+  cases do: a box that is too narrow is showing an elided name and should catch
+  up soon, while one that is too wide is showing the whole name with slack
+  around it — which costs nothing, and which the next prompt is likely to want
+  back. A window that has just opened takes its width at once, having nothing
+  to flicker between; and a name the READER gave takes effect at once too,
+  because a rename that visibly worked half a minute later reads as a command
+  that did not work.
 - **Last row — footer** (permanent): left side = context-sensitive hotkey
   hints; right side = status (session name · terminal count, prefix-pending
   indicator, bell/activity flags).
@@ -143,7 +169,7 @@ the chord state machine from there (details in
 | `^B 1`…`^B 9` | Focus terminal by index |
 | `^B w` | Window list dialog |
 | `^B s` | Session picker (switch / manage sessions) |
-| `^B ,` | Rename terminal · `^B $` rename session (tmux muscle memory) |
+| `^B ,` | Rename terminal — implemented, WP-36 |
 | `^B z` | Zoom (maximize/restore) focused window |
 | `^B M` | Enter move/resize mode (arrows move, `Shift`+arrows resize, `Enter`/`Esc` done) |
 | `^B h` / `^B v` / `^B g` | Tile horizontally / vertically / grid · `^B T` cascade |
@@ -327,7 +353,10 @@ asking is killed after `kill-grace-seconds`. Third, the Session menu holds
 no New Terminal: a terminal is the Terminal menu's to make, and the same
 item under two titles is a reader wondering which one they used — the
 Session menu is New Session…, Sessions…, Rename Session…, End Session…,
-then Detach and Quit. A row somebody else holds says so inline: "(in use —
+then Detach and Quit. The Terminal menu is New Terminal, Close Terminal,
+Rename Terminal…, Move to Session…, then Next/Previous, then Copy Mode, Paste
+and Send Prefix — naming a terminal sits with the other things done TO one,
+above the separator that divides them from moving between them. A row somebody else holds says so inline: "(in use —
 attaching takes it over)"; the row this client holds says "(this client)".
 Created/last-used columns wait for the wall-clock question they raise.
 

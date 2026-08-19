@@ -107,7 +107,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `Raise` / `FocusTerm` | `term u64` | *encode-only* | z-order and focus, both still dormant as COMMANDS: nothing sends either. Raising is reported rather than requested today — a raise changes the whole stack, and the stack travels whole on `SetLayout` (WP-28). **`Session::focused` is maintained off `Input` instead** — the terminal a reader's keys, mouse reports and focus reports go to is the terminal they are in, and it is the only statement of focus this wire carries today (R8). Two things read it: the snapshot's `focused_term`, and `TermMeta`'s activity mark, which means "output in a terminal the reader is NOT in" |
 | `ZoomTerm` | `term u64, on u8` | *encode-only* | maximize/restore |
 | `RenameSession` | `id u64, name str` | **live** | |
-| `RenameTerminal` | `id u64, name str` | *encode-only* | M3 |
+| `RenameTerminal` | `id u64, name str` | **live** | the name a READER gives one terminal, which the server keeps as session state and states back on `TermMeta` and in the attach snapshot (`TerminalState.custom_title`). It does not replace what the child claims with OSC 0/2: that goes on being recorded underneath, which is what gives "use the default title again" a CURRENT title to hand the caption back to rather than whatever it said when the reader pinned it. An **empty name clears the override** — the one place this deliberately differs from `RenameSession`, where empty means "leave it alone" because a session with no name is a row in the picker with nothing to point at. Clamped to `kMaxTitleBytes` where it is stored, on a character boundary, through the same function the child's own title goes through |
 | `KillSession` | `session u64, force u8, grace_seconds u16` | **live** | ask every child first (`request_termination()`); kill the survivors at the deadline only if `force` |
 | `KillServer` | — | **live** | `ckmux kill-server`, over its own connect path so running it twice does not start a server in order to kill one |
 | `Input` | `term u64, blob` | **live** | already-encoded child bytes — keys/mouse/focus are encoded **client-side** by ckVision's `TerminalView` against mirrored mode state ([04](04-terminal-emulation.md)); the server just writes to the PTY (queued) |
@@ -214,6 +214,18 @@ validated against the size the mirror is about to be rather than the one it
 was. Without it a repaint of a *smaller* terminal passed every bounds check
 against a larger mirror, and the rows and columns past the new edge kept the
 last program's output for good (C3, reproduced).
+
+**A caption is two facts, and the wire carries both.** `TerminalState.title`
+and `TermMeta.title` are what the CHILD claims; `custom_title` on each is what
+the READER named it, empty for none. They are separate fields rather than one
+string the last writer wins, because both keep changing and both keep being
+asked: a program renames itself at every prompt underneath a reader's name, and
+the client resolves the two into one caption (reader's name, else the child's,
+else `Terminal N`). Session state for the reason the layout is — a name that
+vanished when its reader detached is the one thing a multiplexer must not do
+with a name — so it rides the snapshot as well as the live message, and is
+therefore right before any `TermMeta` could arrive rather than corrected a tick
+after the window appears.
 
 **A resnapshot is an `Attach`, answered with `Attached`.** There is no separate
 "send it again" message: a client that observes a gap, or that a server told it
@@ -465,3 +477,9 @@ talk; two numbers for a wire nobody has ever spoken would say the same thing
 twice (`proto.hpp` records the same list). The field arrives with its producer
 and its consumer in one change, because a field nothing writes is precisely the
 shaped-and-dead state M-R3 named and WP-28 declined to add another of.
+
+`custom_title` on `TerminalState` and `TermMeta` (WP-36) is v3 by the same
+reasoning and under the same pairing rule. It also retires the last
+*encode-only* row that had shipped a message with nobody to receive it:
+`RenameTerminal` had a codec and no handler, which is the shaped-and-dead state
+one message further along, and it is answered here rather than left standing.

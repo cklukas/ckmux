@@ -46,6 +46,11 @@ namespace commands {
 inline constexpr std::string_view kNewTerminal = "ckmux.terminal.new";
 inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
 inline constexpr std::string_view kMoveTerminal = "ckmux.terminal.move-session";
+// Pinning one terminal's caption to a name the reader chose. Separate from
+// `kRenameSession` because a terminal and a session are different things to
+// name, and separate from anything the child does with OSC 0/2: this is the
+// override, and what the child says goes on being recorded underneath it.
+inline constexpr std::string_view kRenameTerminal = "ckmux.terminal.rename";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";
