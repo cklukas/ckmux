@@ -81,6 +81,29 @@ public:
     // it sends a message only when the size has actually moved.
     void desktop_resized(ckv::Size desktop, ckv::Size cell_pixels);
 
+    // Where this client's windows now are: the whole arrangement of the session
+    // it is attached to, in one `SetLayout` (WP-29).
+    //
+    // The report is composed by whoever owns the windows and translated to wire
+    // ids by the one place that has both halves; this end owns only the two
+    // rules about putting it on the wire:
+    //
+    //   * **Never while unattached.** A layout belongs to a session, and a
+    //     client in none would be answered with `Error{NoSuchSession}` — an
+    //     error a client provoked by asking a question it already knew the
+    //     answer to, which is the kind of noise that makes a real one hard to
+    //     see.
+    //   * **Never an arrangement already reported.** Edge-triggered, exactly as
+    //     the server's own producer is: the client debounces a drag into one
+    //     report, and this is what keeps a report that says nothing new — a
+    //     window dragged back where it started, a heal that rebuilt nothing —
+    //     off the wire entirely.
+    //
+    // An empty arrangement is not sent at all: a client with no windows is
+    // saying nothing about any terminal, and a terminal that has gone takes its
+    // stored layout with it on the server side anyway.
+    void report_layout(std::vector<proto::LayoutEntry> entries);
+
     // Sends one message to the server. The mirrors send their own input and
     // resizes; this is for what belongs to the attachment rather than to a
     // terminal — asking for a new one, closing one, naming one.
@@ -188,6 +211,13 @@ private:
     std::uint64_t session_ = 0;
     ckv::Size desktop_{0, 0};
     ckv::Size cell_pixels_{0, 0};
+    // The arrangement this client last put on the wire, so that reporting the
+    // same one again costs nothing (WP-29). Forgotten whenever what it was
+    // describing stops being true: an `attach` to another session, a detach, a
+    // connection that has gone. Not forgotten by a heal's re-`attach` for the
+    // session already held — the server kept the layout it was told, so
+    // restating it would be a message that changes nothing.
+    std::vector<proto::LayoutEntry> layout_sent_;
     std::uint64_t resnapshots_ = 0;
     std::uint64_t attachments_ = 0;
     // Whether a snapshot this client asked for is still on its way. Cleared by

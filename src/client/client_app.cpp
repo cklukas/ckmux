@@ -180,11 +180,20 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     report_config_warnings();
     title_timer_ = app_.start_timer(options_.title_poll_nanos, /*repeating=*/true,
                                     [this] { refresh_terminal_titles(); });
+    // Where the reader's windows are, watched only when somebody is listening
+    // (WP-29). With no `report_layout` there is no server to tell, and the
+    // timer does not exist at all rather than sampling an arrangement into a
+    // callback that is not there — which is exactly the M1 client, and is why
+    // nothing about a ckmux with no server changed when this landed.
+    if (options_.report_layout && options_.layout_settle_nanos > 0)
+        layout_timer_ = app_.start_timer(options_.layout_settle_nanos, /*repeating=*/true,
+                                         [this] { report_layout_if_settled(); });
 }
 
 ClientApp::~ClientApp() {
     if (which_key_timer_ != 0) app_.cancel_timer(which_key_timer_);
     if (title_timer_ != 0) app_.cancel_timer(title_timer_);
+    if (layout_timer_ != 0) app_.cancel_timer(layout_timer_);
 }
 
 void ClientApp::register_commands() {
@@ -728,6 +737,12 @@ void ClientApp::forget_terminals() {
     // The numbering starts over with the session: "Terminal 1" is the first
     // terminal of what a reader is looking at now.
     next_terminal_number_ = 1;
+    // And so does what this client has reported about an arrangement (WP-29).
+    // Every window it was describing belonged to the session being left; the
+    // next arrangement is a different session's, and comparing the two would be
+    // comparing places in two different stacks.
+    layout_seen_.clear();
+    layout_reported_.clear();
     refresh_footer();
 }
 
@@ -1156,6 +1171,49 @@ void ClientApp::refresh_terminal_titles() {
         // name ckmux gave it rather than keeping stale text forever.
         window->set_title(wanted.empty() ? entry->second.fallback : wanted);
     }
+}
+
+std::vector<WindowPlacement> ClientApp::capture_layout() const {
+    std::vector<WindowPlacement> arrangement;
+    if (desktop_ == nullptr) return arrangement;
+    // One reading of the whole desktop rather than a walk of `windows()` asking
+    // each window where it is: `windows()` is INSERTION order (ckVision keeps
+    // it deliberately independent of z-order so that window cycling reaches
+    // more than the top two), and the stack is what a layout has to state.
+    // `snapshot()` walks the children, which is the stack, bottom-most first.
+    const w::Desktop::Snapshot snapshot = desktop_->snapshot();
+    arrangement.reserve(snapshot.windows.size());
+    for (const w::Desktop::WindowSnapshot& window : snapshot.windows) {
+        const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window.window);
+        if (terminal == nullptr) continue;  // a dialog or the picker, not a terminal
+        // `zoomed`, not `maximized()`: the second also answers true for a
+        // window whose GROW POLICY keeps it filling the desktop, which is a
+        // standing arrangement decision this client makes for itself rather
+        // than a place a reader put a window and expects to find it in again.
+        arrangement.push_back(WindowPlacement{terminal, window.bounds,
+                                              static_cast<std::uint16_t>(arrangement.size()),
+                                              window.zoomed});
+    }
+    return arrangement;
+}
+
+void ClientApp::report_layout_if_settled() {
+    if (!options_.report_layout) return;
+    std::vector<WindowPlacement> now = capture_layout();
+    // Still moving. A drag, a resize, a window sliding under `Tile` — whatever
+    // it is, the reader has not finished, and an arrangement reported mid-drag
+    // is a position no window ends up in. This is the whole of the debounce:
+    // every intermediate frame lands here and goes no further.
+    if (now != layout_seen_) {
+        layout_seen_ = std::move(now);
+        return;
+    }
+    // Settled, and the same as what the server was last told. Edge-triggered
+    // like the server's own announce: a desktop nobody is touching puts nothing
+    // on the wire, however long this timer runs.
+    if (layout_seen_ == layout_reported_) return;
+    layout_reported_ = layout_seen_;
+    options_.report_layout(layout_reported_);
 }
 
 void ClientApp::focus_active_terminal() {

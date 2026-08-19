@@ -73,6 +73,30 @@ struct SessionRow {
     bool attached = false;
 };
 
+// One terminal window's place in the arrangement, as the WINDOW layer sees it
+// (WP-29). The terminal is named by the subsession the window is showing rather
+// than by a wire id, because this class does not know wire ids and must not
+// learn them: it knows windows, the session layer knows terminals, and
+// `run_client.cpp` is the one place that has both (see the file comment above).
+//
+// `z_order` counts from the bottom of the stack and is only meaningful against
+// the other entries of the same report — a stack position is a comparison, not
+// a coordinate — which is why a layout is always captured and reported as a
+// whole arrangement rather than one window at a time. Raising one window
+// renumbers the ones it passed, and a window that CLOSES leaves the arrangement
+// without appearing in it at all.
+struct WindowPlacement {
+    const ckv::term::TerminalSubsession* terminal = nullptr;
+    // The window on the desktop, frame included — NOT the terminal's own grid,
+    // which is `content_rect()` and travels on an entirely different message
+    // (plans/05, "Two geometries, and they are not the same number").
+    ckv::Rect rect;
+    std::uint16_t z_order = 0;
+    bool zoomed = false;
+
+    friend bool operator==(const WindowPlacement&, const WindowPlacement&) = default;
+};
+
 struct ClientOptions {
     // Everything the configuration file said, defaults included (plans/08).
     // The client reads its own settings out of this rather than holding a
@@ -194,6 +218,19 @@ struct ClientOptions {
     std::function<void(ckv::term::TerminalSubsession& terminal, std::uint64_t destination,
                        bool to_new_session)>
         move_terminal;
+    // Where this client's terminal windows now are (WP-29), reported once the
+    // reader has finished moving them.
+    //
+    // Unset is M1: a client with no server has nobody to tell, and the whole
+    // observation — the timer included — stays off rather than computing an
+    // arrangement nothing consumes. An attached client passes a callback that
+    // names each window's terminal on the wire and sends `SetLayout`.
+    //
+    // The WHOLE arrangement, every time, in z-order from the bottom. A layout
+    // is session state owned by the server (plans/03), and the server cannot
+    // reconstruct one from per-window news: a raise renumbers windows nobody
+    // touched, and a close removes a window that is then named nowhere.
+    std::function<void(const std::vector<WindowPlacement>&)> report_layout;
     // Whether to open a terminal at startup.
     //
     // True is M1: a client with no server has nothing to attach to, so an empty
@@ -209,6 +246,23 @@ struct ClientOptions {
     // records a title change without raising an event, so this is a poll; the
     // interval only has to be shorter than a reader would notice.
     std::int64_t title_poll_nanos = 100'000'000;
+    // How long the arrangement has to hold still before it is reported (WP-29).
+    //
+    // A drag produces a geometry change per frame and the server must not be
+    // told about each one — WP-7 measured what an unthrottled per-frame channel
+    // costs on the delta path, and the server's own producer coalesces to the
+    // tick for the same reason. So this is a SETTLE interval, not a send rate:
+    // the arrangement is sampled this often and reported only once two
+    // consecutive samples agree, which makes a drag of any length exactly one
+    // report rather than one report per this many nanoseconds.
+    //
+    // 150 ms because it has to be longer than the gap between two frames of a
+    // reader's drag (mouse reports arrive far faster than that, and this
+    // client's own loop wakes at least every 50 ms) and short enough that a
+    // reader who moves a window and immediately detaches still has the move
+    // recorded — a report lands between one and two intervals after the last
+    // movement, so 150 to 300 ms.
+    std::int64_t layout_settle_nanos = 150'000'000;
 };
 
 // The default child environment: TERM and friends per
@@ -350,6 +404,22 @@ private:
     // in its snapshot and raises no event, and a frame is exactly as often as
     // a caption can visibly change.
     void refresh_terminal_titles();
+    // The whole arrangement as it stands right now: every window showing a
+    // terminal, bottom of the stack first, with the desktop's own snapshot as
+    // the source (ckVision `Desktop::snapshot()` walks its children in z-order
+    // and carries each window's bounds and zoom state, so one call answers
+    // where, how high and how big at a single instant rather than three
+    // readings that could disagree). Dialogs are left out: a message box over
+    // the desktop is not part of the reader's arrangement and would be a window
+    // the server has no terminal for.
+    std::vector<WindowPlacement> capture_layout() const;
+    // The debounce, on `layout_settle_nanos`: sample, and report only once two
+    // consecutive samples agree AND the settled arrangement differs from the
+    // one last reported. Both halves matter — the first makes a drag one report
+    // instead of one per frame, the second makes this edge-triggered, so a
+    // desktop nobody is touching costs nothing on the wire however long the
+    // timer runs.
+    void report_layout_if_settled();
     void show_key_reference();
     // The name the New Session prompt offers, from the sessions last seen.
     std::string suggested_session_name() const;
@@ -451,6 +521,15 @@ private:
     std::string internal_clipboard_;
     ckv::ui::Application::TimerId which_key_timer_ = 0;
     ckv::ui::Application::TimerId title_timer_ = 0;
+    // WP-29's two memories. `layout_seen_` is the previous sample and is what
+    // "has it stopped moving?" is answered against; `layout_reported_` is what
+    // was last handed to `report_layout` and is what "is this news?" is
+    // answered against. Two rather than one because a settled arrangement and
+    // an unreported one are different questions: a reader who drags a window
+    // back to where it started leaves the first satisfied and the second not.
+    std::vector<WindowPlacement> layout_seen_;
+    std::vector<WindowPlacement> layout_reported_;
+    ckv::ui::Application::TimerId layout_timer_ = 0;
     // The window whose confirmation the reader has already answered, so the
     // second close() pass does not ask again — as an address AND as an
     // identity. An address alone is a claim about a window that may have been

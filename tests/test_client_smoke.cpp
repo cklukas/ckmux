@@ -133,6 +133,50 @@ bool any_label_contains(const std::vector<std::string>& labels, std::string_view
     return false;
 }
 
+// --- WP-29: what the client reports about where its windows are -------------
+
+// One turn of the layout timer. The client samples the arrangement this often
+// and reports it only once two consecutive samples agree, so a change reaches
+// the seam on the second turn after it — and a desktop nobody is touching
+// reaches it never, however many turns go by.
+constexpr std::int64_t kLayoutSettleNanos = 150'000'000;
+
+template <typename FixtureType>
+void layout_tick(FixtureType& f) {
+    f.clock.advance(kLayoutSettleNanos);
+    f.app.step(f.clock.now_nanos());
+}
+
+// The terminal a window is showing. That is how a placement names one: the
+// window layer has no wire ids and never will — `run_client.cpp` is where a
+// subsession becomes an id (client_app.hpp's WindowPlacement).
+const ckv::core::TerminalSubsession* terminal_of(ckv::widgets::Window* window) {
+    auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(window->content());
+    return view == nullptr ? nullptr : &view->session();
+}
+
+// The same handle again, as the CLIENT's own map is keyed by it. A
+// `TerminalView` borrows the base class, so the launched subsession behind one
+// is recovered with a cast rather than by widening anything: every terminal
+// window in this fixture is showing one the application launched.
+const ckv::term::TerminalSubsession* launched_terminal_of(ckv::widgets::Window* window) {
+    return dynamic_cast<const ckv::term::TerminalSubsession*>(terminal_of(window));
+}
+
+using LayoutReports = std::vector<std::vector<ckm::client::WindowPlacement>>;
+
+// The client with somebody listening to its arrangement, which is what an
+// attached client is: with no `report_layout` there is no server to tell, the
+// timer is never started, and this is the M1 client unchanged.
+ClientOptions watching_layout(LayoutReports& reports) {
+    ClientOptions options = test_options();
+    options.layout_settle_nanos = kLayoutSettleNanos;
+    options.report_layout = [&reports](const std::vector<ckm::client::WindowPlacement>& arrangement) {
+        reports.push_back(arrangement);
+    };
+    return options;
+}
+
 }  // namespace
 
 CK_TEST(the_client_opens_with_a_menu_bar_a_footer_and_one_terminal) {
@@ -1013,4 +1057,129 @@ CK_TEST(a_refusal_from_the_server_is_shown_with_its_code_and_its_request) {
     CK_CHECK(screen.find("already exists") != std::string::npos);
     CK_CHECK(screen.find("RenameSession") != std::string::npos);
     CK_CHECK(screen.find("Code: 4") != std::string::npos);  // NameTaken, by number
+}
+
+CK_TEST(a_window_being_dragged_is_reported_once_it_settles_and_not_per_frame) {
+    // WP-29's whole point. A drag produces a geometry change per frame, and a
+    // client that reported each one would put a message on the wire per frame —
+    // the cost WP-7 measured on the delta path, which is why the server's own
+    // producer coalesces to its tick and why this one coalesces to a settle.
+    LayoutReports reports;
+    ConfiguredFixture f(watching_layout(reports));
+    f.app.step(0);
+    ckv::widgets::Window* const window = f.client.desktop().windows()[0];
+
+    // The desktop as it opens. One sample says nothing — there is nothing yet
+    // to compare it with — and the second, agreeing with the first, is the
+    // first arrangement this client has ever had to report.
+    layout_tick(f);
+    CK_CHECK(reports.empty());
+    layout_tick(f);
+    CK_CHECK(reports.size() == 1U);
+    CK_CHECK(reports.back().size() == 1U);
+    CK_CHECK(reports.back().front().terminal == terminal_of(window));
+    CK_CHECK(reports.back().front().rect == window->bounds());
+    CK_CHECK(reports.back().front().z_order == 0U);
+    CK_CHECK(!reports.back().front().zoomed);
+
+    // The drag: a position per turn of the timer, every one of them a position
+    // the window does not end up in.
+    for (int frame = 1; frame <= 4; ++frame) {
+        window->set_bounds(ckv::Rect{10 + frame, 4 + frame, 30, 10});
+        layout_tick(f);
+    }
+    CK_CHECK(reports.size() == 1U);
+
+    // The reader lets go, and exactly one report describes where the window
+    // actually is.
+    layout_tick(f);
+    CK_CHECK(reports.size() == 2U);
+    CK_CHECK(reports.back().size() == 1U);
+    CK_CHECK(reports.back().front().rect == (ckv::Rect{14, 8, 30, 10}));
+
+    // And then nothing, for as long as nobody touches anything. Edge-triggered
+    // like the server's own announce: a still desktop is not news.
+    for (int idle = 0; idle < 6; ++idle) layout_tick(f);
+    CK_CHECK(reports.size() == 2U);
+}
+
+CK_TEST(a_raise_renumbers_the_whole_arrangement_and_a_close_leaves_it) {
+    // Why a layout is reported as a whole arrangement rather than one window at
+    // a time. Raising one window renumbers the ones it passed — nobody moved
+    // them and their stored z-order is wrong now — and a window that CLOSES is
+    // named nowhere at all, so only "here is everything" can state either.
+    LayoutReports reports;
+    ConfiguredFixture f(watching_layout(reports));
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 2U);
+    const ckv::core::TerminalSubsession* const first = terminal_of(f.client.desktop().windows()[0]);
+    const ckv::core::TerminalSubsession* const second = terminal_of(f.client.desktop().windows()[1]);
+
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 1U);
+    CK_CHECK(reports.back().size() == 2U);
+    // Bottom of the stack first, and the window just opened is on top of the
+    // one that was there.
+    CK_CHECK(reports.back()[0].terminal == first);
+    CK_CHECK(reports.back()[0].z_order == 0U);
+    CK_CHECK(reports.back()[1].terminal == second);
+    CK_CHECK(reports.back()[1].z_order == 1U);
+
+    // A raise, which moves no window by a single cell.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kPreviousWindow)));
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 2U);
+    CK_CHECK(reports.back().size() == 2U);
+    CK_CHECK(reports.back()[0].terminal == second);
+    CK_CHECK(reports.back()[1].terminal == first);
+
+    // And a close, which is a window leaving the arrangement rather than
+    // anything being said about it. Taken down the way an attached client's
+    // window goes — the server said the terminal ended — so no confirmation
+    // dialog stands between this and the arrangement that is left.
+    const ckv::term::TerminalSubsession* const closing =
+        launched_terminal_of(f.client.desktop().windows()[1]);
+    CK_CHECK(closing != nullptr);
+    if (closing == nullptr) return;
+    f.client.close_window_for_terminal(*closing);
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 3U);
+    CK_CHECK(reports.back().size() == 1U);
+    CK_CHECK(reports.back().front().terminal == first);
+    CK_CHECK(reports.back().front().z_order == 0U);
+}
+
+CK_TEST(a_zoomed_window_is_reported_as_zoomed_and_unzooming_reports_it_back) {
+    // Maximized is part of a window's place, not a separate fact about it: a
+    // terminal that was zoomed is restored zoomed (WP-30), and the rect beside
+    // the flag is the one it fills right now.
+    LayoutReports reports;
+    ConfiguredFixture f(watching_layout(reports));
+    f.app.step(0);
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 1U);
+    CK_CHECK(!reports.back().front().zoomed);
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 2U);
+    CK_CHECK(reports.back().front().zoomed);
+    CK_CHECK(reports.back().front().rect == f.client.desktop().content_area());
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    layout_tick(f);
+    layout_tick(f);
+    CK_CHECK(reports.size() == 3U);
+    CK_CHECK(!reports.back().front().zoomed);
 }

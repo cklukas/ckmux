@@ -273,6 +273,31 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         ask.to_new_session = to_new_session ? 1 : 0;
         session.request(ask);
     };
+    // Where the reader's windows are (WP-29). This is the translation the whole
+    // arrangement has to pass through, and the reason it lives here rather than
+    // at either end: the window layer knows windows and the mirrors they show,
+    // the session layer knows wire ids, and this function is the one place that
+    // has both. The client has already decided WHEN to report — it debounces a
+    // drag into one settled arrangement — and the session decides whether it
+    // may be sent at all; between them there is only this renaming.
+    options.client.report_layout = [&session](const std::vector<WindowPlacement>& arrangement) {
+        std::vector<proto::LayoutEntry> entries;
+        entries.reserve(arrangement.size());
+        for (const WindowPlacement& placed : arrangement) {
+            if (placed.terminal == nullptr) continue;
+            // A window whose terminal this session does not know is a window
+            // whose terminal has just gone — a close racing the settle timer.
+            // Left out rather than reported as some other id: the entry that
+            // vanishes IS how the wire says a window closed, and the z-order
+            // gap it leaves behind means nothing, because a stack position is
+            // only ever compared with the others in the same message.
+            const std::optional<std::uint64_t> id = session.id_of(*placed.terminal);
+            if (!id) continue;
+            entries.push_back(proto::LayoutEntry{*id, proto::to_wire(placed.rect), placed.z_order,
+                                                 static_cast<std::uint8_t>(placed.zoomed ? 1 : 0)});
+        }
+        session.report_layout(std::move(entries));
+    };
     // The session usually has terminals already — that is what attaching to one
     // MEANS. One is asked for only if it turns out to be empty, once the
     // snapshot has said so.

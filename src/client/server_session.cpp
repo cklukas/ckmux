@@ -13,6 +13,13 @@ ServerSession::ServerSession(Send send) : send_(std::move(send)) {
 }
 
 void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels) {
+    // What was reported described the arrangement of the session being left, so
+    // it stops being an answer to "has this changed?" the moment another one is
+    // asked for. A re-`attach` to the SAME session is a heal (see
+    // `request_snapshot`), and the server still holds what it was told, so that
+    // one deliberately keeps its memory rather than restating an arrangement
+    // nothing has moved.
+    if (session != session_) layout_sent_.clear();
     session_ = session;
     desktop_ = desktop;
     cell_pixels_ = cell_pixels;
@@ -57,6 +64,24 @@ void ServerSession::desktop_resized(ckv::Size desktop, ckv::Size cell_pixels) {
     send_(resize);
 }
 
+void ServerSession::report_layout(std::vector<proto::LayoutEntry> entries) {
+    // Nothing to say. A client with no windows — one that has just left a
+    // session, one whose connection went — is not reporting an empty
+    // arrangement, it is reporting nothing at all, and the two are different:
+    // an empty `SetLayout` names no terminal and so changes nothing the server
+    // holds, which makes it a message whose only effect is to have been sent.
+    if (entries.empty()) return;
+    // A layout belongs to a session. Unattached, the server would answer
+    // `Error{NoSuchSession, "SetLayout"}` — correctly, because it has nowhere
+    // to file one — and the error would reach a reader who asked for nothing.
+    if (!attached_ || !send_) return;
+    if (entries == layout_sent_) return;
+    layout_sent_ = std::move(entries);
+    proto::SetLayout report;
+    report.entries = layout_sent_;
+    send_(report);
+}
+
 RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     const auto found = terminals_.find(id);
     if (found != terminals_.end()) return *found->second;
@@ -86,6 +111,10 @@ void ServerSession::connection_lost() {
     // it twice for terminals nobody can close anyway.
     terminals_.clear();
     announced_.clear();
+    // Including what this client had reported about where its windows were: it
+    // was reported to a server that no longer exists, and the next one has
+    // never been told anything.
+    layout_sent_.clear();
 }
 
 void ServerSession::windows_forgotten() {
@@ -169,6 +198,10 @@ bool ServerSession::handle(const proto::Message& message) {
     }
     if (const auto* detached = std::get_if<proto::Detached>(&message)) {
         attached_ = false;
+        // Whatever was reported was about a session this client is no longer
+        // watching, and the windows that made up that arrangement are about to
+        // be taken down. Attaching again — here or elsewhere — reports afresh.
+        layout_sent_.clear();
         if (on_detached) on_detached(detached->reason, detached->text);
         return true;
     }

@@ -1113,3 +1113,120 @@ CK_TEST(a_request_the_server_refuses_reaches_the_reader) {
     server.terminals().close_all();
     forget(socket);
 }
+
+CK_TEST(a_layout_report_goes_out_once_per_change_and_never_while_unattached) {
+    // WP-29's wire half. The window layer decides WHEN an arrangement has
+    // settled; this end decides whether it may be sent at all, and the two
+    // rules it enforces are both about messages that must NOT appear: one for a
+    // client with no session to report about, and one for an arrangement the
+    // server has already been told.
+    const std::filesystem::path socket = private_socket("layout");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client watcher;
+    CK_CHECK(watcher.connect(socket));
+    watcher.greet();
+    std::size_t refusals = 0;
+    watcher.session.on_error = [&refusals](const ckm::proto::Error&) { ++refusals; };
+
+    ckm::proto::LayoutEntry placed;
+    placed.term = terminal.id();
+    placed.rect = ckm::proto::Rect{4, 2, 40, 12};
+
+    // Not attached yet. The server would answer `Error{NoSuchSession}` — it has
+    // nowhere to file an arrangement for a client watching nothing — so the
+    // question is never asked. An error a client provoked by saying something
+    // it already knew was pointless is noise in front of the reader.
+    watcher.session.report_layout({placed});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 0U);
+
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
+
+    watcher.session.report_layout({placed});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 1U);
+    // The same arrangement, again. The client's own debounce turns a drag into
+    // one settled report; this is what keeps a report that says nothing new —
+    // a window dragged back where it started, a heal that rebuilt nothing —
+    // off the wire even so.
+    watcher.session.report_layout({placed});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 1U);
+
+    ckm::proto::LayoutEntry moved = placed;
+    moved.rect = ckm::proto::Rect{9, 5, 40, 12};
+    watcher.session.report_layout({moved});
+    CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 2U);
+
+    // And the server filed it: it states the arrangement back on its tick, with
+    // the rect this client reported. Left in `unread` on purpose — restoring a
+    // layout is WP-30's, and this client deliberately does not act on one, so
+    // the `LayoutDelta` is a message it can see arrive and does nothing with.
+    const auto stated_where_the_window_moved_to = [&] {
+        for (const ckm::proto::Message& message : watcher.unread) {
+            const auto* const layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr || layout->entries.size() != 1U) continue;
+            if (layout->entries.front().term == terminal.id() &&
+                layout->entries.front().rect == moved.rect)
+                return true;
+        }
+        return false;
+    };
+    CK_CHECK(run_until(server, clock, watcher, stated_where_the_window_moved_to));
+    CK_CHECK(refusals == 0U);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(an_arrangement_is_news_again_after_a_takeover_took_the_session_away) {
+    // The edge trigger remembers what this client told THIS attachment. A
+    // takeover ends it, and whatever the client that displaced this one
+    // reported is what the server now holds — so the same arrangement, reported
+    // after attaching again, is news and has to go out. Remembering across a
+    // detach would leave a reader's own window positions on the floor for
+    // exactly as long as they did not move anything after coming back.
+    const std::filesystem::path socket = private_socket("layout-again");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    Client early;
+    CK_CHECK(early.connect(socket));
+    early.greet();
+    early.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
+
+    ckm::proto::LayoutEntry placed;
+    placed.term = terminal.id();
+    placed.rect = ckm::proto::Rect{4, 2, 40, 12};
+    early.session.report_layout({placed});
+    CK_CHECK(early.sent_count(ckm::proto::MessageType::SetLayout) == 1U);
+
+    Client late;
+    CK_CHECK(late.connect(socket));
+    late.greet();
+    late.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, late, [&] { return late.session.attached(); }));
+    CK_CHECK(run_until(server, clock, early, [&] { return !early.session.attached(); }));
+
+    // Displaced, and reporting into the void: nothing is sent, and the server
+    // is not asked to refuse anything.
+    early.session.report_layout({placed});
+    CK_CHECK(early.sent_count(ckm::proto::MessageType::SetLayout) == 1U);
+
+    // Back again — and the arrangement it is holding is worth stating even
+    // though nothing about it changed while it was away.
+    early.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
+    early.session.report_layout({placed});
+    CK_CHECK(early.sent_count(ckm::proto::MessageType::SetLayout) == 2U);
+
+    server.terminals().close_all();
+    forget(socket);
+}

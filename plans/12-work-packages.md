@@ -91,11 +91,11 @@ take first.
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |
 | 16 | **WP-10** — Move-terminal between sessions | ckmux | 2–3 d | **Done** (2026-08-18) | WP-8 ✓ |
 | 17 | **WP-28** — Window layout: wire and session-state storage | ckmux | 2 d | **Done** (2026-08-19) | WP-8 ✓ |
-| 18 | **WP-29** — Client-side layout capture and reporting | ckmux | 2 d | **Ready** | WP-28 ✓ |
+| 18 | **WP-29** — Client-side layout capture and reporting | ckmux | 2 d | **Done** (2026-08-19) | WP-28 ✓ |
 | 19 | **U4-a** — Window Switcher Bar (new ckVision widget) | ckVision | 3–4 d | **Ready** | — |
 | 20 | **U4-b** — Tile Horizontally/Vertically/Grid + filled-layout query | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `0c06c3f`) | — |
 | 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Done** (2026-08-19, ckVision `0c06c3f`) | — |
-| 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | Blocked | WP-29 (WP-28 ✓, U4-b ✓) |
+| 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | **Ready** | WP-28 ✓, WP-29 ✓, U4-b ✓ |
 | 23 | **WP-31** — Tile Horizontally / Vertically / Grid commands in ckmux | ckmux | 0.5–1 d | **Ready** | U4-b ✓ |
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | Blocked | U4-a |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Ready** | U4-c ✓ |
