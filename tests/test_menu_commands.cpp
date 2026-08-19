@@ -17,8 +17,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <fcntl.h>
@@ -191,6 +193,39 @@ struct Reader {
 
     void quit() {
         if (client != nullptr) client->close();
+    }
+
+    // The cell holding `needle`'s first character, found in the real decoded
+    // grid rather than the flattened `rows()`/`screen()` text: a string
+    // index skips continuation cells, so a wide glyph anywhere before the
+    // target on the same row would silently shift a string-based index off
+    // by a column.
+    std::optional<std::pair<int, int>> find_cell(std::string_view needle) {
+        const ckv::core::TerminalSnapshot snapshot = client->snapshot();
+        for (int y = 0; y < snapshot.cells.height; ++y) {
+            std::string text;
+            std::vector<int> col_of;
+            for (int x = 0; x < snapshot.cells.width; ++x) {
+                const ckv::Cell& cell = snapshot.cell_buffer[static_cast<std::size_t>(y) *
+                                                              static_cast<std::size_t>(
+                                                                  snapshot.cells.width) +
+                                                              static_cast<std::size_t>(x)];
+                if (cell.is_continuation()) continue;
+                const std::string_view grapheme = cell.grapheme();
+                for (std::size_t i = 0; i < grapheme.size(); ++i) col_of.push_back(x);
+                text += grapheme;
+            }
+            const std::size_t at = text.find(needle);
+            if (at != std::string::npos) return std::make_pair(y, col_of[at]);
+        }
+        return std::nullopt;
+    }
+
+    // A real SGR left click — press then release, 1-based coordinates,
+    // exactly what a real host terminal sends for a real click.
+    void click(int row, int col) {
+        press("\x1b[<0;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "M");
+        press("\x1b[<0;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "m");
     }
 };
 
@@ -533,5 +568,207 @@ CK_TEST(moving_the_last_terminal_rescues_the_program_into_a_new_session) {
         if (!server_gone) ::usleep(20000);
     }
     CK_CHECK(server_gone);
+    forget(socket);
+}
+
+CK_TEST(a_mouse_click_on_the_terminal_report_close_button_closes_it) {
+    // Field report (2026-08-18, night): a reader clicking inside ckmux says
+    // nothing responds, even though the Terminal Report's own diagnostics show
+    // "Mouse events seen" and "Mouse reports decoded" at healthy, matching
+    // counts. plans/13's field-defects note ruled out several hypotheses via
+    // synthetic harnesses (direct on_mouse calls, a HeadlessTerminal dispatch)
+    // that check bytes reach `proto::Input` — none of them puts a real SGR
+    // byte sequence through a real PTY-hosted client and checks that a real
+    // rendered widget reacts, which is the doc's own named next step. This
+    // does that: open ckmux's own Terminal Report dialog by keyboard (a
+    // trusted path, per every_prefix_command... above), find where "Close"
+    // actually rendered, and click it the way a reader's terminal would.
+    const std::filesystem::path socket = private_socket("mouseclick");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    // ^B m focuses the menu bar on Session; Down opens it. Four Rights walk
+    // the bar to Help (Session, Terminal, Window, Settings, Help), opening
+    // each as they pass it — the same navigation
+    // every_prefix_command_a_reader_can_press_does_what_it_says already
+    // trusts. One more Down reaches Terminal Report under Key Reference;
+    // Enter activates it.
+    reader.press("\x02" "m");
+    reader.press("\x1b[B");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[B");
+    reader.press("\r");
+    CK_CHECK(reader.sees("Terminal report"));
+
+    const std::optional<std::pair<int, int>> close = reader.find_cell("Close");
+    CK_CHECK(close.has_value());
+    if (!close.has_value()) {
+        reader.quit();
+        end_process(server);
+        forget(socket);
+        return;
+    }
+
+    // Aimed a couple of cells into the word so a one-cell aim error still
+    // lands on the button rather than its edge.
+    reader.click(close->first, close->second + 2);
+    reader.settle(400);
+
+    CK_CHECK(reader.screen().find("Terminal report") == std::string::npos);
+
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(a_shift_click_on_ckmuxs_own_button_still_activates_it) {
+    // TerminalView::on_mouse reserves Shift+Left for host-side selection —
+    // but ckmux's own dialogs are plain widgets::Button, not TerminalView,
+    // so Shift has no special meaning to them and a click is a click. Pins
+    // that asymmetry against the sibling case below, where Shift+Left over a
+    // pane's content IS reserved and does NOT reach the pane's child.
+    const std::filesystem::path socket = private_socket("shiftclick");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    reader.press("\x02" "m");
+    reader.press("\x1b[B");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[B");
+    reader.press("\r");
+    CK_CHECK(reader.sees("Terminal report"));
+
+    const std::optional<std::pair<int, int>> close = reader.find_cell("Close");
+    CK_CHECK(close.has_value());
+    if (close.has_value()) {
+        const int col = close->second + 2 + 1;
+        const int row = close->first + 1;
+        // SGR button byte 4 = Shift held (encode_mouse: button |= 4).
+        reader.press("\x1b[<4;" + std::to_string(col) + ";" + std::to_string(row) + "M");
+        reader.press("\x1b[<4;" + std::to_string(col) + ";" + std::to_string(row) + "m");
+        reader.settle(400);
+        CK_CHECK(reader.screen().find("Terminal report") == std::string::npos);
+    }
+
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(a_mouse_click_reaches_a_real_child_apps_own_button) {
+    // The remaining untested leg (plans/13's field-defects note, and the
+    // sibling test above): a click on ckmux's OWN chrome now has a real,
+    // real-PTY regression test. What nobody has driven end to end is the
+    // M2 seam itself — a click forwarded through `TerminalView::encode_mouse`
+    // and the wire to a SEPARATE real process's OWN ckVision `Application`,
+    // hit-tested and dispatched entirely inside that other process. The
+    // existing remote-terminal tests stop at "bytes reached `proto::Input`";
+    // this drives a second real process (ckVision's own `hello` example,
+    // chosen for its one-button message box) inside a ckmux pane and clicks
+    // its OK button for real.
+    const std::filesystem::path hello =
+        "/Volumes/PRO-BLADE/git/ckvision/build/examples/ckvision_hello";
+    if (!std::filesystem::exists(hello)) return;  // built from a sibling checkout; not everywhere
+
+    const std::filesystem::path socket = private_socket("mouseclick2");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    // Plain text into the shell ckmux opened for Terminal 1's PTY — no
+    // prefix chord involved, so none of ckmux's own key-stealing applies.
+    reader.press(hello.string() + "\r");
+    CK_CHECK(reader.sees("File"));
+
+    // Alt+G, the greeting command's own chord — Alt/Esc sequences are named
+    // in plans/06's mouse-rules table as flowing through untouched, unlike
+    // the ^B prefix, so this reaches the child with no escaping.
+    reader.press("\x1b" "g");
+    CK_CHECK(reader.sees("How are you?"));
+
+    const std::optional<std::pair<int, int>> ok = reader.find_cell("OK");
+    CK_CHECK(ok.has_value());
+    if (!ok.has_value()) {
+        reader.quit();
+        end_process(server);
+        forget(socket);
+        return;
+    }
+
+    reader.click(ok->first, ok->second + 1);
+    reader.settle(400);
+
+    CK_CHECK(reader.screen().find("How are you?") == std::string::npos);
+
+    reader.press("\x1b" "x");  // Alt+X: the example's own Exit, tidying its pane
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(a_shift_click_into_a_pane_is_reserved_for_selection_not_forwarded) {
+    // Field report (2026-08-18): a reader's click was seen and decoded at
+    // the byte-stream layer on both sides of the wire, yet a real child
+    // app's button never reacted. Neither of the two seams the plain click
+    // above already proved sound (encode-and-forward; a second process's own
+    // hit-test) is where that gap can live — so this checks the one branch
+    // ahead of both that a live report can hit without anyone intending to:
+    // TerminalView::on_mouse reserves Shift+Left for host-side selection,
+    // unconditionally, before mouse-reporting is even consulted, and does
+    // NOT forward it — which reads, from the reader's side, exactly like "I
+    // clicked and nothing happened," regardless of whether the Shift was a
+    // deliberate drag-to-select or a modifier the terminal/input path added
+    // on its own.
+    const std::filesystem::path hello =
+        "/Volumes/PRO-BLADE/git/ckvision/build/examples/ckvision_hello";
+    if (!std::filesystem::exists(hello)) return;
+
+    const std::filesystem::path socket = private_socket("shiftclick2");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    reader.press(hello.string() + "\r");
+    CK_CHECK(reader.sees("File"));
+    reader.press("\x1b" "g");
+    CK_CHECK(reader.sees("How are you?"));
+
+    const std::optional<std::pair<int, int>> ok = reader.find_cell("OK");
+    CK_CHECK(ok.has_value());
+    if (ok.has_value()) {
+        const int col = ok->second + 1 + 1;
+        const int row = ok->first + 1;
+        // SGR button byte 4 = Shift held.
+        reader.press("\x1b[<4;" + std::to_string(col) + ";" + std::to_string(row) + "M");
+        reader.press("\x1b[<4;" + std::to_string(col) + ";" + std::to_string(row) + "m");
+        reader.settle(400);
+        // Reserved for selection, not forwarded: the box is still up.
+        CK_CHECK(reader.screen().find("How are you?") != std::string::npos);
+    }
+
+    reader.quit();
+    end_process(server);
     forget(socket);
 }

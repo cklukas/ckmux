@@ -93,6 +93,86 @@ supporting both.
   two-process reproduction (`test_core_promise.cpp`'s pattern: a forked
   server, a real socket, a real host terminal or a recorded one) rather than
   the synthetic harnesses used here.
+  - **Follow-up (2026-08-18, later that night): staleness checked directly,
+    the named real two-process reproduction written, still not reproduced.**
+    Reported live again from a running `build/ckmux` + `cksetup` session
+    (`Terminal 1`, grid 119×41 inside it): both Terminal Reports now showed
+    "Mouse events seen" == "Mouse reports decoded" on **both** sides (338/338
+    outer, 71/71 inner) — the specific 0-vs-decoded symptom above was absent
+    — yet the reader reported clicks still doing nothing. Checked before
+    writing any new test: `build/ckmux`'s binary mtime (19:48:54) is 5 minutes
+    behind HEAD, but the only commit it lacks is `a2f044c` (the CLI
+    kill-server fix, unrelated to mouse); ckVision's checkout is clean at
+    `3f11135`; `cksetup`'s binary (a separate tree,
+    `~/git/cworks_dir/cworks`, which resolves ckVision via the same
+    `/Volumes/PRO-BLADE/git/ckvision` checkout — see its `CMakeLists.txt`'s
+    search order) was last built at 19:06:42, after `3f11135` landed. All
+    three are current; staleness is not the explanation this time. Wrote the
+    two-process reproduction the previous note asked for, as two new
+    `Reader`-driven (`PosixTerminalSubsession`, real PTY, real decoded grid)
+    cases in `tests/test_menu_commands.cpp`:
+    `a_mouse_click_on_the_terminal_report_close_button_closes_it` (ckmux's
+    own Terminal Report, opened by keyboard, closed by a real SGR click on
+    "Close") and `a_mouse_click_reaches_a_real_child_apps_own_button` (a
+    *second*, separate real process — ckVision's own `hello` example —
+    launched inside the `Terminal 1` pane's shell, its greeting box opened
+    with its own Alt+G chord, its OK button closed with a real SGR click
+    forwarded across the wire exactly as `TerminalView::encode_mouse` would
+    encode it). **Both pass.** This closes the gap the note above named — a
+    click now has been driven through a real PTY, a real rendered screen, a
+    real cross-process forward, and a real second `Application`'s own
+    hit-test, coordinates read from the decoded cell grid rather than
+    guessed — and still does not reproduce the field report through a plain
+    click.
+  - **A confirmed mechanism that reproduces the same symptom: Shift+click
+    into a pane is reserved for host-side selection and never reaches the
+    child, by design.** `TerminalView::on_mouse`'s first branch claims
+    Shift+Left unconditionally — before `mouse_reporting_enabled` is even
+    read — for the reader's own copy-by-selection gesture (plans/06's mouse
+    rules: "Shift + mouse gestures: ckmux-local selection & context menu
+    override"; intentional, and correctly so — it is how a reader selects
+    text out of `vim` or `htop` without either program's own mouse capture
+    getting in the way). Two more `Reader`-driven cases pin the asymmetry:
+    `a_shift_click_on_ckmuxs_own_button_still_activates_it` (ckmux's own
+    `widgets::Button` has no Shift branch of its own — Shift+click on the
+    Terminal Report's Close still closes it) against
+    `a_shift_click_into_a_pane_is_reserved_for_selection_not_forwarded` (the
+    identical click at the `hello` example's OK button, forwarded through a
+    `TerminalView`, does **not** close it — the box is provably still up).
+    From a reader's side this is indistinguishable from "I clicked and
+    nothing happened": the outer host still dispatches and counts the event
+    (it is real input, just claimed for selection), so "Mouse events seen"
+    keeps climbing exactly as reported, while a click aimed at a *pane's
+    content* — a dialog a child program drew, unlike ckmux's own chrome —
+    silently never reaches it. This is not a bug in the traditional sense
+    (it is documented, deliberate, and consistent with every other terminal
+    multiplexer's Shift-to-select convention), but it is a complete,
+    mechanistic explanation for the exact symptom shape reported, and it
+    does not require staleness, a resize race, or anything `cksetup`-
+    specific to produce. **Action for whoever is chasing a live repro of
+    this next: ask whether Shift was held (deliberately, by habit from a
+    different terminal's convention, or by a stuck key/trackpad/input-path
+    quirk that adds it unasked) before assuming a code-level regression.**
+  - Remaining, lower-priority standing hypotheses if a plain, unmodified
+    click is confirmed and still fails: (1) a resize race between the
+    pane's rendered/hit-test bounds and the child's actual PTY size, in the
+    spirit of C3 and `f0e4e60` — try clicking immediately after a
+    resize/tile/zoom rather than on an untouched layout; (2) something
+    specific to `cksetup`'s own integration rather than the generic
+    ckmux/ckVision plumbing exercised here (`~/git/cworks_dir/cworks/csetup`)
+    — the tests above use a plain ckVision example and ckmux's own dialog,
+    neither of which is `cksetup`; (3) a genuine quirk of the reporter's
+    actual outer host terminal: the *same* live report showed "Cell from
+    text area" (11×24, from CSI 14 t / grid) at exactly half "Cell from
+    window"/"Effective cell" (22×48, from TIOCGWINSZ / CSI 16 t) on the
+    outer side only — a real, reproducible host-reporting disagreement,
+    most likely a HiDPI CSI-14-t-vs-TIOCGWINSZ mismatch
+    (`terminal-emulator-source-analysis` territory) — not obviously
+    load-bearing for click routing since SGR mouse reports carry cell
+    coordinates directly and `effective_cell_text()` already prefers the
+    directly-reported `cell_pixels` over the derived-from-text-area one, but
+    unconfirmed and worth checking against the reporter's actual terminal
+    app rather than assumed away.
 - **`ckmux kill-server` could not reach a mismatched server — confirmed,
   fixed.** Chasing the staleness theory above surfaced this directly: the
   running server was `./build/ckmux` last built at 12:05, hours before the
