@@ -104,6 +104,8 @@ take first.
 | 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | Blocked | U4-i |
 | 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | Blocked | U4-i |
 | 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | Blocked | U4-i, U4-j |
+| 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Ready** | — |
+| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | Blocked | U4-l |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
@@ -902,6 +904,70 @@ buttons at all times — asserted with numbers, the way ckVision's own
 dock tests assert; a dialog that fits is byte-identical to today,
 including no scrollbar; and focus traversal still reaches every field,
 scrolling it into view rather than leaving the cursor off-screen.
+
+**U4-l — A paged item strip, and the switcher bar as its first consumer**
+*(ckVision)*. Reader-directed, 2026-08-19, and reader-framed: *"this could
+also be a paging status bar in ckVision, perhaps we need that more often, or
+the window switching also in future apps."* That is the litmus test answering
+itself, so the paging is **not** bolted into `WindowSwitcherBar` — it is a
+general one-row strip of variable-width items that pages when they do not
+fit, and the bar becomes its first consumer exactly as ckmux was the bar's.
+The same reasoning that put the bar in ckVision rather than ckmux puts the
+strip under the bar rather than inside it.
+
+What the strip owns, left to right:
+- **A collapse toggle at the far left**: `▼` when expanded. The strip does
+  **not** hide anything itself — it reports the toggle and exposes the state,
+  and the host decides what collapsing means, because the thing being
+  collapsed is the host's other chrome, not the strip's. In ckmux that is
+  WP-35: hide the footer, at which point the docked `Column` is one row and
+  the bar is on the last row by arithmetic that already exists. Expanded
+  again, the glyph is `▲` and the footer returns.
+- **A left page control** (`◁`) when there is a previous page, immediately
+  after the collapse toggle.
+- **A page index** — `1/3`, `2/3` — after the page control. Shown only while
+  there is more than one page: an index that always reads `1/1` is a column
+  spent saying nothing.
+- **The items**, as many as fit whole.
+- **A right page control** (`▷`) at the right edge when items remain.
+
+Interactions with what the bar already does, which the implementer must
+settle rather than discover: today the bar **elides** labels when the row is
+narrow. Paging changes the default — items should take their natural width
+and overflow to a page — but elision cannot simply be deleted, because a
+single item wider than the whole strip still has to be drawn somehow. State
+the rule.
+
+**Revalidation is the part that will bite.** The item set changes under the
+strip: in ckmux a terminal is opened or closed at any time. So page count is
+recomputed on every change, and **if the current page is emptied by a removal
+the strip falls back to the previous page** rather than showing a blank row
+with a `3/2` index. The reader asked for this explicitly; it is also the case
+that is easy to leave until a bug report. Removing an item on an earlier page
+must not silently jump the reader elsewhere either.
+
+Glyph widths matter here as in U4-j: `◁`/`▷` (U+25C1/25B7) and `▲`/`▼`
+(U+25B2/25BC) must be checked against ckVision's own width authority before
+use — several geometric shapes are East Asian **Ambiguous**, and a
+double-width triangle would shear the row it is supposed to be steering.
+Verify, and fall back to ASCII if the tables disagree.
+
+*Done when*: a strip too narrow for its items pages rather than truncating;
+the index reads correctly and is absent at one page; the controls appear only
+when they can do something; adding and removing items re-pages, with the
+emptied-last-page case landing on the previous page; the collapse toggle
+reports its state without the strip touching anything outside itself; and
+`WindowSwitcherBar` behaves exactly as it does today on a strip wide enough
+for its windows.
+
+**WP-35 — Collapsing the chrome in ckmux** *(ckmux)*. Consume U4-l's toggle:
+hide the footer, leaving the docked `Column` one row so the bar sits on the
+last row; restore both together. The mechanism is already in place — WP-32
+hides the bar itself and calls `Desktop::on_child_size_hint_changed` by hand
+because `View::set_visible` does not report a hint change (U4-f), and this is
+the same move on the other child. *Done when*: collapsing hides the footer and
+puts the bar on the last row, expanding restores both, and a maximized
+terminal grows into the freed row and gives it back.
 
 **U4-i — Minimize: window state, the `_` control, and what a hidden window
 does** *(ckVision)*. Reader-directed, 2026-08-19: a third frame control, `_`,
