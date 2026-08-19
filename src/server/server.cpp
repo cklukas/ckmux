@@ -232,6 +232,18 @@ bool Server::step() {
     // longer than it said it would.
     if (accept_paused_until_nanos_ > now)
         until_wake = std::min(until_wake, accept_paused_until_nanos_ - now);
+    // The stats sampler's deadline joins the wait only while somebody watches;
+    // a server nobody subscribed to has no per-second wakeup at all. The
+    // off-to-on edge drops every baseline, because a rate derived against a
+    // sample from before the sampler went idle would average over the whole
+    // quiet stretch rather than say what is happening now.
+    const bool watching_stats = anyone_watching_stats();
+    if (watching_stats && !stats_were_running_) {
+        stats_baselines_.clear();
+        next_stats_nanos_ = now;
+    }
+    stats_were_running_ = watching_stats;
+    if (watching_stats) until_wake = std::min(until_wake, nanos_until_stats());
     const int timeout_ms = static_cast<int>(std::min<std::int64_t>(until_wake / 1'000'000, 1'000));
     const std::vector<platform::Ready>& ready = poller_.wait(timeout_ms);
     switch (poller_.outcome()) {
@@ -299,6 +311,7 @@ bool Server::step() {
     }
 
     if (clock_.now_nanos() >= next_tick_nanos_) flush_tick();
+    if (watching_stats && clock_.now_nanos() >= next_stats_nanos_) stats_tick();
 
     // Connections that asked to go, and the streams that died under them.
     const std::size_t before = clients_.size();
@@ -445,6 +458,14 @@ void Server::handle(Client& client, const proto::Message& message) {
         proto::Pong pong;
         pong.nonce = ping->nonce;
         send(client, pong);
+        return;
+    }
+    if (const auto* watch = std::get_if<proto::WatchStats>(&message)) {
+        // Nothing to answer: the first `TermStats` within a sample period IS
+        // the answer, and a client that turned the last checkbox off simply
+        // stops hearing them. `step()` notices the off-to-on edge and starts
+        // the sampler from fresh baselines.
+        client.watch_stats = watch->on != 0;
         return;
     }
     if (std::holds_alternative<proto::Hello>(message)) {
@@ -1187,6 +1208,7 @@ void Server::remove_terminal(TerminalId id, bool exited) {
     if (Terminal* const terminal = terminals_.find(id)) status = terminal->exit_status();
     (void)terminals_.close(id);
     diffs_.forget(id);
+    stats_baselines_.erase(id);
     proto::TermClosed closed;
     closed.term = id;
     closed.exited = exited ? 1 : 0;
@@ -1858,6 +1880,89 @@ void Server::flush_tick() {
                 owe_image(*client, op.message);
             else
                 send(*client, op.message);
+        }
+    }
+}
+
+namespace {
+// One second between stats passes. Fixed in v1 (plans/08 lists it under
+// "explicitly not configurable"): a reader glancing at a frame readout is
+// well served at 1 Hz, and the interval is not worth a knob until somebody
+// can say what they would set it to.
+constexpr std::int64_t kStatsIntervalNanos = 1'000'000'000;
+}  // namespace
+
+bool Server::anyone_watching_stats() const noexcept {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->greeted && client->attached && client->watch_stats && !client->closing)
+            return true;
+    return false;
+}
+
+std::int64_t Server::nanos_until_stats() const {
+    const std::int64_t now = clock_.now_nanos();
+    return next_stats_nanos_ > now ? next_stats_nanos_ - now : 0;
+}
+
+void Server::stats_tick() {
+    // Catch up rather than drift, exactly as the flush tick does.
+    const std::int64_t now = clock_.now_nanos();
+    next_stats_nanos_ = now + kStatsIntervalNanos;
+    ++stats_passes_;
+
+    // One table for the whole pass, however many terminals are watched —
+    // WP-37's design point, and the reason N terminals cost one read.
+    const platform::ProcessTable table = platform::ProcessTable::snapshot();
+
+    for (const std::unique_ptr<Client>& client : clients_) {
+        if (!client->greeted || !client->attached || !client->watch_stats || client->closing)
+            continue;
+        Session* const watched = session_of(*client);
+        if (watched == nullptr) continue;
+        for (const TerminalId id : watched->terminals) {
+            Terminal* const terminal = terminals_.find(id);
+            if (terminal == nullptr) continue;
+            StatsBaseline& baseline = stats_baselines_[id];
+
+            const int root = terminal->process_id();
+            const platform::TreeSample sample =
+                root >= 0 ? platform::sample_tree(table, root) : platform::TreeSample{};
+            if (root < 0 || sample.process_count == 0) {
+                // The child is gone. Said once, so the watcher clears the
+                // readout instead of freezing its last number over a dead
+                // shell — and not repeated every second for a terminal that
+                // stays on screen under an exit banner.
+                if (!baseline.dead_announced) {
+                    baseline.dead_announced = true;
+                    proto::TermStats stats;
+                    stats.term = id;
+                    send(*client, stats);
+                }
+                continue;
+            }
+
+            proto::TermStats stats;
+            stats.term = id;
+            stats.rss_bytes = sample.rss_bytes;
+            stats.real_bytes = sample.real_bytes;
+            stats.flags = static_cast<std::uint8_t>(proto::TermStatsFlag::Alive);
+            if (sample.has_real)
+                stats.flags |= static_cast<std::uint8_t>(proto::TermStatsFlag::HasReal);
+            // The rate needs a previous pass to differ against; the first
+            // sample after a subscription reports its memory and no CPU,
+            // which is the honest reading of "no interval yet".
+            if (baseline.primed && now > baseline.at_nanos &&
+                sample.cpu_time_nanos >= baseline.cpu_nanos) {
+                const std::uint64_t cpu_delta = sample.cpu_time_nanos - baseline.cpu_nanos;
+                const std::uint64_t wall_delta =
+                    static_cast<std::uint64_t>(now - baseline.at_nanos);
+                stats.cpu_permille = static_cast<std::uint32_t>(cpu_delta * 1000u / wall_delta);
+            }
+            baseline.cpu_nanos = sample.cpu_time_nanos;
+            baseline.at_nanos = now;
+            baseline.primed = true;
+            baseline.dead_announced = false;
+            send(*client, stats);
         }
     }
 }

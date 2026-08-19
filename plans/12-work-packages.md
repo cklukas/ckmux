@@ -43,7 +43,7 @@ which is the one vocabulary shared across both repos.
 | State | Meaning |
 |---|---|
 | `Ready` | Every prerequisite is satisfied. Selectable. |
-| `In progress` | Being worked on now, and **by whom**: the row names the session holding it, e.g. `In progress (ckmux-63)`. **At most one row per session** — the rule was written when one agent worked this queue and read as "at most one row at all", which with several sessions live is unsatisfiable and was therefore not being written down at all. A row nobody has marked reads `Ready` to every other session, which is precisely how two of them start the same package; claim the row before the first edit, and clear it when the package lands. |
+| `In progress` | Being worked on now, and **by whom**: the row names the session holding it, e.g. `In progress (ckmux-63)`. **At most one row per session** — the rule was written when one agent worked this queue and read as "at most one row at all", which with several sessions live is unsatisfiable and was therefore not being written down at all. A row nobody has marked reads `Ready` to every other session, which is precisely how two of them start the same package; claim the row before the first edit, and clear it when the package lands. A row left `In progress` by a session that is no longer active reverts to `Ready` — left standing it blocks the queue instead of merely misreporting it. |
 | `Blocked` | A prerequisite is not met. The prerequisite column always names it. |
 | `Implementation complete — gate pending` | The package's own criteria hold literally, but a milestone-level gate ([09-testing.md](09-testing.md)) has not been run or has not passed. Satisfies a dependent row's prerequisite; is **not** selected as the next package. |
 | `Done` | The criteria hold literally, the gates are recorded, and no known contradiction remains. |
@@ -132,8 +132,8 @@ take first.
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
 | 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`) | — |
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
-| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Ready** | WP-37 ✓, U5-a ✓ |
-| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | Blocked | WP-38 (serverless half needs only WP-37) |
+| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-19, ckmux-53; central gate requested) | WP-37 ✓, U5-a ✓ |
+| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Ready** (starts after WP-38's central gate) | WP-38 impl ✓ |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1417,6 +1417,24 @@ the injected `Clock`) at a fixed 1 Hz — the interval joins plan 08's
 "explicitly not configurable in v1" list at landing — and holds the previous
 sample per terminal to derive the rate. It runs **only** while someone
 watches: subscription is per connection, dies with it, and the first sample
+*Done* (2026-08-19). `src/platform/process_stats.{hpp,cpp}`; nine cases in
+`tests/test_process_stats.cpp`, all with real children where a child is the
+claim (bare `fork`s, no exec and no PTY, so the suite stays in ctest's fast
+lane). Measured: a table of **281 processes snapshotted and one tree summed
+in 96 µs** — four orders of magnitude inside the one-second tick; and the
+spinner read **302 ms of CPU across 300 ms of spinning**, which is the
+mach-timebase arithmetic being right rather than lucky (a conversion wrong
+by the Apple-silicon 125/3 lands orders of magnitude outside the test's
+bounds). The grandchild, dead-root and pid-loop cases are as specified. Two
+notes carried forward: `real_bytes` is asserted nonzero and page-accounted
+rather than "below the naive RSS sum" — for a child that dirties its pages
+footprint and RSS agree, and the overcount claim is about *shared* pages,
+which a test would have to stage carefully to pin without flaking; and the
+first version of the allocator child was deleted wholesale by `-O3` (a
+`memset` nothing reads is a dead store — the child paused with 960 KB
+resident and the test failed honestly), so the child now dirties one byte
+per page through a `volatile` pointer, which is not deletable.
+
 after a subscription starts from a fresh baseline rather than a stale one.
 A terminal whose child exited stops being reported, with one final
 not-alive stats message so the client clears rather than freezes the
@@ -1441,6 +1459,27 @@ become three rows) — read at startup like every key WP-12 covered and
 written back through the same `save_setting()` the Settings dialog's
 checkboxes already use, so the preference survives the session because the
 reader set it, not because they remembered to edit a file. The commands go
+*Implementation complete, 2026-08-19 (ckmux-53); the central gate is pending
+per the owner's testing directive.* Five wire cases in
+`tests/test_stats_wire.cpp` (in-process `Server` on a `ManualClock` over a
+real socket, real PTY children where a child is the claim). Measured: a
+spinner read **564‰ of one core** against an idle shell's **2‰**, from 400 ms
+of real spinning inside one injected second; 2.5 virtual seconds after the
+subscription's own first report carried **exactly two** more passes — the
+cadence is the clock's, not the loop's; `Server::stats_passes()` stayed at
+**zero** across three subscriber-less virtual seconds and froze again at
+unsubscribe while the same connection still answered `Ping`; and a held
+(`on-exit`) terminal whose child exited was announced not-alive **once**,
+with silence for it across three further sampled seconds. The allocator
+half of the memory claim lives in WP-37's suite, where it was pinned against
+the sampler directly; the wire case asserts live `rss_bytes` and flags
+instead of re-staging the allocation behind a PTY. One finding worth its
+sentence: the baseline's "does one exist yet" test was `at_nanos > 0`, and a
+`ManualClock` starts at zero — so a baseline taken before the first advance
+read as absent and a spinner reported 0‰ forever in exactly one test; it is
+an explicit `primed` flag now, because a sentinel that collides with a
+legitimate value is not a sentinel.
+
 through the one `Keymap` (rebindable; **no default chord** — a display
 toggle is not a muscle-memory operation, and the prefix table is a scarce
 resource), and the reachability suite covers the menu entries as it covers
@@ -1484,21 +1523,3 @@ keyboard passthrough and graphics, hyperlink activation, scrollback reflow,
 per-terminal palette re-theming, session groups, PDF export (PRINT-7). Nothing
 there gets a row until a plan edit moves it, because R5 binds: an addition
 edits the plan first.
-*Done* (2026-08-19). `src/platform/process_stats.{hpp,cpp}`; nine cases in
-`tests/test_process_stats.cpp`, all with real children where a child is the
-claim (bare `fork`s, no exec and no PTY, so the suite stays in ctest's fast
-lane). Measured: a table of **281 processes snapshotted and one tree summed
-in 96 µs** — four orders of magnitude inside the one-second tick; and the
-spinner read **302 ms of CPU across 300 ms of spinning**, which is the
-mach-timebase arithmetic being right rather than lucky (a conversion wrong
-by the Apple-silicon 125/3 lands orders of magnitude outside the test's
-bounds). The grandchild, dead-root and pid-loop cases are as specified. Two
-notes carried forward: `real_bytes` is asserted nonzero and page-accounted
-rather than "below the naive RSS sum" — for a child that dirties its pages
-footprint and RSS agree, and the overcount claim is about *shared* pages,
-which a test would have to stage carefully to pin without flaking; and the
-first version of the allocator child was deleted wholesale by `-O3` (a
-`memset` nothing reads is a dead store — the child paused with 960 KB
-resident and the test failed honestly), so the child now dirties one byte
-per page through a `volatile` pointer, which is not deletable.
-

@@ -732,6 +732,9 @@ void read_layout_entries(Reader& r, std::vector<LayoutEntry>& entries) {
 void write(Writer& w, const SetLayout& m) { write_layout_entries(w, m.entries); }
 void read(Reader& r, SetLayout& m) { read_layout_entries(r, m.entries); }
 
+void write(Writer& w, const WatchStats& m) { w.u8(m.on); }
+void read(Reader& r, WatchStats& m) { m.on = r.u8(); }
+
 void write(Writer& w, const LayoutDelta& m) {
     w.u64(m.session);
     write_layout_entries(w, m.entries);
@@ -980,6 +983,21 @@ void read(Reader& r, TermDiagnostic& m) {
     m.term = r.u64();
     m.kind = r.enum_of<DiagnosticKind>(r.u8(), 3);
     m.text = r.str();
+}
+
+void write(Writer& w, const TermStats& m) {
+    w.u64(m.term);
+    w.u32(m.cpu_permille);
+    w.u64(m.rss_bytes);
+    w.u64(m.real_bytes);
+    w.u8(m.flags);
+}
+void read(Reader& r, TermStats& m) {
+    m.term = r.u64();
+    m.cpu_permille = r.u32();
+    m.rss_bytes = r.u64();
+    m.real_bytes = r.u64();
+    m.flags = r.u8();
 }
 
 void write(Writer& w, const Error& m) {

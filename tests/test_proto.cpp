@@ -173,6 +173,14 @@ std::vector<Message> every_message() {
     messages.emplace_back(Input{11, std::string("\x1b[A\x00 bytes", 10)});
     messages.emplace_back(PasteChunk{11, 3, 1, "pasted text"});
     messages.emplace_back(PasteAck{3});
+    messages.emplace_back(WatchStats{1});
+    // Every field distinct and nonzero, so a codec that writes one twice or
+    // drops one fails here; permille above 1000, because more than one core
+    // is a value this field must carry, not an overflow.
+    messages.emplace_back(TermStats{11, 8370, 220'200'960, 100'663'296,
+                                    static_cast<std::uint8_t>(
+                                        static_cast<std::uint8_t>(TermStatsFlag::HasReal) |
+                                        static_cast<std::uint8_t>(TermStatsFlag::Alive))});
 
     GridDelta delta;
     delta.term = 11;

@@ -98,6 +98,9 @@ namespace ckm::proto {
 // its producer (`RenameTerminal`, which until now encoded and decoded and was
 // handled nowhere) and its consumer (the client's caption, which prefers it
 // over the child's title) in one change, rather than shaped and dead.
+// And still v3 for `WatchStats`/`TermStats` (WP-38), which are two new types
+// and change the shape of nothing already on this wire: a build that does not
+// know them refuses them as unknown types, and there is still no such build.
 inline constexpr std::uint32_t kProtocolVersion = 3;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
@@ -196,6 +199,7 @@ enum class MessageType : std::uint16_t {
     PasteChunk = 0x020C,
     PasteAck = 0x020D,
     SetLayout = 0x020E,
+    WatchStats = 0x020F,
 
     // --- 0x03xx state sync ---
     LayoutDelta = 0x0301,
@@ -210,6 +214,7 @@ enum class MessageType : std::uint16_t {
     ImageRemove = 0x030A,
     ClipboardSet = 0x030B,
     TermDiagnostic = 0x030C,
+    TermStats = 0x030D,
 
     // --- 0x04xx events, errors, printer ---
     Error = 0x0401,
@@ -827,6 +832,18 @@ struct SetLayout {
     friend bool operator==(const SetLayout&, const SetLayout&) = default;
 };
 
+// Whether THIS connection wants per-terminal process stats (plans/12 WP-38).
+// Per connection and deliberately not session state: stats exist for a reader
+// who turned a View checkbox on, the subscription dies with the socket, and a
+// server nobody is watching does no sampling work at all. There is no
+// per-metric selection here — the three numbers travel together, a few dozen
+// bytes a second, and which of them is SHOWN is the client's business.
+struct WatchStats {
+    static constexpr MessageType kType = MessageType::WatchStats;
+    std::uint8_t on = 0;
+    friend bool operator==(const WatchStats&, const WatchStats&) = default;
+};
+
 struct RenameSession {
     static constexpr MessageType kType = MessageType::RenameSession;
     std::uint64_t id = 0;
@@ -1028,6 +1045,38 @@ struct TermDiagnostic {
     friend bool operator==(const TermDiagnostic&, const TermDiagnostic&) = default;
 };
 
+enum class TermStatsFlag : std::uint8_t {
+    // `real_bytes` means something on this platform: macOS `phys_footprint`,
+    // PSS once WP-22 fills Linux in. Clear, and the field is zero and says
+    // nothing — a client shows nothing rather than a zero pretending to be a
+    // measurement.
+    HasReal = 1u << 0,
+    // Something under this terminal was alive to be measured. A final stats
+    // message with this bit clear is how a watcher learns to CLEAR the
+    // readout rather than freeze its last number over a dead shell.
+    Alive = 1u << 1,
+};
+
+// One terminal's process-tree cost at one sample (plans/12 WP-38): sent about
+// once a second, only to clients that asked (`WatchStats`), and never stored —
+// no snapshot carries stats, because a subscriber has current numbers within
+// one sample period and a number restored from state would be a second old
+// and wrong.
+struct TermStats {
+    static constexpr MessageType kType = MessageType::TermStats;
+    std::uint64_t term = 0;
+    // Percent of one core in tenths of a percent — the `top` convention, so a
+    // build fanning out over eight cores reads 8000 rather than being
+    // flattened into a fraction that hides it. Derived by the server from two
+    // consecutive cumulative samples; 0 on the first sample after a
+    // subscription, which has nothing to differ against.
+    std::uint32_t cpu_permille = 0;
+    std::uint64_t rss_bytes = 0;
+    std::uint64_t real_bytes = 0;
+    std::uint8_t flags = 0;  // TermStatsFlag
+    friend bool operator==(const TermStats&, const TermStats&) = default;
+};
+
 // What an `Error` code means. Non-fatal by definition: the connection survives,
 // and the client is told why one request could not be honoured (plans/05).
 enum class ErrorCode : std::uint16_t {
@@ -1125,7 +1174,8 @@ using Message =
                  Input, PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta,
                  GridDelta, ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,
                  ImageRemove, ClipboardSet, TermDiagnostic, Error, SetPrinterPolicy, PrintState,
-                 PrintJobAdded, PrintJobFetch, PrintJobData, PrintJobDiscard>;
+                 PrintJobAdded, PrintJobFetch, PrintJobData, PrintJobDiscard, WatchStats,
+                 TermStats>;
 
 MessageType type_of(const Message& message);
 

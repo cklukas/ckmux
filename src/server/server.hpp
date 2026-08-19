@@ -19,11 +19,13 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
 #include "platform/poller.hpp"
+#include "platform/process_stats.hpp"
 #include "platform/socket.hpp"
 #include "server/diff_engine.hpp"
 #include "server/terminals.hpp"
@@ -139,6 +141,11 @@ public:
     // debt that kept every move would replay the drag rather than state where
     // the picture ended up.
     std::size_t owed_image_ops() const noexcept;
+    // How many stats passes have run (WP-38). The gauge behind "nobody
+    // watching, nobody sampling": a test asserts this stays at zero across
+    // any number of ticks with no subscriber, which is the only way to prove
+    // absence of work rather than merely absence of messages.
+    std::size_t stats_passes() const noexcept { return stats_passes_; }
 
 private:
     struct Client {
@@ -223,6 +230,11 @@ private:
         // stopped is the hard limit's business, as it always was.
         bool draining_heal = false;
         bool closing = false;
+        // This connection asked for per-terminal process stats (`WatchStats`,
+        // WP-38). Per connection, dies with it, and never session state: the
+        // subscription is a fact about a reader's View menu, not about what
+        // is running.
+        bool watch_stats = false;
     };
 
     void accept_pending();
@@ -247,6 +259,19 @@ private:
     void drop(Client& client, std::string_view why);
     void flush_tick();
     std::int64_t nanos_until_tick() const;
+
+    // The stats sampler (WP-38): one pass a second, and only while somebody
+    // asked. Whether anybody is watching is derived, never stored — a
+    // subscription ends by message, by detach, or by the socket going, and a
+    // stored flag would have to be cleared at every one of those doors.
+    bool anyone_watching_stats() const noexcept;
+    std::int64_t nanos_until_stats() const;
+    // One process-table snapshot, then per watched terminal: resolve the
+    // tree, sum it, derive the CPU rate against the previous pass, and tell
+    // the one client watching that session. A terminal whose child is gone is
+    // announced dead once, so the watcher clears the readout rather than
+    // freezing it.
+    void stats_tick();
 
     // The attach path. `attach` grants immediately and takes the session from
     // whoever held it (plans/03), because a reader whose laptop slept cannot be
@@ -354,6 +379,28 @@ private:
     Terminals terminals_;
     DiffEngine diffs_;
     std::int64_t next_tick_nanos_ = 0;
+    // The stats sampler's own cadence, beside the flush tick rather than on
+    // it: the flush tick runs at max-fps and sampling thirty times a second
+    // would be work nobody asked for. The baseline is what a rate is derived
+    // against — cumulative CPU at the previous pass, and when that pass was.
+    struct StatsBaseline {
+        std::uint64_t cpu_nanos = 0;
+        std::int64_t at_nanos = 0;
+        // A flag rather than "at_nanos > 0": a ManualClock starts at zero, so
+        // a baseline taken at t=0 is real and a sentinel would read it as
+        // absent — which showed up as a spinner reporting 0‰ forever in the
+        // one test whose clock had never been advanced before subscribing.
+        bool primed = false;
+        bool dead_announced = false;
+    };
+    std::unordered_map<TerminalId, StatsBaseline> stats_baselines_;
+    std::int64_t next_stats_nanos_ = 0;
+    // Whether the sampler was running on the previous pass. The transition
+    // from nobody-watching to somebody-watching is where stale baselines are
+    // dropped — a rate derived against a sample from before the sampler went
+    // idle would average over the whole quiet stretch.
+    bool stats_were_running_ = false;
+    std::size_t stats_passes_ = 0;
     // The one session this build has. WP-8 makes them plural, named, and
     // listable; until then every terminal belongs to this one, so that attach,
     // detach and takeover can be real before the thing they attach TO is.

@@ -29,7 +29,8 @@ set(CKMUX_TEST_SOURCES
     test_server_lifecycle.cpp
     test_server_loop.cpp
     test_server_terminals.cpp
-    test_shell.cpp)
+    test_shell.cpp
+    test_stats_wire.cpp)
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server ckvision::cvision)
@@ -88,6 +89,7 @@ set(CKMUX_LABELS_test_server_terminals "pty")
 # forked its child before the first case in the file runs.
 set(CKMUX_LABELS_test_client_smoke "pty")
 set(CKMUX_LABELS_test_command_reachability "pty")
+set(CKMUX_LABELS_test_stats_wire "pty")
 set(CKMUX_LABELS_test_copy_mode "pty")
 set(CKMUX_LABELS_test_minimize_chrome "pty")
 set(CKMUX_LABELS_test_prefix "pty")

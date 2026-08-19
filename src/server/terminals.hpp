@@ -119,6 +119,11 @@ public:
     // cells, history and scalars through it and needs to know nothing about
     // PTYs, which is why it is handed out rather than wrapped.
     ckv::core::TerminalSubsession& session() noexcept { return *session_; }
+    // The child's pid, for OBSERVATION — where the stats sampler roots this
+    // terminal's process tree (plans/12 WP-38) — and -1 once the exit has been
+    // observed. Ending a child stays `request_termination()`'s and never goes
+    // by pid; ckVision's accessor says the same where it is declared (U5-a).
+    int process_id() const noexcept { return session_->process_id(); }
     const ckv::core::TerminalSubsession& session() const noexcept { return *session_; }
     ckv::term::TerminalSnapshot snapshot() const { return session_->snapshot(); }
     ckv::term::TerminalSnapshot snapshot(ckv::core::TerminalSnapshotOptions options) const {

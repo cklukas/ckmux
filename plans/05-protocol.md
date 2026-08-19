@@ -112,6 +112,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `KillServer` | — | **live** | `ckmux kill-server`, over its own connect path so running it twice does not start a server in order to kill one |
 | `Input` | `term u64, blob` | **live** | already-encoded child bytes — keys/mouse/focus are encoded **client-side** by ckVision's `TerminalView` against mirrored mode state ([04](04-terminal-emulation.md)); the server just writes to the PTY (queued) |
 | `PasteChunk` | `term u64, seq u32, final u8, blob` | *encode-only* | ≤ 64 KiB chunks, credit-paced — WP-18 |
+| `WatchStats` | `on u8` | **live** | whether THIS connection wants per-terminal process stats (WP-38). Per connection and deliberately not session state: the subscription is a fact about a reader's View menu, it dies with the socket, and a server nobody subscribed to does no sampling work at all — no per-second wakeup, no process-table read, proven by a pass counter a test watches stay at zero. No per-metric selection: the three numbers travel together, a few dozen bytes a second, and which of them is SHOWN is the client's business |
 | `SetPrinterPolicy` | `scope u8 (terminal\|session\|global), target u64, mode u8 (ask\|capture\|off), ask_cache u32, spool_limit u32` | *encode-only* | WP-PRINT ([04](04-terminal-emulation.md)); the server owns the emulator, so it owns the policy. `global` also asks the server to persist it ([08](08-configuration.md)) |
 | `PrintJobFetch` | `term u64, job u64` | *encode-only* | payload is pulled only when the user previews or saves |
 | `PrintJobDiscard` | `term u64, job u64 (0 = all for this terminal)` | *encode-only* | |
@@ -137,6 +138,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `PrintState` | `term u64, mode u8, state u8 (idle\|capturing\|sunk\|full), bytes u32, jobs u16` | **live** | sent off the emulator's printer damage flag, so a client knows the one printer fact a reader must be shown: while the controller is on, the child's output goes to the PRINTER and not to the screen, and a terminal that did not say so reads as one that has stopped responding. A message rather than a `GridDelta` op, because the printer is not the grid (R8). It will also drive the frame button's label and its live byte counter — PRINT-1…6 |
 | `PrintJobAdded` | `term u64, job u64, kind u8 (screen\|line\|controller\|autoprint), bytes u32, lines u32, at i64` | *encode-only* | **metadata only** — a 1 MB job never rides the hot path or the attach snapshot |
 | `PrintJobData` | `term u64, job u64, seq u32, final u8, blob` | *encode-only* | answer to `PrintJobFetch`, chunked ≤ 256 KiB |
+| `TermStats` | `term u64, cpu_permille u32, rss_bytes u64, real_bytes u64, flags u8 (has_real, alive)` | **live** | one terminal's process-tree cost, about once a second, only to connections that asked (`WatchStats`) — WP-38. `cpu_permille` is percent of one core in tenths, the `top` convention, derived by the server from two consecutive cumulative samples (0 on the first, which has no interval to differ over); `rss_bytes` is the tree's resident sum, honest about overcounting shared pages, and `real_bytes` is the platform's own answer to what it actually costs (macOS `phys_footprint`; PSS when WP-22 fills Linux in), meaningful only under `has_real`. A final message with `alive` clear is sent ONCE for a terminal whose child is gone, so the watcher clears the readout rather than freezing it. Never in the snapshot and never stored: a subscriber has current numbers within a sample period, and a number restored from state would be a second old and wrong |
 | `SessionsChanged` | — | *encode-only* | picker refresh hint, superseded before it was ever sent: every change answers with a fresh `SessionList`, which carries the answer instead of asking for another round trip |
 | `PasteAck` | `seq u32` | *encode-only* | the credit half of `PasteChunk` (below); it was described under flow control and missing from this table — WP-18 |
 | `Pong` | `nonce u64` | *tests only* | accepted and dropped by the client; see `Ping` |
@@ -502,7 +504,10 @@ which is precisely what the one version integer is for. WP-30's `tile` field on
 shape of something already on the wire — for the same reason the first list
 gives: the version integer exists so that two builds can tell whether they can
 talk; two numbers for a wire nobody has ever spoken would say the same thing
-twice (`proto.hpp` records the same list). The field arrives with its producer
+twice (`proto.hpp` records the same list). WP-38's `WatchStats` and `TermStats`
+are v3 by the easy route `SetLayout` took: two new types, nothing already on
+this wire changed shape for them, and a build that does not know them refuses
+them as unknown types. The field arrives with its producer
 and its consumer in one change, because a field nothing writes is precisely the
 shaped-and-dead state M-R3 named and WP-28 declined to add another of.
 
