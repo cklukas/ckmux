@@ -54,6 +54,10 @@ public:
     ckv::core::TerminalStatus status() const override;
     const ckv::core::TerminalDamage& damage() const noexcept override { return mirror_.damage(); }
     void clear_damage() noexcept override { mirror_.clear_damage(); }
+    // The server is the one holding a child's open frame (WP-16's own diff
+    // engine gates its flush on this); by the time this mirror sees a delta
+    // at all, the frame it came from has already closed.
+    bool synchronized_output_active() const noexcept override { return false; }
     std::span<const ckv::Cell> cells() const noexcept override { return mirror_.grid(); }
     std::span<const ckv::Cell> scrollback() const noexcept override { return mirror_.history(); }
     // Pictures arrive as their own messages and are placed by id (WP-16);

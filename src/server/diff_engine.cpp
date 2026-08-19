@@ -407,6 +407,21 @@ std::vector<proto::Message> TerminalDiffer::attach_images(TerminalId id) const {
 }
 
 DiffEngine::TerminalTick DiffEngine::flush(TerminalId id, ckv::core::TerminalSubsession& source) {
+    // The child asked to hold this until it says the frame is whole (DEC
+    // 2026): an empty tick, and damage left untouched rather than cleared, so
+    // the tick after the matching reset reads everything the frame changed —
+    // the grid AND the pictures, both read below — and sends it as the one
+    // update the child asked for. The same coalescing an ordinary quiet spell
+    // already gives a child that never uses the mode at all; this only widens
+    // which spells count as quiet.
+    //
+    // Held for as long as the child holds it, with no separate timeout: a
+    // child that opens a frame and then truly stops — crashed, hung — freezes
+    // this terminal's display either way, with or without one open, and a
+    // child that is still alive closes every frame it opens (2026 is meaningless
+    // otherwise) or reopens on its very next redraw, which reads as one
+    // slightly late update rather than a stuck one.
+    if (source.synchronized_output_active()) return {};
     TerminalDiffer& differ = differs_[id];
     TerminalTick tick;
     tick.delta = differ.flush(id, source);

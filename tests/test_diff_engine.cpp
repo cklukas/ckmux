@@ -241,6 +241,46 @@ CK_TEST(forty_writes_between_two_ticks_cost_one_delta) {
     CK_CHECK(engine.flush(terminals).deltas.empty());
 }
 
+CK_TEST(a_delta_is_withheld_while_a_synchronized_frame_is_open_and_sent_whole_once_it_closes) {
+    // ckvision_spin — and any well-behaved redrawing program — brackets a
+    // frame in DEC 2026 precisely so a host never shows it half-drawn.
+    // Flushed across several ticks the way the real server loop does — a
+    // drain per PTY-readable wakeup, a flush at its own fixed cadence — so a
+    // frame the child wrote as one burst can still land across more than one
+    // of this engine's own ticks: this is the field report ("sixel graphics
+    // flickering heavily... run directly, it's not flickering") reproduced
+    // at the diff-engine layer, without a PTY or real timing involved.
+    ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
+    profile.cells = ckv::Size{20, 4};
+    ckv::term::TerminalEmulator emulator(profile);
+    DiffEngine engine;
+    Client client;
+    client.attach(engine.snapshot(1, emulator));
+    emulator.clear_damage();  // the snapshot said everything
+
+    emulator.feed_output("\x1b[?2026h");
+    CK_CHECK(!engine.flush(1, emulator).delta.has_value());
+    emulator.feed_output("\x1b[1;1Hfirst");
+    CK_CHECK(!engine.flush(1, emulator).delta.has_value());
+    emulator.feed_output("\x1b[2;1Hsecond");
+    CK_CHECK(!engine.flush(1, emulator).delta.has_value());
+    CK_CHECK(text_of(client.mirror).find("first") == std::string::npos);
+
+    // The close arrives, and everything the whole frame changed comes out as
+    // the one delta the child asked for — not one per write.
+    emulator.feed_output("\x1b[?2026l");
+    const auto tick = engine.flush(1, emulator);
+    CK_CHECK(tick.delta.has_value());
+    if (tick.delta.has_value()) client.receive(*tick.delta);
+    CK_CHECK(text_of(client.mirror).find("first") != std::string::npos);
+    CK_CHECK(text_of(client.mirror).find("second") != std::string::npos);
+
+    // And the hold does not outlive the frame it was for: an ordinary write
+    // after the close goes out on its own tick again.
+    emulator.feed_output("\x1b[3;1Hthird");
+    CK_CHECK(engine.flush(1, emulator).delta.has_value());
+}
+
 CK_TEST(the_sequence_is_monotonic_with_no_gaps_however_the_terminals_behave) {
     // The adversarial half of the sequence rule: several terminals, one silent,
     // one flooding, one resized under load, one closing mid-run, plus ticks
