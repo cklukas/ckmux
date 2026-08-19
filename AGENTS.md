@@ -61,6 +61,50 @@ ckVision is found as an installed package, or built from `../ckvision`
 cmake -S . -B build-asan -DCKMUX_SANITIZE=address,undefined -DCKVISION_SANITIZE=address,undefined
 ```
 
+## The tester role (when one is active)
+
+Several sessions work these two repositories at once. When one of them is
+running as the **dedicated tester**, that session coordinates and runs
+verification for *both* ckmux and ckVision, and the others are **worker
+agents**.
+
+The division:
+
+- **Workers write code and write the regression tests.** That does not move.
+  A package still owes a test that fails without the change; deciding what
+  must be proven is the worker's job, not the tester's.
+- **The tester runs them.** Full CTest sweeps, ASan/UBSan configurations,
+  cross-repo rebuilds, and the gate on `HEAD` after every landing belong to
+  the tester. A worker does not run these.
+- **Workers delegate testing to the tester and wait for the result.** If work
+  depends on a test outcome, it waits for that outcome. Do not carry on
+  against an assumed-green — that is how a red `HEAD` survives four sessions
+  that each believed someone else had checked.
+- **Workers may still compile, and may run the single suite they are actively
+  editing.** Handing over code that has never been built helps nobody. What
+  stops is the repeated full-suite and sanitizer runs that several sessions
+  were each paying for separately.
+- **Ask once, for everybody.** Tell the tester the suite names, the build
+  configuration, and whether sanitizers matter. Two workers needing the same
+  thing is one run, not two.
+
+The tester owns the **integration gate**, which is the job no worker can do
+for themselves: check out the commit — not the working tree — in a detached
+worktree of each repository, confirm it clean *inside* that worktree, build
+it in an isolated directory, and report the result against both SHAs. A green
+run in a shared working tree carrying other sessions' uncommitted files is
+evidence about a moment, not about a commit. Suite count is the quick tell
+that a run was honest about which bytes it compiled.
+
+Evidence still has to be evidence. A worker whose landing was gated by the
+tester says so and names it — *gated by <session> at ckmux `<sha>` ×
+ckVision `<sha>`, N/N, ctest exit 0* — rather than writing an unattributed
+claim to have run it. Attributed evidence from a pinned gate is stronger than
+an unattributed sweep of a mutable tree, not weaker.
+
+When no tester session is active, every worker is its own tester and the
+definition of done below applies unchanged.
+
 ## Definition of done (every landing)
 
 Inherited from ckVision, unchanged:
@@ -71,8 +115,8 @@ Inherited from ckVision, unchanged:
 - plans updated in the same commit when behavior changed — the plans are the
   spec, so drift is a bug in one of them;
 - commit message: one-line summary, what and why, then verification evidence
-  naming the tests and sanitizer configurations actually run. "All tests
-  pass" is not evidence.
+  naming the tests and sanitizer configurations actually run, and who ran
+  them if that was the tester. "All tests pass" is not evidence.
 
 Tests drive the public path: dispatch real events through `Application`,
 click real menus. Calling a handler directly proves the handler runs, not
