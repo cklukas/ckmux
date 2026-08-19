@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "common/config.hpp"
 #include "common/proto.hpp"
 
 #include "cvision/testing/cktest.hpp"
@@ -316,10 +317,32 @@ CK_TEST(check_config_reports_without_starting_anything) {
     const RunResult result = run_ckmux_against(socket, {"check-config"});
     CK_CHECK(result.exit_code == 0);
     CK_CHECK(!std::filesystem::exists(socket));
-    // The second half, which is what makes it worth more than a parse: a key
-    // that is spelled correctly, accepted, and reaches nothing yet.
-    CK_CHECK(result.out.find("not yet honoured") != std::string::npos);
-    CK_CHECK(result.out.find("on-exit") != std::string::npos);
+    // The second half, which is what makes it worth more than a parse: the
+    // keys that are spelled correctly, accepted, and reach nothing yet.
+    //
+    // Asserted against `keys_not_honoured_yet()` itself rather than against a
+    // key named here. This assertion named `[general] on-exit` for exactly one
+    // hour: WP-11 picked it as the example, WP-13 wired the key up and removed
+    // it from the list, and the test then asserted the very claim the removal
+    // was made to stop making — failing LOUDLY because somebody improved the
+    // code, which trains the next reader to weaken it rather than fix it.
+    // Naming `[printer] ask-cache` instead would only move the trap: PRINT-1…6
+    // retires all four remaining keys at once.
+    //
+    // So what is checked here is what this command is actually responsible
+    // for — that it prints the list the binary holds, whatever that list says.
+    // Whether the list itself is honest is test_config's audit case, which is
+    // where it belongs.
+    const std::vector<std::string> waiting = ckm::keys_not_honoured_yet();
+    CK_CHECK(!waiting.empty());  // else the loop below asserts nothing
+    if (!waiting.empty()) CK_CHECK(result.out.find("not yet honoured") != std::string::npos);
+    for (const std::string& key : waiting) CK_CHECK(result.out.find(key) != std::string::npos);
+    // And the key that left the list must not be printed: the server reads
+    // `on-exit` to decide whether an exited window stays on screen, so naming
+    // it here would tell a reader it was dead. The positive partner for this
+    // negative is the loop above — it fails if the section stops printing at
+    // all, so this cannot pass merely because the output went empty.
+    CK_CHECK(result.out.find("on-exit") == std::string::npos);
     forget(socket);
 }
 
