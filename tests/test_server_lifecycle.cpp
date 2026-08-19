@@ -515,6 +515,11 @@ CK_TEST(asking_for_a_session_is_answered_with_the_sessions_there_now) {
 
     ckm::proto::NewSession request;
     request.name = "work";
+    // Asked to be empty, explicitly: `spawn_first` is honoured now (49d1878),
+    // and this case is about the list-reply contract, not the spawn policy —
+    // `terminals == 0` was leaning on the field being silently ignored.
+    // test_server_loop owns the spawn policy's own cases, both ways.
+    request.spawn_first = 0;
     client.say(request);
     ckm::proto::Message reply;
     CK_CHECK(client.hear(reply));
