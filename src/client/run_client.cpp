@@ -511,10 +511,22 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         open_one_if_the_session_is_empty();
         // Every window whose terminal has news repaints, which is the same
         // notification a local terminal raises — the client does not care where
-        // the bytes came from.
+        // the bytes came from. "Has news" is asked, not assumed: a local
+        // subsession only reaches notify_terminal_subsession_changed when its
+        // own drain() found something (ckVision's Application::step()), and
+        // a remote one's drain() is permanently a no-op (input arrives as
+        // socket messages, not a per-terminal read) — so unconditionally
+        // notifying every terminal here was standing in for that gate, at
+        // the cost of every terminal repainting, and every picture on
+        // screen being re-fingerprinted and potentially re-encoded, on
+        // every single pass of this loop rather than only when one
+        // genuinely had something new.
         for (const std::uint64_t id : session.terminal_ids())
-            if (RemoteTerminalSubsession* remote = session.terminal(id))
+            if (RemoteTerminalSubsession* remote = session.terminal(id)) {
+                if (!remote->damage().any()) continue;
                 app.root().notify_terminal_subsession_changed(*remote);
+                remote->clear_damage();
+            }
         (void)app.step(clock.now_nanos());
         if (!alive) {
             // The server has gone — because a reader ended the last session, or

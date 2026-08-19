@@ -256,6 +256,14 @@ bool ServerSession::handle(const proto::Message& message) {
         PendingImage pending;
         pending.width = begin->width;
         pending.height = begin->height;
+        // The final size is already known; reserving it up front means the
+        // chunk loop below never reallocates and copies what it already
+        // holds. A picture the size of a dialog is chunked into single-digit
+        // pieces at kMaxChunkPayloadBytes, so unreserved growth was paying to
+        // copy several megabytes multiple times over for what should be one
+        // append each.
+        pending.bytes.reserve(static_cast<std::size_t>(pending.width) *
+                              static_cast<std::size_t>(pending.height) * 4U);
         pending_images_[begin->id] = std::move(pending);
         return true;
     }

@@ -33,6 +33,19 @@ ckv::term::TerminalSubsessionOptions subsession_options_for(const Settings& sett
     options.max_image_pixels =
         static_cast<std::size_t>(std::max(1, settings.sixel_max_megapixels)) * 1024U * 1024U;
     options.max_printer_spool_bytes = settings.printer_spool_limit_bytes;
+    // ckVision's own defaults here (64 KiB queued, 32 KiB parsed per step)
+    // are sized for an untrusted child inside an embedded widget. A ckmux
+    // terminal is neither: it is a full, trusted, interactive program, and
+    // max_graphics_payload_bytes already allows a picture up to 4 MiB — but
+    // a real one, well under that (a downscaled dialog logo measured at
+    // ~490 KiB of Sixel), still had to cross this queue in a dozen-plus
+    // rounds at the old default, each one a full pass through this
+    // terminal's turn in the server loop. Raised to what
+    // ckvision/benchmarks/bench_terminal.cpp already calls the realistic
+    // figure for actual application output, not the conservative one for
+    // input nobody has vetted.
+    options.max_output_bytes = 1U << 20U;          // 1 MiB
+    options.max_parser_work_per_step = 128U << 10U;  // 128 KiB
     return options;
 }
 
