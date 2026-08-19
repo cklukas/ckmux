@@ -346,8 +346,13 @@ right end of the menu bar, where the calendar can hang from it.
   terminal behind it, and how much of a document to have on screen is their
   decision. The index grows vertically, the prose grows both ways, and the
   buttons stay against the bottom edge.
-- Menu `Help → All Keybindings…` shows the full registry grouped by context,
-  with the user's rebindings applied and marked.
+- Menu `Help → All Keybindings…` shows the full registry with the user's
+  rebindings applied and **marked** — implemented, WP-14. Grouped by what
+  REACHES a command (after the prefix / in the menus only / changed by your
+  configuration) rather than by binding context: the config file has five
+  context names and only `terminal` is honoured, so grouping by context would
+  print four empty headings and one full one. Revisit when a second context is
+  honoured.
 - Menu `Help → Terminal Report` opens ckVision's terminal report dialog
   (`ckv.app.terminal_report`, L-56): the probed capabilities of the OUTER
   host — Sixel included — plus mouse-dispatch diagnostics, with ckmux's
@@ -714,7 +719,7 @@ Nearly every surface above is a stock ckVision widget; ckmux mostly writes
 | Printer Settings / Ask popup | descriptor dialogs + `wire_dialog_window` | the forms — **needs upstream typed dialog fields** (radio/check/combo/number), today's `FieldDescriptor` materializes text inputs only ([07](07-ckvision-integration.md) U1-d) |
 | Print Output | `Table` + `TextView` + `FileDialog` (`Save` mode) | job model over the protocol; `.txt`/`.ansi` writers |
 | Themes | Dark/Light/Mono schemes + interned roles | ckmux's semantic roles (hint key, badges, prefix indicator) |
-| Toasts ("Detached", "Config reloaded") | `NotificationCenter` | message content |
+| Toasts ("Detached", "Config reloaded") | `NotificationCenter` + `set_auto_dismiss` (U6-a) | message content — implemented, WP-14, except "Config reloaded", which waits for a reload command to exist |
 
 ## Open UX questions (tracked in [10-roadmap.md](10-roadmap.md))
 

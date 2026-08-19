@@ -110,7 +110,7 @@ take first.
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Done** (2026-08-20) | WP-8 ✓ |
-| 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-12 ✓ |
+| 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `3162146`, gated) | WP-12 ✓ |
 | 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
 | 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
 | 31 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
@@ -693,13 +693,83 @@ title poll is the moment ckmux LEARNS of an exit, so the hint is refreshed
 there, or it would appear only when some unrelated event happened to redraw
 the footer, which for a reader watching a build finish is never.
 
-**WP-14 — Notifications and help.** *Ready* — WP-12 is `Done`, and nothing
-here needs a server. `NotificationCenter` toasts; help pages
+**WP-14 — Notifications and help.** `NotificationCenter` toasts; help pages
 complete, with their key tables generated from the same registry that
 dispatches the keys. `[general] clock` no longer waits here: the menu-bar
 clock and its calendar landed on their own (2026-08-17), being one trailing
 view on a bar that already existed and needing nothing from the server, the
 notifications or the help pages.
+
+*Landed* (2026-08-20). Gated by the test-coordinator session at ckmux
+`3162146` × ckVision `3135907` — 30/30 Debug, 30/30 ASan+UBSan. The sanitized
+lane is the one that answers this package: the toast surface is created and
+destroyed from inside its own callbacks, since a click or an expiry can empty
+it and the last removal takes the view down.
+
+**The notifications half fixed the silence, not a gap.** A detach a reader did
+not ask for — a takeover, a session ended under them, a server stopping — took
+every window off their screen and said nothing, because the only account of it
+was a `text` the host loop threw away with a `(void)`, and the one place it
+could have gone was stderr, which is the screen ckVision is drawing on.
+`ClientApp::report_detached` puts it where a message that must not interrupt
+belongs. Persistent, all three, because the reader this is for is the one who
+stepped away; the other end of a takeover gets an ordinary toast that expires.
+The surface is a `NotificationCenter` in a desktop popup, made on the first
+notification and taken down after the last, so an idle ckmux carries no
+notification chrome — and its teardown is POSTED, because destroying a view
+from inside its own handler frees the object whose stack you are standing on.
+
+**ckVision could not do it as it stood**, which is where U6-a and U6-b came
+from: `Notification::persistent` was a field nothing read (the workbench
+example sets it in good faith), and nothing expired at all — so an application
+could post "Config reloaded" but not have it go away. And `on_attached()` reset
+the focus policy on every attach, overruling a host that had said this centre
+must not be a focus stop. Both fixed upstream rather than worked around here.
+
+**The help half made F1 answer everywhere.** Four topics existed and three
+surfaces named one, so F1 anywhere else answered with whatever page the focused
+view inherited. Copy mode, the session list, moving a window and the notices
+now each have a page, and `Help ▸ All Keybindings…` opens the complete listing
+— the page that deliberately does not depend on where the reader is. That
+listing is generated from the keymap and therefore cannot drift from what
+dispatches: it lists `^B _` and `^B b` because WP-34 and WP-35 added rows, and
+nobody edited it when they did. Three parts — the chorded commands, the ones no
+key reaches (because "everything is in the menu" is a promise about those), and
+what the reader's own configuration changed. `KeyBinding` gained a
+`default_chord` for that last part: a rebinding is MARKED, and "new term: now
+^B C, was ^B c" is what a reader needs when a key they have used for months
+stops working.
+
+Grouped by what reaches a command rather than by binding context, deliberately:
+the config file has five context names and only `terminal` is honoured today
+(plans/08 refuses the rest out loud), so grouping by context would print four
+empty headings and one full one — a shape that says the opposite of what is
+true. Revisit when a second context is honoured.
+
+**The window-bar page was stale the moment WP-34 and WP-35 landed** — it said
+the row appears only with more than one terminal, and its right-click list
+predated Minimize, Show and Rename. It now describes the bar that exists, with
+the three status marks named from `WindowSwitcherBar`'s own glyph table rather
+than spelled again, so a glyph change cannot leave the page lying.
+
+**Two mnemonic collisions, found by a guard written for the first.** This
+package nearly shipped `&All Keybindings…` into a Help menu that already had
+`&About ckmux…`; the second item on a letter cannot be typed at all, because
+the first simply opens. Now `A&ll`. The guard then caught an older one on the
+bar: Alt+S answers Session, so `&Settings` — added later — had never been
+reachable by its own letter, and never would have been. Now `Sett&ings`.
+Neither was visible in a screenshot or in any click-driven test, which is why
+`no_menu_offers_one_letter_twice` is a test rather than a review note: a defect
+invisible to the way we usually look is not caught by looking harder.
+
+*Not done, and recorded rather than hidden.* **The session picker and the other
+descriptor dialogs still have no help page**, because `DialogDescriptor` has no
+field to name one — F1 there falls back to whatever the surface behind it says.
+That is a small ckVision addition (a `help_context` on the descriptor,
+materialized onto the dialog window) and it is the natural next item in this
+area. And **there is no "Config reloaded" toast** that plans/06 lists, because
+ckmux has no config-reload command to hang one on: the file is read at startup
+and nothing re-reads it. The toast arrives with the reload, not before it.
 **WP-15 — M3 acceptance.** Every operation-table row green at the wire; a
 newcomer drives everything from menus alone (checklist walkthrough); the
 author's tmux muscle-memory set is covered.
