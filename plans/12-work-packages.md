@@ -100,12 +100,12 @@ take first.
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Done** (2026-08-19) | U4-a ✓ |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
 | 25a | **U4-g** — A dialog too tall for its screen scrolls, buttons pinned | ckVision | 1–2 d | **Done** (2026-08-19, ckVision `6d7172b`) | — |
-| 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Ready** | — |
-| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | Blocked | U4-i |
-| 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | Blocked | U4-i |
-| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | Blocked | U4-i, U4-j |
-| 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Ready** | — |
-| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | Blocked | U4-l |
+| 25b | **U4-i** — Minimize: window state, the `_` control, and what a hidden window does | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `720e0eb`) | — |
+| 25c | **U4-j** — Switcher bar: status icons and taskbar click semantics | ckVision | 1–2 d | **Ready** | U4-i |
+| 25d | **U4-k** — The minimize animation | ckVision | 1–2 d | **Ready** | U4-i |
+| 25e | **WP-34** — Minimize in ckmux: the bar appears whenever something is hidden | ckmux | 0.5–1 d | **Ready** | U4-i, U4-j |
+| 25f | **U4-l** — A paged item strip, and the switcher bar as its first consumer | ckVision | 2–3 d | **Done** (2026-08-19, ckVision `51eaced`) | — |
+| 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Ready** | U4-l |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
