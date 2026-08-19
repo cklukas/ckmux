@@ -976,3 +976,38 @@ CK_TEST(a_hash_survives_the_file_a_dialog_writes) {
     if (loaded.settings.clipboard.size() == 1U)
         CK_CHECK(loaded.settings.clipboard[0].command == "my-copy --tag=#1");
 }
+
+CK_TEST(the_per_session_terminal_limit_is_read_bounded_and_honoured) {
+    // WP-13, from plans/03's new-terminal row: "Session at terminal limit
+    // (config, default 64) → error". The default is the plan's number, not a
+    // number chosen here — a limit the spec states and the code disagrees with
+    // is worse than no limit, because both look right in isolation.
+    CK_CHECK(ckm::Settings{}.max_terminals == 64);
+
+    ScratchConfig scratch("limit");
+    scratch.write("[general]\nmax-terminals = 8\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.max_terminals == 8);
+
+    // Zero is refused rather than accepted as "none": a session that can hold
+    // no terminals is a session nothing can be done with, and a reader who
+    // wants that closes the session instead.
+    ScratchConfig none("limit-zero");
+    none.write("[general]\nmax-terminals = 0\n");
+    const ckm::LoadedSettings refused = load_settings(none.path());
+    CK_CHECK(refused.warnings.size() == 1U);
+    if (!refused.warnings.empty())
+        CK_CHECK(refused.warnings[0].find("max-terminals") != std::string::npos);
+    // Refused means unchanged, not clamped to the floor — a reader who typed
+    // something impossible gets the default and a sentence, not a silent
+    // reinterpretation of what they asked for.
+    CK_CHECK(refused.settings.max_terminals == 64);
+
+    // And it must NOT appear on the not-yet-honoured list: the server refuses
+    // NewTerminal past this number the moment the key lands. Landing a key
+    // without wiring it, or wiring it without taking it off that list, are the
+    // two halves of the defect `on-exit` had — and neither breaks a build.
+    for (const std::string& entry : ckm::keys_not_honoured_yet())
+        CK_CHECK(entry.find("max-terminals") == std::string::npos);
+}

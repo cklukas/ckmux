@@ -1609,3 +1609,58 @@ CK_TEST(new_session_spawn_first_off_means_an_empty_session_on_purpose) {
 
     forget(socket);
 }
+
+CK_TEST(a_session_at_its_terminal_limit_is_told_so_rather_than_growing) {
+    // plans/03's new-terminal row: "Session at terminal limit (config, default
+    // 64) → error". A limit rather than none because a session is something a
+    // reader manages by hand, and a script asking for terminals in a loop
+    // would otherwise take the machine's descriptors with it.
+    const std::filesystem::path socket = private_socket("limit");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    // Two, so the test is about the boundary rather than about 64 PTYs.
+    settings.max_terminals = 2;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    // Up to the limit is allowed, and each one really arrives — a limit that
+    // refused early would pass an "is it refused" test while costing a reader
+    // a terminal they were entitled to.
+    for (int wanted = 0; wanted < 2; ++wanted) {
+        ckm::proto::NewTerminal ask;
+        ask.command = "sleep 3600";
+        client.say(ask);
+        ckm::proto::TermOpened opened;
+        CK_CHECK(await_message(server, clock, client, opened));
+        CK_CHECK(opened.term != 0U);
+    }
+
+    // The one past it is refused, and refused with a sentence that names the
+    // key a reader would have to change — an error saying only "no" leaves
+    // them to guess which of the several limits in this program they met.
+    ckm::proto::NewTerminal too_many;
+    too_many.command = "sleep 3600";
+    client.say(too_many);
+    ckm::proto::Error refusal;
+    CK_CHECK(await_message(server, clock, client, refusal));
+    CK_CHECK(refusal.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::LimitReached));
+    CK_CHECK(refusal.context == "NewTerminal");
+    CK_CHECK(refusal.human.find("max-terminals") != std::string::npos);
+    // Not a "no such" code: the reader named something real and the answer is
+    // still no, which is a different sentence and a different remedy.
+    CK_CHECK(refusal.code != static_cast<std::uint16_t>(ckm::proto::ErrorCode::NoSuchSession));
+
+    // And the session is unchanged by the refusal rather than left in some
+    // half-grown state. Asked over the wire, because that is the count a
+    // reader's picker shows and therefore the one that matters.
+    client.say(ckm::proto::ListSessions{});
+    ckm::proto::SessionList listed;
+    CK_CHECK(await_message(server, clock, client, listed));
+    CK_CHECK(!listed.sessions.empty());
+    if (!listed.sessions.empty()) CK_CHECK(listed.sessions.front().terminals == 2U);
+}

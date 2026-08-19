@@ -676,6 +676,21 @@ void Server::handle(Client& client, const proto::Message& message) {
             send(client, error);
             return;
         }
+        // plans/03's new-terminal row: "Session at terminal limit (config,
+        // default 64) → error". Checked here rather than in `open_terminal`,
+        // because this is the request a reader makes — a session created with
+        // `spawn_first` is one terminal into a limit of at least one, and a
+        // respawn replaces a terminal rather than adding one.
+        if (static_cast<int>(session->terminals.size()) >= options_.settings.max_terminals) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::LimitReached);
+            error.context = "NewTerminal";
+            error.human = "this session already holds " +
+                          std::to_string(options_.settings.max_terminals) +
+                          " terminals, which is [general] max-terminals";
+            send(client, error);
+            return;
+        }
         TerminalSpec spec;
         spec.command = request->command;
         // The opener's own display decides what the child is told about

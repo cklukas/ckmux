@@ -1088,6 +1088,13 @@ enum class ErrorCode : std::uint16_t {
     NoSuchTerminal = 2,
     NoSuchSession = 3,
     NameTaken = 4,
+    // The request was understood, allowed, and refused because a configured
+    // ceiling is already reached — today only a session at `[general]
+    // max-terminals` (plans/03's new-terminal row). Distinct from the "no such"
+    // codes on purpose: those say a reader named something that is not there,
+    // this says they named something real and the answer is still no, which is
+    // a different sentence and a different remedy.
+    LimitReached = 5,
 };
 
 struct Error {

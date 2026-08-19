@@ -395,6 +395,8 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
         }
         if (key == "login-shell") return boolean(settings.login_shell);
         if (key == "scrollback") return integer(settings.scrollback, kScrollbackMin, kScrollbackMax);
+        if (key == "max-terminals")
+            return integer(settings.max_terminals, kMaxTerminalsMin, kMaxTerminalsMax);
         if (key == "theme") return enumerated(settings.theme, kThemes);
         if (key == "on-exit") return enumerated(settings.on_exit, kExitPolicies);
         if (key == "confirm-kill") return boolean(settings.confirm_kill);

@@ -56,6 +56,14 @@ std::optional<int> parse_sixel_megapixels(std::string_view text);
 // than a judgement about taste.
 inline constexpr int kScrollbackMin = 0;          // 0 = remember nothing
 inline constexpr int kScrollbackMax = 1'000'000;  // ~2 GB of cells at 80 columns
+// How many terminals one session may hold (plans/03: "config, default 64").
+// The floor is 1 rather than 0: a session that can hold no terminals is a
+// session nothing can be done with, and a reader who wants that closes the
+// session. The ceiling is absurdity insurance — every terminal is a PTY, a
+// child process and a scrollback, so a machine runs out of descriptors long
+// before this.
+inline constexpr int kMaxTerminalsMin = 1;
+inline constexpr int kMaxTerminalsMax = 4'096;
 inline constexpr int kMaxFpsMin = 1;
 inline constexpr int kMaxFpsMax = 240;
 // Byte sizes accept a K/M/G suffix, since that is how the plan's own example
@@ -117,6 +125,12 @@ struct Settings {
     // request and not merely the smallest number (ckVision's
     // `max_scrollback_lines`, U0-c).
     int scrollback = 10'000;
+    // The most terminals one session may hold (plans/03's new-terminal row:
+    // "Session at terminal limit (config, default 64) → error"). A limit
+    // rather than none because a session is a thing a reader manages by hand,
+    // and a runaway script asking for terminals in a loop would otherwise take
+    // the machine's descriptors with it.
+    int max_terminals = 64;
     Theme theme = Theme::Dark;
     // What happens to a window when its program exits. hold-on-error keeps
     // the window when the exit status is non-zero, which is the one case
