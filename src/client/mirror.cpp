@@ -321,7 +321,16 @@ void TerminalMirror::place_image(std::uint64_t id, std::shared_ptr<const ckv::Im
     // the snapshot that heals whatever gap caused it restates the pictures.
     if (image == nullptr) return;
     ckv::core::TerminalRaster raster;
-    raster.id = raster_identity_;
+    // raster_identity_ alone names this terminal, not this picture: a wire
+    // id already distinguishes pictures on the connection, but two rasters
+    // sharing one Surface still need distinct scene ids (surface.cpp's own
+    // add_raster_region contract), which a second picture arriving before
+    // the first is removed — ordinary; the snapshot restates whatever a
+    // reconnect lost — would otherwise violate exactly like the local
+    // TerminalEmulator's place_raster did.
+    raster.id = raster_identity_ == 0
+                    ? 0
+                    : raster_identity_ + ckv::core::allocate_local_raster_slot(rasters_, raster_identity_);
     raster.anchor = anchor;
     raster.cell_extent = cell_extent;
     raster.image = std::move(image);
@@ -342,8 +351,17 @@ void TerminalMirror::remove_image(std::uint64_t id) {
 }
 
 void TerminalMirror::set_raster_identity(int identity) noexcept {
+    // Reassigning an already-live mirror (a reattach mints a fresh identity
+    // for what may still hold rasters from before the gap) has to carry each
+    // one's own local slot across the change, not just the shared base —
+    // collapsing every raster back onto the bare identity would recreate the
+    // same id collision place_image's own slot allocation exists to avoid.
+    const int old_identity = raster_identity_;
     raster_identity_ = identity;
-    for (ckv::core::TerminalRaster& raster : rasters_) raster.id = identity;
+    for (ckv::core::TerminalRaster& raster : rasters_) {
+        const int slot = old_identity == 0 ? 0 : raster.id - old_identity;
+        raster.id = identity == 0 ? 0 : identity + slot;
+    }
 }
 
 }  // namespace ckm::client

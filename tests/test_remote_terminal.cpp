@@ -231,6 +231,42 @@ CK_TEST(a_view_over_a_remote_terminal_shows_what_the_child_printed) {
     CK_CHECK(remote.stray_output_calls() == 0U);
 }
 
+CK_TEST(two_simultaneous_placed_pictures_on_one_mirror_get_distinct_scene_ids) {
+    // The client-side twin of ckVision's own terminal_emulator fix: a mirror
+    // rebuilding TerminalRaster entries from ImagePlace messages carried the
+    // identical bug the local emulator did, since every raster it built took
+    // this terminal's bare identity verbatim, unchanged from picture to
+    // picture. A child that places a second picture before the server (or a
+    // test) removes the first is ordinary, and it used to crash the instant
+    // both reached the same Surface — Surface::add_raster_region's own
+    // uniqueness contract, violated by two regions sharing one id.
+    FakeServer server;
+    RemoteTerminalSubsession remote(server.id, server.profile,
+                                    [](const ckm::proto::Message&) {});
+    remote.mirror().set_history_limit(200);
+    remote.mirror().adopt(server.snapshot());
+    remote.mirror().set_raster_identity(99);
+
+    auto image = std::make_shared<ckv::Image>(4, 6);
+    remote.mirror().place_image(1, image, ckv::Point{0, 0}, ckv::Size{1, 1});
+    remote.mirror().place_image(2, image, ckv::Point{4, 0}, ckv::Size{1, 1});
+    CK_CHECK(remote.mirror().rasters().size() == 2U);
+    CK_CHECK(remote.mirror().rasters()[0].id == 99);
+    CK_CHECK(remote.mirror().rasters()[1].id == 100);
+
+    ckv::ui::RoleRegistry registry;
+    ckv::ui::StandardRoles roles = ckv::ui::intern_standard_roles(registry);
+    ckv::ui::Theme theme = ckv::ui::make_classic_theme(registry, roles);
+    ckv::widgets::TerminalView view(remote);
+    view.set_context(ckv::ui::Context{&theme, &registry, nullptr});
+    view.set_bounds(ckv::Rect{0, 0, 40, 8});
+
+    ckv::scene::Surface surface(ckv::Size{40, 8}, ckv::Cell{});
+    ckv::scene::Painter painter(surface, ckv::Rect{0, 0, 40, 8});
+    view.draw(painter);  // used to abort here
+    CK_CHECK(surface.raster_regions().size() == 2U);
+}
+
 CK_TEST(the_child_dialect_the_view_encodes_is_the_one_the_server_reported) {
     // Keys are encoded client-side against mirrored mode state (plans/04), so the
     // mode bits have to survive the wire with their meaning intact. A cursor key
