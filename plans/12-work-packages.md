@@ -850,11 +850,26 @@ Cancel are. A dialog that cannot show its buttons is not merely cramped;
 it is unusable, and the reader cannot tell whether it is broken or they
 are.
 
-The rule: **when a dialog's content is taller than the space it has, the
-content area scrolls and the button row stays fixed at the bottom.** Never
-the other way round — buttons that scroll away are the defect being fixed.
-A dialog that fits gains nothing: no scrollbar, no reserved column, no
-behaviour change at all.
+The rule, settled by the requester on 2026-08-19 and simpler than the
+first draft of this entry: **every dialog's content lives in a scroll
+area, always, with the vertical bar on `ScrollbarPolicy::Auto`, and the
+button row attached to the dialog's bottom border.** No conditional
+wrapping and no second tree shape — one code path, and the bar appears
+only when there is genuinely more to see, which is what makes always
+wrapping invisible.
+
+The dialog carries a **recommended height** — its natural content height
+— and takes that, clamped to what is available. So in the ordinary case
+the dialog is exactly the size it is today, the content exactly fills the
+viewport, the bar stays hidden, and **there is no observable difference on
+screen**. That is the acceptance bar for a fitting dialog: not "close
+enough" but "nothing changed".
+
+**Sizing is decided at layout time, and re-decided on every size change.**
+Shrinking the terminal degrades into scrolling; growing it back lets the
+dialog grow toward its recommended height again. A dialog that was only
+correct at the size it was born at would be a thin fix — the reader
+resizes, and so does the terminal.
 
 Checked before writing this, so the package is composition rather than
 invention:
