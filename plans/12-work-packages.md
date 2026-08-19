@@ -1291,14 +1291,40 @@ something for this cluster: both new callback shapes — a minimize action held
 by a view the desktop owns, and a collapse callback that re-enters the widget
 that fired it — are lifetime questions an unsanitized green does not answer.
 
-**What that evidence does NOT say**, stated because the tester raised it and
-they are right: ckVision `da11baa` already contained U4-j and U4-o before any
-gate ran, so 144/144 gates the ckVision half without demonstrating that these
-changes are what made it pass. The counterfactual is a mutant — the rule
-inverted, the test red — and it has not been run. The one-cell property is the
-worked example: nothing in a green run distinguishes "all three glyphs are one
-cell" from "the widths happen to agree today", and it is load-bearing for
-U4-k.
+**What a green run does not say on its own**, and what was done about it.
+ckVision `da11baa` already contained U4-j and U4-o before any gate ran, so
+144/144 gated the ckVision half without demonstrating that these changes are
+what made it pass. The counterfactual is a mutant — the rule inverted, the test
+red — and it has now been run (2026-08-20, by the test-coordinator session, in
+pinned worktrees at ckmux `3162146` / ckVision `3135907`, each mutation
+applied, built, run and reverted).
+
+**Five mutations, five killed.** Dropping `|| any_minimized` from
+`sync_window_switcher()` — the reader's original bug, put back — killed five
+cases from two angles, with the negative partner
+(`a_second_terminal_leaves_the_bar_where_it_already_was`) correctly surviving.
+Collapsing `status_glyph()` to one shape killed the three-state case. Making
+the ACTIVE row activate instead of minimize killed three, including one nobody
+predicted: a host supplying its own minimize action notices when the widget
+calls the wrong verb. And the one that mattered most for U4-k, the **one-cell
+property**: replacing `kMinimizedGlyph` with U+25FD — Wide *and*
+Extended_Pictographic by ckVision's own tables, an honest adversary rather than
+a codepoint chosen to be rejected — killed
+`every_status_glyph_is_one_cell_so_a_state_change_never_re_flows_the_row`. So
+that property is pinned rather than incidentally true, and the minimize flight
+may lean on it.
+
+Two things worth keeping from how the lane ran. **Deleting
+`Desktop::on_child_size_hint_changed` kills different cases at its two call
+sites** — five at `sync_window_switcher()`'s, three at
+`set_chrome_collapsed()`'s, and the sets are disjoint, so each call is
+load-bearing and neither is protected by the other's tests. (WP-35's write-up
+predicted exactly one death at its site and got three: the chrome cases are
+mildly coupled to geometry, which is a finding rather than a fault.) And
+**`-Werror` can refuse a mutation**: collapsing the glyph switch orphans two
+constants and `-Wunused-const-variable` rejects the build, so the mutation is
+unrunnable as written. A build failure is not a surviving mutant, and a lane
+that scored it as one would report the opposite of the truth.
 
 Verified end to end as well as headlessly: `tests/test_minimize_chrome.cpp`
 drives the real client, and `tests/test_menu_commands.cpp` runs the real
