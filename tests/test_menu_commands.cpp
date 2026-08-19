@@ -934,3 +934,42 @@ CK_TEST(the_settings_dialog_shows_its_buttons_on_a_cramped_terminal) {
     end_process(server);
     forget(socket);
 }
+
+CK_TEST(a_roomy_terminal_shows_the_whole_settings_form_without_scrolling) {
+    // The other half of U4-g's contract, and the acceptance bar the reader
+    // set: a dialog that FITS must look exactly as it did before scrolling
+    // existed. Measured by sweeping terminal heights: the form fits at 26
+    // rows and scrolls at 24, so this pins the fitting side of that boundary
+    // while `the_settings_dialog_shows_its_buttons_on_a_cramped_terminal`
+    // pins the other. Two rows apart, so neither sits on the threshold.
+    const std::filesystem::path socket = private_socket("roomy-settings");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket, ckv::Size{80, 26}));
+    CK_CHECK(reader.sees("Terminal 1"));
+    reader.press("\x02" "c");
+    CK_CHECK(reader.sees("Terminal 2"));
+
+    reader.press("\x02" "m");
+    reader.press("\x1b[B");
+    reader.press("\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[B");
+    reader.press("\r");
+
+    const std::string screen = reader.screen();
+    // Every row of the form is on screen at once — first field, last field,
+    // and the buttons. Nothing scrolled because nothing needed to.
+    CK_CHECK(screen.find("Start terminals") != std::string::npos);
+    CK_CHECK(screen.find("Colour theme") != std::string::npos);
+    CK_CHECK(screen.find("Save") != std::string::npos);
+    CK_CHECK(screen.find("Cancel") != std::string::npos);
+
+    reader.press("\x1b");
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
