@@ -132,6 +132,14 @@ public:
     // picture. The same image placed twice therefore ships its pixels twice;
     // the emulator's decode cache makes that rare, and ambiguity would be
     // worse than repetition.
+    //
+    // A new object standing exactly where a believed one stands is that same
+    // placement REDRAWN — an animation frame — and keeps its wire id: the new
+    // pixels travel under the old id and no Remove is sent, so a mirror shows
+    // the previous frame until the Place that swaps in the next one. The
+    // Remove-then-Add alternative blanked the picture for as long as the new
+    // frame's megabytes were still crossing the socket, once per frame, which
+    // a reader saw as flicker.
     std::vector<proto::Message> flush_images(TerminalId id,
                                              const ckv::core::TerminalSubsession& source,
                                              std::uint64_t& next_image_id);

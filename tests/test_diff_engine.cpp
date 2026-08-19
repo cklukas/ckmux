@@ -787,6 +787,57 @@ CK_TEST(a_picture_the_child_draws_travels_as_image_ops_and_only_once) {
     CK_CHECK(engine.flush(1, emulator).images.empty());
 }
 
+CK_TEST(a_picture_redrawn_in_place_keeps_its_wire_id_and_is_never_removed) {
+    // An animating child — ckvision_spin is the field case — redraws its
+    // picture at the same anchor every frame. That is the same PLACEMENT
+    // with new pixels, and it must travel as one: pixels again under the
+    // old id, then the Place that swaps them, and NO Remove. Remove-then-
+    // Add-under-a-new-id was the flicker: the Remove is a few bytes and
+    // crossed the socket first, the replacement is megabytes and arrived
+    // over many reads, and every client repaint in between painted the
+    // fallback where the picture stood — once per animation frame.
+    ckv::term::TerminalEmulator emulator = sixel_emulator();
+    DiffEngine engine;
+    emulator.feed_output(kRedSixelAt23);
+    const DiffEngine::TerminalTick first = engine.flush(1, emulator);
+    const auto* begin = first.images.empty()
+                            ? nullptr
+                            : std::get_if<ckm::proto::ImageAddBegin>(&first.images.front());
+    CK_CHECK(begin != nullptr);
+    if (begin == nullptr) return;
+    const std::uint64_t original_id = begin->id;
+
+    // The next frame: same spot, same size, different pixels (green now).
+    emulator.feed_output("\x1b[2;3H\x1bPq#0;2;0;100;0!8~-!8~\x1b\\");
+    const DiffEngine::TerminalTick second = engine.flush(1, emulator);
+    CK_CHECK(!second.images.empty());
+    bool any_remove = false;
+    const ckm::proto::ImageAddBegin* readd = nullptr;
+    const ckm::proto::ImagePlace* replace = nullptr;
+    for (const ckm::proto::Message& op : second.images) {
+        if (std::holds_alternative<ckm::proto::ImageRemove>(op)) any_remove = true;
+        if (const auto* b = std::get_if<ckm::proto::ImageAddBegin>(&op)) readd = b;
+        if (const auto* p = std::get_if<ckm::proto::ImagePlace>(&op)) replace = p;
+    }
+    CK_CHECK(!any_remove);
+    CK_CHECK(readd != nullptr);
+    CK_CHECK(replace != nullptr);
+    if (readd != nullptr) CK_CHECK(readd->id == original_id);
+    if (replace != nullptr) CK_CHECK(replace->id == original_id);
+
+    // And attach_images now serializes the CURRENT frame under that id: a
+    // client attaching mid-animation is given the pixels the watching
+    // clients hold, not the frame before.
+    bool attach_readds_same_id = false;
+    for (const ckm::proto::Message& op : engine.attach_images(1))
+        if (const auto* b = std::get_if<ckm::proto::ImageAddBegin>(&op))
+            attach_readds_same_id = b->id == original_id;
+    CK_CHECK(attach_readds_same_id);
+
+    // A frame where nothing was redrawn still says nothing.
+    CK_CHECK(engine.flush(1, emulator).images.empty());
+}
+
 CK_TEST(clearing_the_screen_removes_the_picture_from_the_wire) {
     ckv::term::TerminalEmulator emulator = sixel_emulator();
     DiffEngine engine;

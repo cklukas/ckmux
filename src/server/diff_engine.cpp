@@ -344,6 +344,7 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
     // a client's picture memory shrinks before it grows.
     std::vector<bool> kept(believed_rasters_.size(), false);
     std::vector<std::size_t> matched(current.size(), SIZE_MAX);
+    std::vector<bool> replaced(current.size(), false);
     for (std::size_t index = 0; index < current.size(); ++index) {
         if (current[index].image == nullptr) continue;
         for (std::size_t believed = 0; believed < believed_rasters_.size(); ++believed) {
@@ -351,6 +352,34 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
             if (believed_rasters_[believed].image.get() == current[index].image.get()) {
                 kept[believed] = true;
                 matched[index] = believed;
+                break;
+            }
+        }
+    }
+    // Second pass: a picture standing exactly where a believed one stands is
+    // the same PLACEMENT with new pixels — an animation frame — not a
+    // departure and an arrival. It keeps its wire id and its pixels travel
+    // again under it; crucially, NO Remove is sent. Remove-then-Add was how
+    // every animation frame put a blank where the picture stood: the new
+    // pixels are megabytes and cross the socket in many reads, the Remove is
+    // a few bytes and crossed first, and every client repaint between the
+    // two painted the fallback into the hole — a reader watching
+    // ckvision_spin in a pane saw the picture blink off at every frame
+    // (field report, 2026-08-19). Under one id the mirror keeps showing the
+    // old pixels until the Place that swaps them, which is the atomicity the
+    // child's own synchronized-output bracket already asked for.
+    for (std::size_t index = 0; index < current.size(); ++index) {
+        if (matched[index] != SIZE_MAX || current[index].image == nullptr) continue;
+        for (std::size_t believed = 0; believed < believed_rasters_.size(); ++believed) {
+            if (kept[believed]) continue;
+            const BelievedRaster& entry = believed_rasters_[believed];
+            if (entry.anchor.x == current[index].anchor.x &&
+                entry.anchor.y == current[index].anchor.y &&
+                entry.cell_extent.width == current[index].cell_extent.width &&
+                entry.cell_extent.height == current[index].cell_extent.height) {
+                kept[believed] = true;
+                matched[index] = believed;
+                replaced[index] = true;
                 break;
             }
         }
@@ -372,6 +401,18 @@ std::vector<proto::Message> TerminalDiffer::flush_images(TerminalId id,
         if (raster.image == nullptr) continue;
         if (matched[index] != SIZE_MAX) {
             BelievedRaster entry = believed_rasters_[matched[index]];
+            if (replaced[index]) {
+                // New pixels under the old id: the whole payload again, then
+                // the Place that makes them current. The believed image is
+                // swapped too — it is what attach_images serializes, and a
+                // client attaching now must be sent the pixels the watching
+                // clients will hold after this tick, not the frame before.
+                entry.image = raster.image;
+                append_image_payload(ops, entry.wire_id, *entry.image);
+                ops.push_back(place_of(id, entry.wire_id, entry.anchor, entry.cell_extent));
+                next.push_back(std::move(entry));
+                continue;
+            }
             const bool moved = entry.anchor.x != raster.anchor.x ||
                                entry.anchor.y != raster.anchor.y ||
                                entry.cell_extent.width != raster.cell_extent.width ||
