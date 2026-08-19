@@ -567,11 +567,27 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
 
     session.on_attached = [&client, &session, &asked_for_the_first_terminal](std::uint64_t id) {
         if (client == nullptr) return;
+        // Asked BEFORE the state moves and before the fresh list arrives:
+        // "was somebody already watching this?" is what tells a reader they
+        // have just taken a session from another client rather than picked up
+        // an idle one (WP-14). A moment later the answer is yes either way,
+        // because by then the somebody is them.
+        const bool took_it_over = client->session_shows_attached(id);
         // The name comes from the list rather than the attach: a client that
         // attached from a picker already has it, and one that did not will get
         // it with the next list. Zero would be a lie either way — it is
         // watching this session now.
         client->set_attached_session(id, client->session_name(id));
+        if (took_it_over) {
+            // Said on this side too, not only on the side that lost it: latest
+            // client wins with no prompt and no confirmation (plans/03), so
+            // the only thing that tells a reader they displaced somebody is
+            // this line. Not persistent — they are looking at the session they
+            // asked for, and nothing is missing from their screen.
+            const std::string name = client->session_name(id);
+            client->notify(name.empty() ? std::string("Took over this session")
+                                        : "Took over '" + name + "'");
+        }
         // The next empty-session check belongs to THIS attachment: a session
         // with nothing in it gets a terminal, and one with programs in it is
         // left exactly as its reader left it.
@@ -592,12 +608,21 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         // — a takeover, a session ended under it — leaves it running with
         // nothing to watch, which is a state it can be in perfectly well: the
         // commands that need a session go grey and the reader can pick another.
-        (void)reason;
-        (void)text;
         if (detached) {
+            // On its way out at the reader's own request: the farewell line
+            // below is printed once ckVision has given the terminal back, and
+            // a message on a screen that is about to be torn down is one
+            // nobody can read.
             app.request_quit();
             return;
         }
+        // Everything else happened TO this reader, and until WP-14 it was
+        // silent: the windows vanished, the desktop went empty, and the only
+        // account of why was a `text` this loop threw away. It cannot go to
+        // stderr, for the reason above — so it goes where a message that must
+        // not interrupt belongs, a notification over the desktop. The wording
+        // is `ClientApp::report_detached`'s, beside ckmux's other sentences.
+        if (client != nullptr) client->report_detached(reason, text);
         if (client != nullptr) {
             client->forget_terminals();
             client->set_attached_session(0, {});
@@ -616,27 +641,6 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     };
 
     // Anything worth telling the reader on the way out, printed once the
-
-    // The View readouts' server half (WP-39): the client says whether anybody
-    // is watching, the session owns the standing wish and restates it on
-    // every Attached — because the server's subscription is per connection
-    // and this client reconnects.
-    options.client.watch_stats = [&session](bool on) { session.set_stats_watched(on); };
-
-    // A request the server could not honour, in front of the reader who made
-    // it. The client already sent one of eight `Error`s back for every
-    // impossible request; what was missing was anybody to show it.
-    session.on_stats = [&client](RemoteTerminalSubsession& remote,
-                                 const proto::TermStats& stats) {
-        // Onto that terminal's window frame, formatted per the View toggles.
-        // The client cannot tell these numbers from its own local sampler's,
-        // which is the seam discipline (plans/12 WP-39).
-        if (client != nullptr) client->receive_terminal_stats(remote, stats);
-    };
-    session.on_error = [&client](const proto::Error& error) {
-        if (client == nullptr) return;
-        client->show_server_error(error.code, error.context, error.human);
-    };
     // application has finished with the terminal.
     std::string farewell;
     std::int64_t next_reconnect_nanos = 0;
