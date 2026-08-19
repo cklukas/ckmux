@@ -47,6 +47,27 @@ ckVision (what exists vs. what we add) is in
   frame, so a hostile child cannot draw into the chrome
   ([02-architecture.md](02-architecture.md) security posture). A user rename
   (M3) will pin the caption and stop it following the child.
+- **Second-to-last row — window bar** (WP-32, over ckVision's
+  `WindowSwitcherBar`): every open terminal listed by the caption it already
+  carries, the current one highlighted. Click an entry to activate, raise and
+  focus that terminal; right-click one for `Maximize`/`Restore`,
+  `Move / Resize`, `Move to session…` and `Close` — each acting on the
+  terminal whose entry was clicked, never on the one in front. That is not a
+  detail of the wiring: every standard window command reads `active_window()`,
+  so a `Close` dispatched as a command from a background row would close the
+  foreground terminal, which is why ckVision's `WindowSwitcherTarget::bind`
+  exists and why every entry here goes through it.
+  **On screen exactly while more than one terminal is open** — with one there
+  is nothing to switch between, and the row would spend a line of the desktop
+  repeating that window's own title bar. Hiding it gives the line back: the
+  content area is recomputed, so a maximized terminal grows into the row and
+  `Settings ▸ General…` still gets the 22 rows an 80×24 terminal leaves it.
+  It is **not** a second bottom dock — `Desktop` holds exactly one docked view
+  per edge — but the upper half of a `ui::Column` holding the bar and the
+  footer, docked as one. A Column's vertical hint sums its children, so
+  `content_area()` and therefore every maximized window's bounds exclude both
+  rows by the arithmetic that was already there; nothing declares the bar
+  uncoverable.
 - **Last row — footer** (permanent): left side = context-sensitive hotkey
   hints; right side = status (session name · terminal count, prefix-pending
   indicator, bell/activity flags).
@@ -623,7 +644,8 @@ Nearly every surface above is a stock ckVision widget; ckmux mostly writes
 | ckmux surface | ckVision mechanism | ckmux adds |
 |---|---|---|
 | Menu bar | `MenuBar` + `CommandPresentation` items, mnemonics, accelerator hints | menu tree content; dynamic "Move to Session ▸" submenu |
-| Footer | `StatusLine` docked via `Desktop::dock_bottom` (priorities, dimming, clickable, hint provider) | context hint sets; status segments (session · count · flags) |
+| Footer | `StatusLine`, the lower half of the `ui::Column` docked via `Desktop::dock_bottom` (priorities, dimming, clickable, hint provider) | context hint sets; status segments (session · count · flags) |
+| Window bar | `WindowSwitcherBar` (row layout, elision, click/right-click, liveness-guarded `WindowSwitcherTarget`), the Column's upper half | which windows are listed (terminals only); the caption as label; activate = raise + focus; the context menu's four entries; showing it only past one terminal |
 | Desktop & windows | `Desktop` (z-order, activate, cycling, `select_by_number` 1-9, tile/cascade) + `Window` (drag move/resize, keyboard move/resize modes, zoom, vetoable close, min sizes, frame overlays) | layout ops routed through the server instead of applied locally |
 | Terminal windows | `TerminalView` fed by a ckmux mirror subsession | the mirror; prefix hook; copy-mode extensions (search, vi keys) |
 | Session picker | dialog + `Table`/`ListView` (type-ahead, sortable) | the session list model over the protocol |

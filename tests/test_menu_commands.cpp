@@ -227,6 +227,13 @@ struct Reader {
         press("\x1b[<0;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "M");
         press("\x1b[<0;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "m");
     }
+
+    // And the right button (SGR button 2), which is what a reader's terminal
+    // sends for a context-menu press.
+    void right_click(int row, int col) {
+        press("\x1b[<2;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "M");
+        press("\x1b[<2;" + std::to_string(col + 1) + ";" + std::to_string(row + 1) + "m");
+    }
 };
 
 }  // namespace
@@ -491,6 +498,78 @@ CK_TEST(restarting_ckmux_restores_the_session_without_gaining_a_terminal) {
     second.press("\x1b");
     second.press("\x02" "d");
     CK_CHECK(second.gone());
+
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(a_second_terminal_puts_a_window_bar_on_screen_above_the_footer) {
+    // WP-32 on a real screen, in a real ckmux, with a real mouse. The headless
+    // suite pins the geometry and the targeting; this pins the one thing it
+    // cannot — that the reader SEES the row, in the place they look for it.
+    // A bar composed correctly and never drawn is exactly the class of failure
+    // this file exists for.
+    const std::filesystem::path socket = private_socket("windowbar");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket));
+    CK_CHECK(reader.sees("Terminal 1"));
+
+    // One terminal is nothing to switch between, so the row above the footer is
+    // still bare desktop.
+    {
+        const std::vector<std::string> lines = reader.rows();
+        CK_CHECK(lines.size() >= 2U);
+        if (lines.size() < 2U) return;
+        CK_CHECK(lines[lines.size() - 2].find("Terminal 1") == std::string::npos);
+    }
+
+    reader.press("\x02" "c");
+    CK_CHECK(reader.sees("Terminal 2"));
+
+    // Both captions, on one row, immediately above the footer — which is the
+    // whole of "positioned above the existing footer".
+    const std::vector<std::string> lines = reader.rows();
+    CK_CHECK(lines.size() >= 2U);
+    if (lines.size() < 2U) return;
+    const std::size_t bar_row = lines.size() - 2;
+    const std::size_t at = lines[bar_row].find("Terminal 1");
+    CK_CHECK(at != std::string::npos);
+    CK_CHECK(lines[bar_row].find("Terminal 2") != std::string::npos);
+    if (at == std::string::npos) return;
+    // A string index rather than `find_cell`, because the search has to be
+    // confined to THIS row: "Terminal 1" is also written on the window's own
+    // title bar, and find_cell would answer with that one. Safe here because
+    // the row is ASCII, where an index and a column are the same number.
+    const int row = static_cast<int>(bar_row);
+    const int on_first = static_cast<int>(at) + 3;
+
+    // Right-click the row of the terminal that is NOT in front. The menu is the
+    // reader's own words for what can be done to it.
+    reader.right_click(row, on_first);
+    CK_CHECK(reader.sees("Maximize"));
+    CK_CHECK(reader.screen().find("Close") != std::string::npos);
+    CK_CHECK(reader.screen().find("Move to session") != std::string::npos);
+    // Dismissed by pressing somewhere else, the way any menu is: the bar's own
+    // empty run past the last entry will do.
+    reader.click(row, 100);
+
+    // And a plain click on that row brings the terminal forward and hands it
+    // the keyboard — which is what `^B x` then proves, by naming the window it
+    // is about.
+    reader.click(row, on_first);
+    reader.press("\x02" "x");
+    CK_CHECK(reader.sees("Close terminal"));
+    CK_CHECK(reader.screen().find("\"Terminal 1\" is still") != std::string::npos);
+    CK_CHECK(reader.screen().find("\"Terminal 2\" is still") == std::string::npos);
+    reader.press("\x1b");  // nothing closed; the click was the point
+
+    reader.press("\x02" "d");
+    CK_CHECK(reader.gone());
 
     end_process(server);
     forget(socket);

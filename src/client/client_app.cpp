@@ -203,6 +203,14 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
 }
 
 ClientApp::~ClientApp() {
+    // First, before a single member is torn down: this expires every callback
+    // the DESKTOP is holding on this client's behalf — the switcher's four
+    // providers, the menu actions bound to a window, and the window-change
+    // observer. The desktop outlives this object, so the alternative is a
+    // provider reading members that are already gone. Dropped here rather than
+    // left to the member's own destruction, whose place in the order would then
+    // be load-bearing and silently so.
+    alive_.reset();
     if (which_key_timer_ != 0) app_.cancel_timer(which_key_timer_);
     if (title_timer_ != 0) app_.cancel_timer(title_timer_);
     if (layout_timer_ != 0) app_.cancel_timer(layout_timer_);
@@ -483,12 +491,14 @@ void ClientApp::build_chrome() {
                                                std::move(window_menu), std::move(settings_menu),
                                                std::move(help_menu)},
                                      .status_items = {},
-                                     // ckmux composes every footer item from
-                                     // the current context, so there is
-                                     // nothing to hand over here — but the
-                                     // bar is permanent chrome and must exist
-                                     // before the first frame.
-                                     .always_dock_status_line = true});
+                                     // No status line from the shell, which
+                                     // would dock one on its own: ckmux's
+                                     // footer is not the bottom dock any more.
+                                     // The window switcher bar sits on top of
+                                     // it (WP-32) and the two are composed
+                                     // below — see there for why that is a
+                                     // Column rather than a second dock.
+                                     .always_dock_status_line = false});
     desktop_ = &shell.desktop();
     // A terminal opened while the reader is working maximized opens maximized
     // too (U4-c), rather than cascading a small window on top of the full-
@@ -504,8 +514,177 @@ void ClientApp::build_chrome() {
     // bypass it — so ckmux's confirmations and pickers are unaffected and no
     // guard of ckmux's own is needed here.
     desktop_->set_maximize_follows_active(true);
-    footer_ = shell.status_line();
+
+    // The bottom chrome, in one piece: the window switcher bar over the footer
+    // (WP-32 / U4-a).
+    //
+    // `Desktop::dock_bottom` holds exactly ONE view per edge — its own header
+    // says docking a second "replaces the first as far as auto-positioning goes,
+    // but does NOT remove it" — so the bar is not a second dock. The two rows
+    // are composed into a `ui::Column` and the Column is what is docked. That
+    // is the right answer rather than the convenient one: a Column's vertical
+    // hint SUMS its children, so the reserved height comes out correct by
+    // itself, and `content_area()` — hence the bounds a maximized window is
+    // zoomed into, and the rect every window is clamped within — already
+    // excludes both rows. Nothing here makes the bar uncoverable; the
+    // arithmetic that was already there does.
+    auto switcher = std::make_unique<w::WindowSwitcherBar>(*desktop_);
+    switcher_ = switcher.get();
+    auto status_line = std::make_unique<w::StatusLine>();
+    footer_ = status_line.get();
+    auto stack = std::make_unique<u::Column>();
+    stack->add_item(std::move(switcher));
+    stack->add_item(std::move(status_line));
+    chrome_stack_ = desktop_->dock_bottom(std::move(stack));
+    install_window_switcher(*switcher_);
     install_clock();
+}
+
+void ClientApp::install_window_switcher(w::WindowSwitcherBar& bar) {
+    // Every provider below is held by a view the DESKTOP owns, and the desktop
+    // outlives this client, so each is guarded by this client's own liveness
+    // rather than trusting a bare `this` (see `alive_`).
+    const std::weak_ptr<void> alive = alive_;
+
+    // ckmux's terminal windows, and only those.
+    bar.set_window_source([this, alive] {
+        return alive.expired() ? std::vector<w::Window*>{} : switcher_windows();
+    });
+    // The caption the window already carries — which is ckmux's own numbering
+    // until a child claims a title with OSC 0/2 and the child's title
+    // afterwards (`open_terminal` and `refresh_terminal_titles` between them),
+    // and the COPY badge while a reader is reading that window's history.
+    // Read back off the window rather than re-derived, so the row and the
+    // window's own title bar cannot come to disagree.
+    bar.set_label_provider([](w::Window& window) { return window.title(); });
+    // Click = activate and raise, which is what `Desktop::activate` is, plus
+    // the focus: a reader who picks a terminal off the bar means to type into
+    // it, and leaving the keyboard where it was would raise a window that then
+    // ignored them.
+    bar.set_activate_action([this, alive](w::Window& window) {
+        if (alive.expired() || desktop_ == nullptr) return;
+        desktop_->activate(&window);
+        focus_active_terminal();
+        refresh_footer();
+    });
+    bar.set_context_menu_provider([this, alive](const w::WindowSwitcherTarget& target) {
+        return alive.expired() ? std::vector<w::MenuItem>{} : switcher_menu(target);
+    });
+    bar.set_help_context_key("ckmux.switcher");
+
+    // The bar keeps its own list current through the desktop's window-change
+    // notification — its `Desktop` constructor subscribed for us, which is why
+    // nothing here polls. This second subscription answers ckmux's own
+    // question, whether the row is there AT ALL, and rides the same signal for
+    // the same reason: nothing invalidates a view that lists windows it does
+    // not contain. The weak-lifetime overload drops it when this client goes.
+    if (desktop_ != nullptr)
+        desktop_->subscribe_window_change(
+            [this](w::Desktop::WindowChange, w::Window&) { sync_window_switcher(); }, alive_);
+    sync_window_switcher();
+}
+
+std::vector<ckv::widgets::Window*> ClientApp::switcher_windows() const {
+    std::vector<w::Window*> listed;
+    if (desktop_ == nullptr) return listed;
+    listed.reserve(terminal_windows_.size());
+    // Asked of the DESKTOP rather than of `terminal_windows_`, and in the
+    // desktop's own insertion order: that is the order `^B n` cycles and the
+    // order the captions are numbered in, so the bar reads left to right the
+    // way the keyboard walks. It also keeps a window that has already left the
+    // desktop out of the list while the map still names it — `forget_terminals`
+    // removes the windows one at a time and clears the map afterwards, and each
+    // removal notifies while the rest are still in there.
+    for (w::Window* window : desktop_->windows())
+        if (terminal_shown_by(window) != nullptr) listed.push_back(window);
+    return listed;
+}
+
+std::vector<ckv::widgets::MenuItem> ClientApp::switcher_menu(
+    const w::WindowSwitcherTarget& target) {
+    std::vector<w::MenuItem> items;
+    w::Window* const window = target.window();
+    if (window == nullptr || desktop_ == nullptr) return items;
+    const std::weak_ptr<void> alive = alive_;
+
+    // EVERY row is bound to the window whose row was clicked, through
+    // `WindowSwitcherTarget::bind` — never wired as `MenuItem::command`. Every
+    // standard window command reads `active_window()`, which when a reader
+    // right-clicks a BACKGROUND row is by definition the window they did not
+    // point at: "Close" there would close the foreground terminal, silently
+    // and destructively. That is the whole reason the target exists (U4-a), and
+    // `bind` also makes a window that ends while the menu stands open a no-op
+    // rather than a reference to freed storage.
+    items.push_back(w::MenuItem::action(window->zoomed() ? "&Restore" : "Ma&ximize",
+                                        target.bind([this, alive](w::Window& clicked) {
+                                            if (alive.expired() || desktop_ == nullptr) return;
+                                            clicked.toggle_zoom(desktop_->content_area());
+                                        }))
+                        .with_help("ckmux.switcher"));
+    items.push_back(w::MenuItem::action("&Move / Resize",
+                                        target.bind([this, alive](w::Window& clicked) {
+                                            if (alive.expired() || desktop_ == nullptr) return;
+                                            // Raised first, unlike the two
+                                            // above: keyboard move mode is a
+                                            // reader steering a window with the
+                                            // arrow keys, and one still behind
+                                            // another would slide about out of
+                                            // sight.
+                                            desktop_->activate(&clicked);
+                                            focus_active_terminal();
+                                            clicked.enter_move_mode();
+                                        }))
+                        .with_help("ckmux.switcher"));
+    items.push_back(w::MenuItem::separator());
+
+    // Same availability as `Terminal ▸ Move terminal…`, and stated the same
+    // way: somewhere else for the program to keep running requires there to BE
+    // a somewhere else, which M1's single process is not.
+    const bool can_move = static_cast<bool>(options_.move_terminal) && attached_session_ != 0;
+    w::MenuItem move_out = w::MenuItem::action("Move to &session…",
+                                               target.bind([this, alive](w::Window& clicked) {
+                                                   if (alive.expired()) return;
+                                                   show_move_terminal_dialog(
+                                                       terminal_shown_by(&clicked));
+                                               }));
+    if (!can_move)
+        move_out = move_out.with_enabled(false).with_disabled_reason(
+            "this terminal is not in a server session");
+    items.push_back(move_out.with_help("ckmux.switcher"));
+    items.push_back(w::MenuItem::separator());
+
+    // `close()`, not `remove_window()`: the window's own `close_request` is
+    // what puts the confirmation in front of the reader, and being asked about
+    // the terminal they pointed at is the entire point of this menu.
+    items.push_back(
+        w::MenuItem::action("&Close", target.bind([](w::Window& clicked) { clicked.close(); }))
+            .with_help("ckmux.switcher"));
+    return items;
+}
+
+void ClientApp::sync_window_switcher() {
+    if (switcher_ == nullptr || chrome_stack_ == nullptr || desktop_ == nullptr) return;
+    // "When more than one window is open", read literally. With one terminal
+    // there is nothing to switch BETWEEN, and the row would spend a line of the
+    // reader's desktop repeating what that window's own title bar already says.
+    // On an 80×24 terminal that line is one of the 22 a menu bar and a footer
+    // leave — the exact budget `Settings ▸ General…` is drawn to fit
+    // (plans/06-ui-design.md), which it therefore still gets.
+    const bool wanted = switcher_windows().size() > 1U;
+    if (switcher_->visible() == wanted) return;
+    switcher_->set_visible(wanted);
+    // And the desktop has to be TOLD. `content_area()` reads the docked view's
+    // hint live, so it answers correctly the moment the row goes — but nothing
+    // re-runs the pass that re-places the dock, re-clamps every window and
+    // re-fills the zoomed ones, because `View::set_visible` invalidates without
+    // raising `size_hint_changed()` even though a container's aggregate hint
+    // skips invisible children. This is exactly the docked-view-changed-height
+    // path ckVision already owns and already exposes
+    // (`Desktop::on_child_size_hint_changed` → `on_resized`), so this is the
+    // library's own seam called by hand rather than geometry recomputed here —
+    // the one line missing upstream is `View::set_visible` raising the change,
+    // which is a ckVision fix to make, not a rule for ckmux to keep.
+    desktop_->on_child_size_hint_changed(*chrome_stack_);
 }
 
 ckv::widgets::MenuBar* ClientApp::menu_bar() {
@@ -2015,6 +2194,16 @@ void ClientApp::populate_help() {
                                      "running, exactly as they would without ckmux.",
                                  {{"ckmux.terminal", "Terminal window"},
                                   {"ckmux.prefix", "The prefix key"}}});
+    help_.add_topic(
+        "ckmux.switcher",
+        w::HelpTopic{"Window bar",
+                     "The row above the footer lists every open terminal by its caption, and "
+                     "appears as soon as there is more than one — with a single terminal there "
+                     "is nothing to switch between.\n\nClick an entry to bring that terminal "
+                     "forward and start typing into it. Right-click one for what can be done to "
+                     "it: Maximize or Restore, Move / Resize, Move to session…, and Close. Each "
+                     "acts on the terminal whose entry you clicked, not on the one in front.",
+                     {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
 }
 
 }  // namespace ckm::client

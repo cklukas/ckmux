@@ -8,8 +8,10 @@
 #if !defined(_WIN32)
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "client/client_app.hpp"
 #include "cvision/term/headless_terminal.hpp"
@@ -23,6 +25,7 @@
 #include "cvision/widgets/common_components.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/terminal_view.hpp"
+#include "cvision/widgets/window_switcher_bar.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -102,6 +105,65 @@ std::size_t terminal_window_count(ClientApp& client) {
     for (ckv::widgets::Window* window : client.desktop().windows())
         if (dynamic_cast<ckv::widgets::TerminalView*>(window->content()) != nullptr) ++count;
     return count;
+}
+
+// --- WP-32: the window switcher bar ----------------------------------------
+
+// Which window is frontmost. `children()` holds the docked chrome and any
+// popup too, so the answer is the last child that is a window — the same thing
+// ckVision's own removal path looks for.
+ckv::widgets::Window* topmost_window(ClientApp& client) {
+    const auto& children = client.desktop().children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it)
+        if (auto* const window = dynamic_cast<ckv::widgets::Window*>(it->get())) return window;
+    return nullptr;
+}
+
+// The dropdown a right press on the bar left standing, if any. A context menu
+// is a desktop popup like the calendar is.
+ckv::widgets::DropdownMenu* dropped_menu(ClientApp& client) {
+    for (ckv::ui::View* popup : client.desktop().popups())
+        if (auto* const menu = dynamic_cast<ckv::widgets::DropdownMenu*>(popup)) return menu;
+    return nullptr;
+}
+
+// The ABSOLUTE cell in the middle of one switcher entry — where a reader's
+// pointer would be. `drawn_entries()` answers in the bar's own local columns
+// and a mouse report carries absolute ones, so the bar's own placement is what
+// converts between them rather than an assumption about where it was docked.
+std::optional<ckv::Point> switcher_cell(ClientApp& client, std::size_t index) {
+    const ckv::Rect where = client.window_switcher().absolute_bounds();
+    for (const ckv::widgets::WindowSwitcherBar::DrawnEntry& drawn :
+         client.window_switcher().drawn_entries())
+        if (drawn.index == index)
+            return ckv::Point{where.x + drawn.x + drawn.width / 2, where.y};
+    return std::nullopt;
+}
+
+// A real click on one entry: press and release on its own cells, dispatched
+// through the application exactly as a host terminal's mouse report arrives.
+// Returns whether there was such an entry to click at all.
+template <typename FixtureType>
+bool switcher_click(FixtureType& f, std::size_t index) {
+    const std::optional<ckv::Point> cell = switcher_cell(f.client, index);
+    if (!cell) return false;
+    (void)f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Left, *cell,
+                                         std::nullopt, ckv::Modifier::None});
+    (void)f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Up, ckv::MouseButton::Left, *cell,
+                                         std::nullopt, ckv::Modifier::None});
+    f.app.step(0);
+    return true;
+}
+
+// And a right press, which is the whole gesture: the menu opens on the press.
+template <typename FixtureType>
+bool switcher_right_press(FixtureType& f, std::size_t index) {
+    const std::optional<ckv::Point> cell = switcher_cell(f.client, index);
+    if (!cell) return false;
+    (void)f.app.dispatch(ckv::MouseEvent{ckv::MouseAction::Down, ckv::MouseButton::Right, *cell,
+                                         std::nullopt, ckv::Modifier::None});
+    f.app.step(0);
+    return true;
 }
 
 // Walks the focus to the combo box currently showing `showing`, then chooses
@@ -210,7 +272,16 @@ CK_TEST(the_client_opens_with_a_menu_bar_a_footer_and_one_terminal) {
     // Session, Terminal, Window, Settings, Help — no View menu: the colour
     // theme is a stored setting, chosen in Settings ▸ General…
     CK_CHECK(bar->menus().size() == 5U);
-    CK_CHECK(f.client.desktop().bottom_dock() == &f.client.footer());
+    // The footer is no longer the bottom dock on its own: the window switcher
+    // bar sits on top of it (WP-32), and a Desktop holds exactly one docked
+    // view per edge — so the two rows are composed into a Column and THAT is
+    // what is docked. Both are still there, and both are still chrome.
+    CK_CHECK(f.client.desktop().bottom_dock() != nullptr);
+    CK_CHECK(f.client.footer().parent() == f.client.desktop().bottom_dock());
+    CK_CHECK(f.client.window_switcher().parent() == f.client.desktop().bottom_dock());
+    // With one terminal there is nothing to switch between, so the row is not
+    // on screen and the desktop keeps the line.
+    CK_CHECK(!f.client.window_switcher().visible());
     CK_CHECK(f.client.desktop().windows().size() == 1U);
     CK_CHECK(f.client.desktop().windows()[0]->title() == "Terminal 1");
     CK_CHECK(dynamic_cast<ckv::widgets::TerminalView*>(f.client.desktop().windows()[0]->content()) != nullptr);
@@ -545,6 +616,249 @@ CK_TEST(with_nothing_maximized_a_new_terminal_cascades_exactly_as_it_always_did)
     CK_CHECK(second->bounds().x > first_bounds.x);
     CK_CHECK(second->bounds().y > first_bounds.y);
     CK_CHECK(first->bounds() == first_bounds);
+}
+
+// --- WP-32: the window switcher bar -----------------------------------------
+
+CK_TEST(the_switcher_bar_lists_every_terminal_by_its_real_caption) {
+    Fixture f;
+    f.app.step(0);
+    // One terminal is nothing to switch BETWEEN, so the row is not there and
+    // the desktop keeps the line.
+    CK_CHECK(!f.client.window_switcher().visible());
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.client.window_switcher().visible());
+    CK_CHECK(f.client.window_switcher().entries().size() == 2U);
+    if (f.client.window_switcher().entries().size() != 2U) return;
+    CK_CHECK(f.client.window_switcher().entries()[0].window == f.client.desktop().windows()[0]);
+    // ckmux's own numbering, read back off the window rather than re-derived —
+    // the caption the reader is looking at IS the label.
+    CK_CHECK(f.client.window_switcher().entries()[0].label == "Terminal 1");
+    CK_CHECK(f.client.window_switcher().entries()[1].label == "Terminal 2");
+    // Exactly one row says which terminal the reader is in, and it is the one
+    // that just opened.
+    CK_CHECK(!f.client.window_switcher().entries()[0].active);
+    CK_CHECK(f.client.window_switcher().entries()[1].active);
+
+    // A third, so the list is a list rather than a pair.
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.client.window_switcher().entries().size() == 3U);
+    CK_CHECK(f.client.window_switcher().entries()[2].label == "Terminal 3");
+
+    // A terminal ending — the way an attached client's window goes, the server
+    // having said so — takes its row with it, and the ones either side close up.
+    const ckv::term::TerminalSubsession* const closing =
+        launched_terminal_of(f.client.desktop().windows()[1]);
+    CK_CHECK(closing != nullptr);
+    if (closing == nullptr) return;
+    f.client.close_window_for_terminal(*closing);
+    f.app.step(0);
+    CK_CHECK(f.client.window_switcher().entries().size() == 2U);
+    CK_CHECK(f.client.window_switcher().entries()[0].label == "Terminal 1");
+    CK_CHECK(f.client.window_switcher().entries()[1].label == "Terminal 3");
+
+    // And a rename reaches it. The caption follows the child (OSC 2) and the row
+    // follows the caption — through the desktop's title notification, not
+    // through a sweep of the window set that the bar would otherwise have to do
+    // on every frame.
+    auto* const renamed_view =
+        dynamic_cast<ckv::widgets::TerminalView*>(f.client.desktop().windows()[1]->content());
+    CK_CHECK(renamed_view != nullptr);
+    if (renamed_view == nullptr) return;
+    renamed_view->session().feed_output("\x1b]2;vim: plans/06\a");
+    f.clock.advance(200'000'000);
+    f.app.step(f.clock.now_nanos());
+    CK_CHECK(f.client.desktop().windows()[1]->title() == "vim: plans/06");
+    CK_CHECK(f.client.window_switcher().entries()[1].label == "vim: plans/06");
+}
+
+CK_TEST(a_maximized_terminal_leaves_the_switcher_bars_row_uncovered) {
+    // U4-a's own done-when, in ckmux's chrome and with the numbers written out.
+    // 80x24 is a real size to run a multiplexer in: one row of menu bar, one of
+    // switcher bar, one of footer, and what is left is the desktop.
+    Fixture f;
+    f.terminal.resize(Size{80, 24});
+    f.app.step(0);
+    // One terminal, no bar: the 22 rows plans/06 promises, which is the budget
+    // Settings ▸ General… is drawn to fit.
+    CK_CHECK((f.client.desktop().content_area() == ckv::Rect{0, 1, 80, 22}));
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    CK_CHECK(f.client.window_switcher().visible());
+    // The Column's vertical hint sums its children, so composing the two rows
+    // IS the reservation — no second dock slot, and no arithmetic of ckmux's
+    // own to keep in step with it.
+    CK_CHECK((f.client.desktop().content_area() == ckv::Rect{0, 1, 80, 21}));
+    CK_CHECK((f.client.window_switcher().absolute_bounds() == ckv::Rect{0, 22, 80, 1}));
+    CK_CHECK((f.client.footer().absolute_bounds() == ckv::Rect{0, 23, 80, 1}));
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    ckv::widgets::Window* const zoomed = f.client.desktop().active_window();
+    CK_CHECK(zoomed != nullptr);
+    if (zoomed == nullptr) return;
+    CK_CHECK(zoomed->zoomed());
+    CK_CHECK((zoomed->bounds() == ckv::Rect{0, 1, 80, 21}));
+    // The whole point of the arrangement: the maximized terminal stops one row
+    // short of the bar, so the bar is still readable and still clickable.
+    CK_CHECK(zoomed->bounds().bottom() == f.client.window_switcher().absolute_bounds().y);
+
+    // And dropping back to one terminal gives the row back to the desktop — the
+    // maximized window grows into it rather than leaving a blank line behind.
+    const ckv::term::TerminalSubsession* const closing =
+        launched_terminal_of(f.client.desktop().windows()[0]);
+    CK_CHECK(closing != nullptr);
+    if (closing == nullptr) return;
+    f.client.close_window_for_terminal(*closing);
+    f.app.step(0);
+    CK_CHECK(!f.client.window_switcher().visible());
+    CK_CHECK((f.client.desktop().content_area() == ckv::Rect{0, 1, 80, 22}));
+    CK_CHECK((zoomed->bounds() == ckv::Rect{0, 1, 80, 22}));
+}
+
+CK_TEST(clicking_a_row_on_the_switcher_bar_brings_that_terminal_forward) {
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    ckv::widgets::Window* const second = f.client.desktop().windows()[1];
+    CK_CHECK(f.client.desktop().active_window() == second);
+
+    CK_CHECK(switcher_click(f, 0));
+    CK_CHECK(f.client.desktop().active_window() == first);
+    // Raised, not merely marked active.
+    CK_CHECK(topmost_window(f.client) == first);
+    // And the keyboard went with it, which is ckmux's own addition to what
+    // "activate" means: a reader who picks a terminal off the bar means to type
+    // into it, and a raise that left the keys behind would ignore them.
+    CK_CHECK(f.app.focused() == first->content());
+    CK_CHECK(f.client.context() == Context::Terminal);
+    CK_CHECK(f.client.window_switcher().entries()[0].active);
+    CK_CHECK(!f.client.window_switcher().entries()[1].active);
+
+    // And back, so this is the bar acting rather than the one click happening
+    // to agree with where activation already was.
+    CK_CHECK(switcher_click(f, 1));
+    CK_CHECK(f.client.desktop().active_window() == second);
+    CK_CHECK(topmost_window(f.client) == second);
+    CK_CHECK(f.app.focused() == second->content());
+}
+
+CK_TEST(a_right_click_on_the_switcher_bar_acts_on_that_window_not_the_active_one) {
+    // The correctness point U4-a exists for. Command dispatch has no target:
+    // every standard window handler reads active_window(), so a Maximize chosen
+    // from a BACKGROUND row would maximize the foreground terminal — and Close
+    // would close it. Every row here is bound to the window whose row it is.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    ckv::widgets::Window* const second = f.client.desktop().windows()[1];
+    CK_CHECK(f.client.desktop().active_window() == second);
+
+    CK_CHECK(switcher_right_press(f, 0));
+    // Right-clicking a background row does not take the reader to it.
+    CK_CHECK(f.client.desktop().active_window() == second);
+    ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
+    CK_CHECK(menu != nullptr);
+    if (menu == nullptr) return;
+    // What a reader is offered, in the order they are offered it — the taskbar
+    // vocabulary the request asked for.
+    CK_CHECK(menu->items().size() == 6U);
+    if (menu->items().size() != 6U) return;
+    CK_CHECK(menu->items()[0].label() == "Ma&ximize");
+    CK_CHECK(menu->items()[1].label() == "&Move / Resize");
+    CK_CHECK(menu->items()[2].is_separator());
+    CK_CHECK(menu->items()[3].label() == "Move to &session…");
+    CK_CHECK(menu->items()[4].is_separator());
+    CK_CHECK(menu->items()[5].label() == "&Close");
+    // With no server there is nowhere for a program to be moved TO, so that row
+    // is plainly unavailable rather than quietly inert — the same rule
+    // `Terminal ▸ Move terminal…` follows.
+    CK_CHECK(!menu->items()[3].enabled_flag());
+    CK_CHECK(!menu->items()[3].disabled_reason().empty());
+
+    // Maximize, chosen from the BACKGROUND row. Command dispatch would have
+    // maximized `second`, which is the window the reader did not point at.
+    menu->items()[0].action()();
+    f.app.step(0);
+    CK_CHECK(first->zoomed());
+    CK_CHECK(!second->zoomed());
+    CK_CHECK(first->bounds() == f.client.desktop().content_area());
+}
+
+CK_TEST(the_switcher_menu_reads_the_window_its_row_belongs_to_not_the_one_in_front) {
+    // The other half of the same seam, on the wording rather than the effect: a
+    // row's first entry says Restore or Maximize according to THAT window's own
+    // state. Reading the active window would offer to maximize a terminal that
+    // already fills the desktop.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    ckv::widgets::Window* const second = f.client.desktop().windows()[1];
+
+    // Maximize the FIRST terminal and then go back to the second, which leaves
+    // a maximized window in the background and an ordinary one in front.
+    CK_CHECK(switcher_click(f, 0));
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kZoom)));
+    f.app.step(0);
+    CK_CHECK(switcher_click(f, 1));
+    CK_CHECK(f.client.desktop().active_window() == second);
+    CK_CHECK(first->zoomed());
+    CK_CHECK(!second->zoomed());
+
+    CK_CHECK(switcher_right_press(f, 0));
+    ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
+    CK_CHECK(menu != nullptr);
+    if (menu == nullptr || menu->items().size() != 6U) return;
+    CK_CHECK(menu->items()[0].label() == "&Restore");
+    menu->items()[0].action()();
+    f.app.step(0);
+    CK_CHECK(!first->zoomed());
+    CK_CHECK(!second->zoomed());
+}
+
+CK_TEST(closing_from_the_switcher_bar_ends_the_terminal_whose_row_was_clicked) {
+    // The destructive one, which is why `WindowSwitcherTarget::bind` exists at
+    // all: wired as a command, this row would have closed the foreground
+    // terminal — silently, and with a program running in it.
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
+    f.app.step(0);
+    ckv::widgets::Window* const second = f.client.desktop().windows()[1];
+    CK_CHECK(f.client.desktop().active_window() == second);
+
+    CK_CHECK(switcher_right_press(f, 0));
+    ckv::widgets::DropdownMenu* const menu = dropped_menu(f.client);
+    CK_CHECK(menu != nullptr);
+    if (menu == nullptr || menu->items().size() != 6U) return;
+
+    // `close()`, so the window's own veto still runs: /bin/cat is alive in it,
+    // and the reader is asked — about the terminal they pointed at.
+    menu->items()[5].action()();
+    f.app.step(0);
+    CK_CHECK(f.app.is_modal());
+    CK_CHECK(terminal_window_count(f.client) == 2U);
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    f.app.step(0);
+    f.app.step(0);
+    CK_CHECK(terminal_window_count(f.client) == 1U);
+    // The one that went is the one whose row was clicked; the terminal the
+    // reader was actually working in is untouched, and the row nobody needs any
+    // more is gone with it.
+    CK_CHECK(f.client.window_switcher().entries().size() == 1U);
+    if (f.client.window_switcher().entries().size() != 1U) return;
+    CK_CHECK(f.client.window_switcher().entries()[0].window == second);
+    CK_CHECK(!f.client.window_switcher().visible());
 }
 
 CK_TEST(a_terminal_resize_resizes_the_child_endpoint) {

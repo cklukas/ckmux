@@ -34,12 +34,15 @@
 #include "common/config.hpp"
 #include "cvision/term/terminal_subsession.hpp"
 #include "cvision/ui/application.hpp"
+#include "cvision/ui/layout.hpp"
 #include "cvision/ui/standard_roles.hpp"
 #include "cvision/widgets/common_components.hpp"
 #include "cvision/widgets/desktop.hpp"
 #include "cvision/widgets/help_viewer.hpp"
+#include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/status_line.hpp"
 #include "cvision/widgets/window.hpp"
+#include "cvision/widgets/window_switcher_bar.hpp"
 
 namespace ckm::client {
 
@@ -309,6 +312,12 @@ public:
 
     ckv::widgets::Desktop& desktop() noexcept { return *desktop_; }
     ckv::widgets::StatusLine& footer() noexcept { return *footer_; }
+    // The taskbar row over the footer (WP-32). Not a second bottom dock —
+    // `Desktop` holds one docked view per edge — but the upper half of the
+    // `ui::Column` that IS the bottom dock, with the footer under it. On
+    // screen exactly while more than one terminal window is open; see
+    // `sync_window_switcher()`.
+    ckv::widgets::WindowSwitcherBar& window_switcher() noexcept { return *switcher_; }
 
     // What this client is running under: the reader's file over the built-in
     // defaults, with anything the constructor had to resolve already resolved.
@@ -436,6 +445,25 @@ private:
     // whenever the setting changes, so it states the whole answer rather than
     // adding to whatever is already there.
     void install_clock();
+    // Wires the switcher bar to ckmux's own notion of a window (WP-32): which
+    // windows it lists, what it calls them, what clicking one does, and what
+    // right-clicking one offers. Called once, from `build_chrome()`, after the
+    // bar and the footer have been composed into the docked Column.
+    void install_window_switcher(ckv::widgets::WindowSwitcherBar& bar);
+    // The windows the bar lists: ckmux's TERMINAL windows, in the desktop's own
+    // order. Dialogs, the session picker and the which-key popup are not places
+    // a reader switches to.
+    std::vector<ckv::widgets::Window*> switcher_windows() const;
+    // What one row offers on a right press. Every entry acts on the window the
+    // reader clicked, through `WindowSwitcherTarget::bind` — never through
+    // command dispatch, which would act on `active_window()`, the one window
+    // they demonstrably did not point at.
+    std::vector<ckv::widgets::MenuItem> switcher_menu(
+        const ckv::widgets::WindowSwitcherTarget& target);
+    // Shows the bar exactly while there is more than one terminal window, and
+    // tells the desktop its docked chrome changed height so the content area —
+    // and every window clamped or zoomed into it — follows.
+    void sync_window_switcher();
     void refresh_footer();
     void close_terminal(ckv::widgets::Window* window);
     void confirm_then_close(ckv::widgets::Window* window);
@@ -555,6 +583,22 @@ private:
     ckv::ui::StandardRoles roles_{};
     ckv::widgets::Desktop* desktop_ = nullptr;
     ckv::widgets::StatusLine* footer_ = nullptr;
+    // The bottom dock and its upper half (WP-32). The Column is held because
+    // hiding the bar changes the Column's own preferred height, and the desktop
+    // has to be told which docked view that was.
+    ckv::ui::Column* chrome_stack_ = nullptr;
+    ckv::widgets::WindowSwitcherBar* switcher_ = nullptr;
+    // This client's own liveness, for the callbacks the DESKTOP holds.
+    //
+    // The desktop belongs to the `Application` and outlives this object, so a
+    // switcher provider, a bound menu action or a window-change observer that
+    // captured `this` would otherwise be a call into freed storage at shutdown.
+    // The same hazard the menu-bar clock avoids by copying its time provider
+    // instead of reaching through the client — except that these callbacks
+    // genuinely need the client, so they are guarded rather than avoided.
+    // `subscribe_window_change`'s weak-lifetime overload drops its observer on
+    // expiry, which is why nothing cancels one in the destructor.
+    std::shared_ptr<void> alive_ = std::make_shared<char>();
     // The menu bar's trailing view, owned by the bar. Held because the
     // calendar hangs from it and has to tell it when it closes again.
     ckv::widgets::ClockView* clock_ = nullptr;

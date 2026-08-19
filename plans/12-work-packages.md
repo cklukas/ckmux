@@ -97,7 +97,7 @@ take first.
 | 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Done** (2026-08-19, ckVision `0c06c3f`) | — |
 | 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | **Done** (2026-08-19) | WP-28 ✓, WP-29 ✓, U4-b ✓ |
 | 23 | **WP-31** — Tile Horizontally / Vertically / Grid commands in ckmux | ckmux | 0.5–1 d | **Done** (2026-08-19) | U4-b ✓ |
-| 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Ready** | U4-a ✓ |
+| 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Done** (2026-08-19) | U4-a ✓ |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
