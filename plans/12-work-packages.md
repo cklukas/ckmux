@@ -109,7 +109,7 @@ take first.
 | 25g | **WP-35** — Collapsing the chrome in ckmux: bar to the last row, footer away | ckmux | 0.5 d | **Done** (2026-08-19, ckmux `8464b3a`, gated) | U4-l ✓ |
 | 25h | **U4-n** — A resize re-lays the arrangement a reader stated | ckVision | 2 d | **Done** (2026-08-19, ckVision `0e7c013`) | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
-| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **In progress (ckmux-a5)** | WP-8 ✓ |
+| 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **In progress (ckmux-be, /tmp/cc-socks/76113.sock)** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
 | 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
 | 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
@@ -679,13 +679,9 @@ kept before it can be relaunched. Then the **exit banner** with its
 `Enter restart · x close` footer, which is client-side and sequences behind
 WP-39's work in `client_app.cpp`. And the per-session **terminal limit**
 carried over from WP-8, which still has no key in
-[08](08-configuration.md). **Carried over from WP-8**: the per-session
-terminal limit ([03](03-session-model.md): "config, default 64"), which has no
-key in [08](08-configuration.md) yet and belongs with the policy that decides
-what an over-limit request is told. **Depends on R2**
-([13](13-architecture-review.md), m-exit-msg): a child that exits by itself
-produces no `TermClosed` at all today — the server observes the exit and says
-nothing — so there is no event for a banner to hang on until that lands.
+[08](08-configuration.md) — it belongs with the policy that decides what an
+over-limit request is told, and [03](03-session-model.md) documents the
+default as 64.
 **WP-14 — Notifications and help.** *Ready* — WP-12 is `Done`, and nothing
 here needs a server. `NotificationCenter` toasts; help pages
 complete, with their key tables generated from the same registry that
