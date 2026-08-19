@@ -43,6 +43,12 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
     send_(request);
 }
 
+void ServerSession::set_stats_watched(bool on) {
+    if (stats_watched_ == on) return;
+    stats_watched_ = on;
+    if (send_) send_(proto::WatchStats{static_cast<std::uint8_t>(on ? 1 : 0)});
+}
+
 void ServerSession::desktop_resized(ckv::Size desktop, ckv::Size cell_pixels) {
     if (desktop.width <= 0 || desktop.height <= 0) return;
     if (desktop == desktop_ && cell_pixels == cell_pixels_) return;
@@ -145,6 +151,10 @@ bool ServerSession::handle(const proto::Message& message) {
         ++attachments_;
         snapshot_requested_ = false;  // whatever was asked for has arrived
         session_ = attached->session;
+        // The reader's standing wish, restated on the connection this attach
+        // rode in on: the server's subscription is per connection and this
+        // may be a fresh one. Idempotent when it is not.
+        if (stats_watched_ && send_) send_(proto::WatchStats{1});
         // Every terminal in the snapshot, whole. This is both the first attach
         // and every healing after one, and it is the same code because it is the
         // same thing: the server saying "here is what you should be holding".
@@ -290,6 +300,15 @@ bool ServerSession::handle(const proto::Message& message) {
     if (const auto* meta = std::get_if<proto::TermMeta>(&message)) {
         if (RemoteTerminalSubsession* terminal = this->terminal(meta->term))
             terminal->mirror().apply(*meta);
+        return true;
+    }
+    if (const auto* stats = std::get_if<proto::TermStats>(&message)) {
+        // Straight through to the display: stats are a stream, not state — a
+        // number a second old is not worth holding, and the mirror deliberately
+        // learns nothing (no snapshot carries stats, so a mirror that held
+        // them would disagree with its own rehydration).
+        if (RemoteTerminalSubsession* terminal = this->terminal(stats->term))
+            if (on_stats) on_stats(*terminal, *stats);
         return true;
     }
     if (const auto* clipboard = std::get_if<proto::ClipboardSet>(&message)) {

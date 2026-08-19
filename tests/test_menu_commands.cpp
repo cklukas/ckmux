@@ -348,6 +348,18 @@ CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
         CK_CHECK(screen.find("^B ^B") != std::string::npos);
     }
 
+    // → the View menu (WP-39): the three readout toggles, checkable and off
+    // by default, each with no accelerator of its own — a display toggle is
+    // not a muscle-memory operation, and an unbound command still shows in
+    // the menu that reaches it.
+    reader.press("\x1b[C");
+    CK_CHECK(reader.sees("Show CPU Usage"));
+    {
+        const std::string screen = reader.screen();
+        CK_CHECK(screen.find("Show Memory Usage (RSS)") != std::string::npos);
+        CK_CHECK(screen.find("Show Memory Usage (Real)") != std::string::npos);
+    }
+
     // → the Window menu, which is where the reader looks for the tilings and
     // where they were plainly missing while ckVision already had them
     // (WP-31). Three arrangements, three names, three chords — and no fourth
@@ -698,15 +710,15 @@ CK_TEST(a_mouse_click_on_the_terminal_report_close_button_closes_it) {
     CK_CHECK(reader.start(socket));
     CK_CHECK(reader.sees("Terminal 1"));
 
-    // ^B m focuses the menu bar on Session; Down opens it. Four Rights walk
-    // the bar to Help (Session, Terminal, Window, Settings, Help), opening
-    // each as they pass it — the same navigation
+    // ^B m focuses the menu bar on Session; Down opens it. Five Rights walk
+    // the bar to Help (Session, Terminal, View, Window, Settings, Help),
+    // opening each as they pass it — the same navigation
     // every_prefix_command_a_reader_can_press_does_what_it_says already
     // trusts. One more Down reaches Terminal Report under Key Reference;
     // Enter activates it.
     reader.press("\x02" "m");
     reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C\x1b[C");
     reader.press("\x1b[B");
     reader.press("\r");
     CK_CHECK(reader.sees("Terminal report"));
@@ -750,7 +762,7 @@ CK_TEST(a_shift_click_on_ckmuxs_own_button_still_activates_it) {
 
     reader.press("\x02" "m");
     reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C\x1b[C");
     reader.press("\x1b[B");
     reader.press("\r");
     CK_CHECK(reader.sees("Terminal report"));
@@ -908,11 +920,12 @@ CK_TEST(the_settings_dialog_shows_its_buttons_on_a_cramped_terminal) {
     reader.press("\x02" "c");
     CK_CHECK(reader.sees("Terminal 2"));
 
-    // ^B m opens the menu bar on Session; three Rights reach Settings; Down
-    // then Enter opens General… — the same walk the other menu cases use.
+    // ^B m opens the menu bar on Session; four Rights reach Settings (past
+    // View, WP-39); Down then Enter opens General… — the same walk the other
+    // menu cases use.
     reader.press("\x02" "m");
     reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
     reader.press("\x1b[B");
     reader.press("\r");
 
@@ -956,7 +969,7 @@ CK_TEST(a_roomy_terminal_shows_the_whole_settings_form_without_scrolling) {
 
     reader.press("\x02" "m");
     reader.press("\x1b[B");
-    reader.press("\x1b[C\x1b[C\x1b[C");
+    reader.press("\x1b[C\x1b[C\x1b[C\x1b[C");
     reader.press("\x1b[B");
     reader.press("\r");
 

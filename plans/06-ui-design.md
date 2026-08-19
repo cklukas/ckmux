@@ -11,7 +11,7 @@ ckVision (what exists vs. what we add) is in
 ## Screen layout
 
 ```
- Session  Terminal  Window  Settings  Help                       09:41:07
+ Session  Terminal  View  Window  Settings  Help                 09:41:07
 ─────────────────────────────────────────────────────────────────────────
    ┌ 1: vim plans/02-architecture.md ─────────[▫][x]┐
    │ # ckmux — Architecture                         │
@@ -24,6 +24,18 @@ ckVision (what exists vs. what we add) is in
 ```
 
 - **Row 1 — menu bar** (permanent): ckVision MenuBar with drop-down menus.
+  **View** (WP-39) holds exactly three checkable items — Show CPU Usage,
+  Show Memory Usage (RSS), Show Memory Usage (Real) — which write what the
+  processes under each terminal cost onto that terminal window's own frame
+  footer (bottom border, left), sampled about once a second, formatted like
+  `CPU 37% · RSS 210 MB · Real 96 MB`. They are live display toggles rather
+  than settings dialogs, which is why they get a View menu while the colour
+  theme deliberately does not: a toggle the reader flips while looking at
+  the answer belongs where the looking happens, persisted to `[general]` the
+  moment it changes ([08-configuration.md](08-configuration.md)). "Real" is
+  the platform's what-does-it-actually-cost metric (macOS `phys_footprint`,
+  PSS on Linux when the port lands) beside RSS, whose tree-sum honestly
+  overcounts shared pages.
   Right edge carries the clock — `HH:MM:SS`, or `HH:MM`, or nothing, per
   `[general] clock` ([08-configuration.md](08-configuration.md)) and
   `Settings ▸ General…` — and clicking it drops a

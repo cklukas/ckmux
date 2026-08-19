@@ -421,6 +421,13 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
         // M-T1 was a key parsed under a section the dialog did not write to and
         // a reader blamed for a line ckmux had written itself.
         if (key == "resize-windows-to-fit") return boolean(settings.resize_windows_to_fit);
+        // The View menu's readouts (WP-39), written back by the menu items
+        // themselves through `save_setting` exactly as the Settings dialog's
+        // checkboxes are — so the preference survives the session because the
+        // reader flipped it, not because they remembered to edit a file.
+        if (key == "show-cpu") return boolean(settings.show_cpu);
+        if (key == "show-memory-rss") return boolean(settings.show_memory_rss);
+        if (key == "show-memory-real") return boolean(settings.show_memory_real);
     } else if (section == "terminal") {
         if (key == "term") {
             settings.term = plain.empty() ? std::string("auto") : plain;

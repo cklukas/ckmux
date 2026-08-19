@@ -152,6 +152,18 @@ struct Settings {
     // asked. The MOVE is not optional and happens either way; this decides only
     // whether a second, resizing step follows it.
     bool resize_windows_to_fit = false;
+    // [general] show-cpu / show-memory-rss / show-memory-real. The View
+    // menu's three readouts (WP-39): what the processes under each terminal
+    // cost, on every terminal window's frame footer, sampled about once a
+    // second. All off by default — a readout is chrome a reader opts into.
+    // "Real" is the platform's own what-does-it-actually-cost metric (macOS
+    // phys_footprint, PSS once WP-22 fills Linux in), beside RSS because
+    // summing RSS over a process tree bills every shared page once per
+    // process that maps it. The sample interval is deliberately not a key
+    // (plans/08, "explicitly not configurable in v1").
+    bool show_cpu = false;
+    bool show_memory_rss = false;
+    bool show_memory_real = false;
 
     // --- [terminal] -----------------------------------------------------
     // $TERM inside terminals. `auto` lets ckmux choose what it can honestly

@@ -131,9 +131,10 @@ take first.
 | 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
 | 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`) | — |
+| 48b | **U5-b** — `process_id()` lifted to the `core::TerminalSubsession` seam, default −1 | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `4d0afef`) | U5-a ✓ |
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
-| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-19, ckmux-53; central gate requested) | WP-37 ✓, U5-a ✓ |
-| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Ready** (starts after WP-38's central gate) | WP-38 impl ✓ |
+| 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
+| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-20, ckmux-53; central gate requested) | WP-38 ✓ |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1422,6 +1423,23 @@ it is declared. *Done when*: the accessor returns the spawned child's pid
 while it runs and −1 after `close()`, and the class's own comment still tells
 a host how to end a child without it.
 
+*Done, 2026-08-19 (ckVision `da11baa`).* Pinned by a test whose child prints
+its own `$$`: the accessor and the child agree on who the child is while it
+runs, and the accessor answers −1 once the exit has been observed. ckVision's
+full suite green around it, 144/144 with examples ON.
+
+**U5-b — `process_id()` on the seam itself** *(ckVision)*. *Done, 2026-08-19
+(ckVision `4d0afef`).* Found by WP-39's serverless half: the client holds
+`core::TerminalSubsession&` — a POSIX session, a mirror, a fake — and asking
+which process is behind one would have meant `dynamic_cast`ing to the
+platform class, which is exactly the workaround the adopter policy forbids.
+So the seam grew the question: virtual `process_id()`, default −1 (the honest
+answer for any session not holding a process, which is most of them), with
+U5-a's accessor becoming the POSIX override. A mirror answers −1 and its
+numbers arrive over the wire instead; the local sampler skips it, which is
+the client-side half of nobody-watching-nobody-sampling. Pinned through the
+base reference in the subsession suite.
+
 **WP-37 — Process-stats seam: the tree and what it costs, macOS first.**
 `src/platform/process_stats.{hpp,cpp}`, beside the poller and paths seams the
 Linux port already expects to fill. The interface is two calls: snapshot the
@@ -1451,18 +1469,6 @@ the naive RSS sum for a tree sharing libraries — and the cost of one full
 pass over this machine's own process table is **measured**, recorded here,
 and small enough for a once-per-second tick to carry.
 
-**WP-38 — Stats on the server tick and on the wire.** Two messages, into
-[05-protocol.md](05-protocol.md)'s catalogue when this lands (WP-1's pinned
-variant count will insist): `WatchStats{on}` from an attached client, and
-`TermStats{term, cpu_permille, rss_bytes, real_bytes, flags}` per terminal
-per sample to each client that asked — `cpu_permille` of one core so the
-integer carries 0.1% steps, `flags` saying whether `real_bytes` means
-anything and whether the child is still alive to be measured. The sampler
-rides the loop's existing tick machinery (`flush_tick`'s pattern, driven by
-the injected `Clock`) at a fixed 1 Hz — the interval joins plan 08's
-"explicitly not configurable in v1" list at landing — and holds the previous
-sample per terminal to derive the rate. It runs **only** while someone
-watches: subscription is per connection, dies with it, and the first sample
 *Done* (2026-08-19). `src/platform/process_stats.{hpp,cpp}`; nine cases in
 `tests/test_process_stats.cpp`, all with real children where a child is the
 claim (bare `fork`s, no exec and no PTY, so the suite stays in ctest's fast
@@ -1479,8 +1485,23 @@ which a test would have to stage carefully to pin without flaking; and the
 first version of the allocator child was deleted wholesale by `-O3` (a
 `memset` nothing reads is a dead store — the child paused with 960 KB
 resident and the test failed honestly), so the child now dirties one byte
-per page through a `volatile` pointer, which is not deletable.
+per page through a `volatile` pointer, which is not deletable. Gated by the
+test-coordinator session at ckmux `fa57657` × ckVision `da11baa` — 25/25,
+ctest exit 0; the `unit` label was confirmed by measurement (interposed
+`forkpty`: 0 PTY children, 5 bare forks).
 
+**WP-38 — Stats on the server tick and on the wire.** Two messages, into
+[05-protocol.md](05-protocol.md)'s catalogue when this lands (WP-1's pinned
+variant count will insist): `WatchStats{on}` from an attached client, and
+`TermStats{term, cpu_permille, rss_bytes, real_bytes, flags}` per terminal
+per sample to each client that asked — `cpu_permille` of one core so the
+integer carries 0.1% steps, `flags` saying whether `real_bytes` means
+anything and whether the child is still alive to be measured. The sampler
+rides the loop's existing tick machinery (`flush_tick`'s pattern, driven by
+the injected `Clock`) at a fixed 1 Hz — the interval joins plan 08's
+"explicitly not configurable in v1" list at landing — and holds the previous
+sample per terminal to derive the rate. It runs **only** while someone
+watches: subscription is per connection, dies with it, and the first sample
 after a subscription starts from a fresh baseline rather than a stale one.
 A terminal whose child exited stops being reported, with one final
 not-alive stats message so the client clears rather than freezes the
@@ -1492,6 +1513,34 @@ an idle shell reading ~0; a `sleep` and a deliberate allocator differ in
 the connection lives on; with no watcher anywhere, an instrumented seam
 proves the sampler is **never invoked**; and a `ManualClock` loop test pins
 the cadence without a wall-clock second anywhere in the suite.
+
+*Done, 2026-08-19 (ckmux-53); gated by the test-coordinator session at ckmux
+`2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan.* Five wire
+cases in `tests/test_stats_wire.cpp` (in-process `Server` on a `ManualClock`
+over a real socket, real PTY children where a child is the claim). Measured:
+a spinner read **564‰ of one core** against an idle shell's **2‰**, from
+400 ms of real spinning inside one injected second; 2.5 virtual seconds after
+the subscription's own first report carried **exactly two** more passes — the
+cadence is the clock's, not the loop's; `Server::stats_passes()` stayed at
+**zero** across three subscriber-less virtual seconds and froze again at
+unsubscribe while the same connection still answered `Ping`; and a held
+(`on-exit`) terminal whose child exited was announced not-alive **once**,
+with silence for it across three further sampled seconds. The allocator half
+of the memory claim lives in WP-37's suite, where it was pinned against the
+sampler directly; the wire case asserts live `rss_bytes` and flags instead of
+re-staging the allocation behind a PTY. One finding worth its sentence: the
+baseline's "does one exist yet" test was `at_nanos > 0`, and a `ManualClock`
+starts at zero — so a baseline taken before the first advance read as absent
+and a spinner reported 0‰ forever in exactly one test; it is an explicit
+`primed` flag now, because a sentinel that collides with a legitimate value
+is not a sentinel. Two boundaries held for free and are worth recording: the
+attach snapshot's byte budget (WP-20's gauge) did not move when stats went on
+the wire, because stats are never session state and never in a snapshot —
+neither session planned that check, and it is a real one; and WP-11's
+`ckmux new` found `NewSession`'s `spawn_first`/`command` fields dead in this
+file's neighbourhood, fixed here as `49d1878` with both directions pinned in
+`test_server_loop` and a third stale assertion caught by the central gate at
+26/27 and repaired the same way.
 
 **WP-39 — The View menu, the config keys, and the frame readout.** The
 user-facing half, all client. A new top-level **View** menu
@@ -1505,27 +1554,6 @@ become three rows) — read at startup like every key WP-12 covered and
 written back through the same `save_setting()` the Settings dialog's
 checkboxes already use, so the preference survives the session because the
 reader set it, not because they remembered to edit a file. The commands go
-*Implementation complete, 2026-08-19 (ckmux-53); the central gate is pending
-per the owner's testing directive.* Five wire cases in
-`tests/test_stats_wire.cpp` (in-process `Server` on a `ManualClock` over a
-real socket, real PTY children where a child is the claim). Measured: a
-spinner read **564‰ of one core** against an idle shell's **2‰**, from 400 ms
-of real spinning inside one injected second; 2.5 virtual seconds after the
-subscription's own first report carried **exactly two** more passes — the
-cadence is the clock's, not the loop's; `Server::stats_passes()` stayed at
-**zero** across three subscriber-less virtual seconds and froze again at
-unsubscribe while the same connection still answered `Ping`; and a held
-(`on-exit`) terminal whose child exited was announced not-alive **once**,
-with silence for it across three further sampled seconds. The allocator
-half of the memory claim lives in WP-37's suite, where it was pinned against
-the sampler directly; the wire case asserts live `rss_bytes` and flags
-instead of re-staging the allocation behind a PTY. One finding worth its
-sentence: the baseline's "does one exist yet" test was `at_nanos > 0`, and a
-`ManualClock` starts at zero — so a baseline taken before the first advance
-read as absent and a spinner reported 0‰ forever in exactly one test; it is
-an explicit `primed` flag now, because a sentinel that collides with a
-legitimate value is not a sentinel.
-
 through the one `Keymap` (rebindable; **no default chord** — a display
 toggle is not a muscle-memory operation, and the prefix table is a scarce
 resource), and the reachability suite covers the menu entries as it covers
@@ -1546,11 +1574,6 @@ core displays as it is (`340%`), per the decision above. A terminal whose
 child exited shows no readout — the exit banner owns that moment. Remote
 terminals subscribe with `WatchStats` when the first toggle goes on and
 unsubscribe when the last goes off; the serverless M1 client samples
-*Done, 2026-08-19 (ckVision `da11baa`).* Pinned by a test whose child prints
-its own `$$`: the accessor and the child agree on who the child is while it
-runs, and the accessor answers −1 once the exit has been observed. ckVision's
-full suite green around it, 144/144 with examples ON.
-
 through WP-37's seam on the application timer at the same cadence, and the
 composer cannot tell the difference.
 *Done when*: `tests/test_command_reachability.cpp` passes with the three
@@ -1561,7 +1584,29 @@ already live; all-off restores a frame identical to today's; the formatter
 boundaries are pinned; and the end-to-end PTY walk asserts the footer's
 shape by pattern rather than its numbers, because the numbers are real.
 
-## Not in this queue
+*Implementation complete, 2026-08-20 (ckmux-53); the central gate is
+pending.* Everything specified, plus U5-b where the serverless half met the
+seam. The words live in `src/client/stats_format.{hpp,cpp}` with their
+boundaries pinned in `tests/test_stats_format.cpp` (1000-promotion inside
+1024 units — "999 KB" then "1.0 MB", never "1000 KB"; 375‰ → "38%"; a Real
+segment absent, not zeroed, when the platform cannot say; a dead child's
+footer empty whatever is toggled). `tests/test_stats_display.cpp` drives the
+registry the menu items dispatch through: toggling CPU marks BOTH open
+windows at once and writes `show-cpu = true` to the file (CKMUX_CONFIG-
+scoped), a second readout joins the same line, all-off empties every footer
+and writes the falses back, the View menu's checkmark agrees after each
+flip, and a client STARTED with `show-memory-rss = true` shows "RSS " with
+a real unit on its first frame — the constructor applied what the file
+said, no toggle, no wait. Three config cases join `test_config`. The View
+menu slots between Terminal and Window; three neighbour suites that pinned
+menu positions were updated with it (`test_client_smoke` menu count and
+indices, `test_menu_commands`' Rights-walks — which now also assert the
+View menu's own three rows in passing, so the walk that broke became the
+package's e2e). The one deliberate deviation from the sketch above: the
+menu-driven e2e lives in the in-process display suite reading
+`Window::footer()` directly rather than a PTY screen-scrape — the same
+public dispatch path, with the assertion on the value the frame draws from
+rather than on where the frame happened to wrap.
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
 attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty

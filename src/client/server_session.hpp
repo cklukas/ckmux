@@ -62,6 +62,12 @@ public:
     // answered, and an answer nobody surfaces is indistinguishable from a
     // server that has hung.
     std::function<void(const proto::Error&)> on_error;
+    // One terminal's process-tree cost, arriving about once a second while
+    // this client asked for stats (WP-38/WP-39). Delivered with the mirror it
+    // is about, because the consumer's question is "which window's frame does
+    // this line belong on" and the id answers a different one. Not stored
+    // here: stats are a stream for a display, not state a session holds.
+    std::function<void(RemoteTerminalSubsession&, const proto::TermStats&)> on_stats;
     // Which of the two situations a layout statement came out of. They carry
     // the same shape and mean entirely different things, so the caller is told
     // which rather than left to guess (WP-30).
@@ -97,6 +103,13 @@ public:
     // whole, which is exactly what a client that has lost track needs and is why
     // healing needs no message of its own.
     void attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels);
+    // Whether this client wants per-terminal process stats (WP-39's View
+    // toggles, any of them). Sent to the server when it changes, and restated
+    // after every `Attached`: the subscription is per CONNECTION on the
+    // server (it dies with the socket), while the wish is the reader's and
+    // outlives any number of reconnections and takeovers.
+    void set_stats_watched(bool on);
+    bool stats_watched() const noexcept { return stats_watched_; }
 
     // The reader's own terminal changed size while this client was attached.
     //
@@ -252,6 +265,9 @@ private:
     // connection going.
     bool snapshot_requested_ = false;
     bool attached_ = false;
+    // The reader's standing wish for stats, as distinct from any one
+    // connection's subscription — see set_stats_watched.
+    bool stats_watched_ = false;
     bool host_sixel_ = false;
     // The scene identity a remote terminal's rasters carry. Minted per
     // terminal, well away from Application's own adopted-subsession counter

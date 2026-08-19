@@ -65,6 +65,16 @@ clock           = seconds      # seconds | minutes | off — the clock at the
                                # right end of the menu bar, with a calendar
                                # that drops out of it when clicked
                                # (Settings ▸ General…)
+show-cpu             = false   # the View menu's readouts (WP-39): what the
+show-memory-rss      = false   # processes under each terminal cost, on that
+show-memory-real     = false   # window's frame footer, ~1 Hz. Three keys
+                               # because they are three independent checkboxes;
+                               # all off because a readout is chrome a reader
+                               # opts into. "Real" = macOS phys_footprint /
+                               # Linux PSS (WP-22); RSS summed over a tree
+                               # overcounts shared pages, which is why both
+                               # exist. Written back by the menu items
+                               # themselves (View ▸ …)
 resize-windows-to-fit = false  # reattaching on a smaller terminal always MOVES
                                # a window up and left to bring it into the
                                # desktop; this decides whether one that still

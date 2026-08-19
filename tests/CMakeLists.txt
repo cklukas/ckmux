@@ -21,9 +21,9 @@ set(CKMUX_TEST_SOURCES
     test_menu_commands.cpp
     test_minimize_chrome.cpp
     test_prefix.cpp
-    test_proto.cpp
     test_process_stats.cpp
     test_remote_terminal.cpp
+    test_proto.cpp
     test_rename_terminal.cpp
     test_rename_wire.cpp
     test_server_lifecycle.cpp
@@ -31,6 +31,8 @@ set(CKMUX_TEST_SOURCES
     test_server_terminals.cpp
     test_shell.cpp
     test_stats_wire.cpp)
+    test_stats_display.cpp
+    test_stats_format.cpp
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server ckvision::cvision)
@@ -99,8 +101,7 @@ set(CKMUX_LABELS_test_copy_mode "pty")
 set(CKMUX_LABELS_test_minimize_chrome "pty")
 set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
-
-foreach(source ${CKMUX_TEST_SOURCES})
+set(CKMUX_LABELS_test_stats_display "pty")
 # test_process_stats forks bare children of its own (fork, no exec, no PTY) —
 # a process primitive available anywhere the suite itself can run, so it stays
 # in the fast lane rather than joining `pty`, whose reason is a sandbox with
@@ -111,6 +112,8 @@ foreach(source ${CKMUX_TEST_SOURCES})
     set(CKMUX_SUITE_LABELS "unit")
     if(DEFINED CKMUX_LABELS_${suite})
         set(CKMUX_SUITE_LABELS "${CKMUX_LABELS_${suite}}")
+
+foreach(source ${CKMUX_TEST_SOURCES})
     endif()
     set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}" TIMEOUT 120)
 endforeach()

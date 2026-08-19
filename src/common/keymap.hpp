@@ -71,6 +71,15 @@ enum class Action : unsigned char {
     // instead — and a command as well as the bar's own ▼, because the bar
     // is not always on screen and the way back must not be either.
     ToggleStatusBar,
+    // The View menu's three readouts (WP-39): what the processes under each
+    // terminal cost, written onto every terminal window's frame footer. Three
+    // actions because they are three independent checkboxes, each persisted
+    // as its own `[general]` key — and rebindable like everything else,
+    // though none carries a default chord: a display toggle is not a
+    // muscle-memory operation, and the prefix table is a scarce resource.
+    ShowCpuUsage,
+    ShowMemoryRss,
+    ShowMemoryReal,
     About,
     SendPrefix,
     Quit,

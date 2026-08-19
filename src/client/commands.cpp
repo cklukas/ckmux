@@ -38,8 +38,8 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 29>& default_bindings() {
-    static const std::array<KeyBinding, 29> kBindings{{
+const std::array<KeyBinding, 32>& default_bindings() {
+    static const std::array<KeyBinding, 32> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         {".", commands::kMoveTerminal, "&Move to Session…", "move to session", 0,
@@ -92,6 +92,15 @@ const std::array<KeyBinding, 29>& default_bindings() {
         // it offers to free.
         {"b", commands::kToggleStatusBar, "&Status Bar", "status bar", 0,
          Action::ToggleStatusBar},
+        // The View menu's readouts (WP-39). No default chords: a display
+        // toggle is not a muscle-memory operation and the prefix table is a
+        // scarce resource — a reader who wants one bound writes a `bind` line
+        // like for anything else.
+        {"", commands::kShowCpuUsage, "Show &CPU Usage", "cpu", 0, Action::ShowCpuUsage},
+        {"", commands::kShowMemoryRss, "Show Memory Usage (&RSS)", "rss", 0,
+         Action::ShowMemoryRss},
+        {"", commands::kShowMemoryReal, "Show Memory Usage (R&eal)", "real", 0,
+         Action::ShowMemoryReal},
         {"", commands::kAbout, "&About ckmux…", "about", 0, Action::About},
     }};
     return kBindings;
@@ -126,6 +135,9 @@ std::string_view command_for_action(Action action) {
         case Action::KeyReference: return commands::kKeyReference;
         case Action::Settings: return commands::kSettings;
         case Action::ToggleStatusBar: return commands::kToggleStatusBar;
+        case Action::ShowCpuUsage: return commands::kShowCpuUsage;
+        case Action::ShowMemoryRss: return commands::kShowMemoryRss;
+        case Action::ShowMemoryReal: return commands::kShowMemoryReal;
         case Action::About: return commands::kAbout;
         case Action::SendPrefix: return commands::kSendPrefix;
         case Action::Quit: return kQuit;

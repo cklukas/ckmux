@@ -11,6 +11,7 @@
 #include "common/config.hpp"
 #include "common/shell.hpp"
 #include "platform/paths.hpp"
+#include "platform/process_stats.hpp"
 
 #include "cvision/core/text.hpp"
 #include "cvision/widgets/application_shell.hpp"
@@ -211,6 +212,11 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     if (options_.report_layout && options_.layout_settle_nanos > 0)
         layout_timer_ = app_.start_timer(options_.layout_settle_nanos, /*repeating=*/true,
                                          [this] { report_layout_if_settled(); });
+    // The View readouts the config file already had on: applied now so a
+    // restarted client comes up with the checkmarks ticked, the subscription
+    // stated, and the sampler armed — the preference survived because the
+    // reader flipped it, and startup is where that has to become visible.
+    apply_stats_toggles();
 }
 
 ClientApp::~ClientApp() {
@@ -225,6 +231,7 @@ ClientApp::~ClientApp() {
     if (which_key_timer_ != 0) app_.cancel_timer(which_key_timer_);
     if (title_timer_ != 0) app_.cancel_timer(title_timer_);
     if (layout_timer_ != 0) app_.cancel_timer(layout_timer_);
+    if (stats_timer_ != 0) app_.cancel_timer(stats_timer_);
 }
 
 void ClientApp::register_commands() {
@@ -299,6 +306,17 @@ void ClientApp::register_commands() {
             // window), so it is asked rather than assumed.
             registry.set_enabled_predicate(rename,
                                            [this] { return active_terminal() != nullptr; });
+        } else if (binding.key == commands::kShowCpuUsage) {
+            declare(binding.key, binding.title, "View",
+                    [this] { toggle_stats_readout(&Settings::show_cpu, "show-cpu"); });
+        } else if (binding.key == commands::kShowMemoryRss) {
+            declare(binding.key, binding.title, "View", [this] {
+                toggle_stats_readout(&Settings::show_memory_rss, "show-memory-rss");
+            });
+        } else if (binding.key == commands::kShowMemoryReal) {
+            declare(binding.key, binding.title, "View", [this] {
+                toggle_stats_readout(&Settings::show_memory_real, "show-memory-real");
+            });
         } else if (binding.key == commands::kToggleStatusBar) {
             // The keyboard's and the menu's way to the same state the bar's ▼
             // reports (WP-35). It has to exist separately from that toggle
@@ -443,7 +461,7 @@ void ClientApp::register_commands() {
     keymap_.resolve(registry);
 }
 
-void ClientApp::build_chrome() {
+std::vector<w::MenuBarItem> ClientApp::build_menus() {
     // Every menu entry shows the key that reaches it from a terminal — the
     // prefix chord, not whatever single chord the registry holds. The two
     // differ for ckVision's standard commands, and the prefix one is the one
@@ -483,6 +501,21 @@ void ClientApp::build_chrome() {
          item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
          separator, item(commands::kCopyMode), item(commands::kPaste), separator,
          item(commands::kSendPrefix)}};
+    // The View menu (WP-39): what this client SHOWS, distinct from what a
+    // setting configures — the theme stayed a stored Settings value for
+    // exactly that reason, and these three are the other thing: live toggles
+    // a reader flips while looking at the answer. Checkable, persisted as
+    // `[general]` keys the moment they change, and applied to every open
+    // terminal window at once (`apply_stats_toggles`). The checkmark is a
+    // value in the item, which is why a toggle rebuilds the menus.
+    const auto checkable = [&](std::string_view key, bool on) {
+        return item(key).with_mark(on ? w::MenuMark::Checked : w::MenuMark::Unchecked);
+    };
+    w::MenuBarItem view_menu{
+        "&View",
+        {checkable(commands::kShowCpuUsage, options_.settings.show_cpu),
+         checkable(commands::kShowMemoryRss, options_.settings.show_memory_rss),
+         checkable(commands::kShowMemoryReal, options_.settings.show_memory_real)}};
     // The window list is a list of WINDOWS — it lives with the other commands
     // that arrange them, not under Terminal, where it sat because M1 had no
     // Window menu yet to put it in.
@@ -521,14 +554,23 @@ void ClientApp::build_chrome() {
                               item(u::std_command_keys::kTerminalReport), separator,
                               item(commands::kAbout)}};
 
+    std::vector<w::MenuBarItem> menus;
+    menus.push_back(std::move(session_menu));
+    menus.push_back(std::move(terminal_menu));
+    menus.push_back(std::move(view_menu));
+    menus.push_back(std::move(window_menu));
+    menus.push_back(std::move(settings_menu));
+    menus.push_back(std::move(help_menu));
+    return menus;
+}
+
+void ClientApp::build_chrome() {
     // The theme the constructor already put on the application, handed
     // straight back: the shell assigns whatever it is given, so naming one
     // here would quietly overrule `[general] theme` — which is how a reader
     // who chose Light got Dark every morning.
     w::ApplicationShell shell(app_, {.theme = app_.theme(),
-                                     .menus = {std::move(session_menu), std::move(terminal_menu),
-                                               std::move(window_menu), std::move(settings_menu),
-                                               std::move(help_menu)},
+                                     .menus = build_menus(),
                                      .status_items = {},
                                      // No status line from the shell, which
                                      // would dock one on its own: ckmux's
@@ -840,6 +882,72 @@ ckv::widgets::MenuBar* ClientApp::menu_bar() {
     if (desktop_ == nullptr) return nullptr;
     return dynamic_cast<w::MenuBar*>(desktop_->top_dock());
 }
+bool ClientApp::session_shows_attached(std::uint64_t id) const {
+    for (const SessionRow& row : last_sessions_)
+        if (row.id == id) return row.attached;
+    return false;
+}
+
+void ClientApp::notify(std::string text, w::NotificationSeverity severity, bool persistent) {
+    if (desktop_ == nullptr || text.empty()) return;
+    if (toasts_ == nullptr) {
+        // Made on demand, exactly as the prefix overlay is, and for the same
+        // reason: a surface that is only ever needed occasionally should not
+        // be a permanent child that every layout pass has to think about.
+        auto centre = std::make_unique<w::NotificationCenter>();
+        centre->set_auto_dismiss(options_.toast_nanos);
+        // Not a focus stop. ckVision's default makes one, which is right for
+        // a centre a reader Tabs to in a form; here it would put the reader's
+        // Tab in a message about something that already happened instead of
+        // in the program they are typing into.
+        centre->set_focus_policy(u::FocusPolicy::None);
+        toasts_ = desktop_->add_popup(std::move(centre));
+        // Re-placed on every change, including the ones this client did not
+        // make: a toast expires on ckVision's timer, and nothing else would
+        // tell us the surface had shrunk or emptied.
+        const std::weak_ptr<void> alive = alive_;
+        toasts_->on_changed = [this, alive] {
+            if (alive.expired()) return;
+            // POSTED, not called. This runs from inside the centre — a click
+            // that dismissed a line, or an expiry firing on its timer — and
+            // the last notification going means this surface is taken down.
+            // Destroying a view from inside its own handler frees the object
+            // whose stack we are standing on; the prefix overlay unwinds
+            // first for exactly this reason.
+            app_.post([this, alive] {
+                if (alive.expired()) return;
+                place_notifications();
+            });
+        };
+    }
+    toasts_->add(w::Notification{severity, std::move(text), persistent});
+    place_notifications();
+}
+
+void ClientApp::place_notifications() {
+    if (toasts_ == nullptr || desktop_ == nullptr) return;
+    // Nothing left to say: the surface goes rather than sitting there as an
+    // empty popup that still takes clicks over the reader's windows.
+    if (toasts_->notifications().empty()) {
+        w::NotificationCenter* const going = toasts_;
+        toasts_ = nullptr;
+        desktop_->remove_popup(going).reset();
+        return;
+    }
+    // Top-right of the desktop's own content area — inside the chrome rather
+    // than over it, so a toast never covers the window bar that a reader may
+    // be reaching for, and clear of the menu bar above.
+    const ckv::Rect area = desktop_->content_area();
+    int width = 0;
+    for (const w::Notification& notification : toasts_->notifications())
+        width = std::max(width, ckv::text::text_width(notification.text));
+    // Two cells for the severity marker the centre draws, and one of margin
+    // either side so the text does not run into the desktop edge.
+    width = std::clamp(width + 4, 12, std::max(12, area.width - 2));
+    const int height = std::min(static_cast<int>(toasts_->notifications().size()), area.height);
+    toasts_->set_bounds(ckv::Rect{area.x + area.width - width, area.y, width, height});
+}
+
 
 void ClientApp::install_clock() {
     // The clock goes at the right end of the menu bar (plans/06): it is where
@@ -1178,6 +1286,8 @@ void ClientApp::set_attached_session(std::uint64_t id, std::string name) {
     // Nothing to notify: the registry asks each command's predicate when it
     // needs the answer, so the menu is right the next time it is drawn.
 }
+    latest_stats_.erase(&terminal);
+    local_cpu_.erase(&terminal);
 
 ckv::widgets::Window* ClientApp::new_terminal() {
     // Attached to a server, this is a request rather than an act: the window is
@@ -1352,6 +1462,8 @@ void ClientApp::confirm_then_close(w::Window* window) {
     what.label =
         "\"" + window->title() + "\" is still running a program. Closing asks it to quit.";
     descriptor.fields.push_back(std::move(what));
+        latest_stats_.erase(terminal_session);
+        local_cpu_.erase(terminal_session);
 
     std::optional<std::size_t> force_field;
     if (options_.close_terminal_in_session) {
@@ -2375,6 +2487,107 @@ bool ClientApp::apply_resize_windows_to_fit(bool resize) {
 }
 
 bool ClientApp::apply_sixel_max_megapixels(int megapixels) {
+void ClientApp::toggle_stats_readout(bool Settings::* field, std::string_view key) {
+    options_.settings.*field = !(options_.settings.*field);
+    // Persisted the moment it changes, through the same atomic write the
+    // Settings dialog's checkboxes use — the preference survives the session
+    // because the reader flipped it, not because they remembered a file. Live
+    // either way; a save that cannot happen is said out loud (plans/08).
+    if (!ckm::save_setting(ckm::platform::config_file_path(), "general", std::string(key),
+                           ckm::bool_setting(options_.settings.*field)))
+        report_settings_not_saved();
+    apply_stats_toggles();
+}
+
+void ClientApp::apply_stats_toggles() {
+    const StatsToggles toggles = stats_toggles();
+    // Every open terminal window at once, from whatever numbers are current —
+    // and all-off restores today's frame, because an empty footer draws
+    // nothing.
+    for (const auto& [terminal, window] : terminal_windows_)
+        refresh_stats_footer(*window, *terminal);
+    // A checkmark is a value in the bar's items, so the bar gets fresh items.
+    if (w::MenuBar* const bar = menu_bar()) bar->set_menus(build_menus());
+    // The server samples only while somebody watches (WP-38); tell it when
+    // the answer changes. A serverless client has nobody to tell and samples
+    // for itself below, at the same one-second cadence.
+    if (options_.watch_stats) options_.watch_stats(toggles.any());
+    if (toggles.any() && stats_timer_ == 0) {
+        stats_timer_ =
+            app_.start_timer(1'000'000'000, /*repeating=*/true, [this] { sample_local_stats(); });
+        // "Within one sample period" means now for the first one: a reader
+        // who just ticked the box is looking at the frame it lands on.
+        sample_local_stats();
+    } else if (!toggles.any() && stats_timer_ != 0) {
+        app_.cancel_timer(stats_timer_);
+        stats_timer_ = 0;
+        local_cpu_.clear();
+    }
+}
+
+void ClientApp::refresh_stats_footer(w::Window& window,
+                                     const ckv::term::TerminalSubsession& terminal) {
+    const auto found = latest_stats_.find(&terminal);
+    window.set_footer(stats_footer(
+        found == latest_stats_.end() ? proto::TermStats{} : found->second, stats_toggles()));
+}
+
+void ClientApp::receive_terminal_stats(const ckv::term::TerminalSubsession& terminal,
+                                       const proto::TermStats& stats) {
+    latest_stats_[&terminal] = stats;
+    if (w::Window* const window = window_showing(&terminal))
+        refresh_stats_footer(*window, terminal);
+}
+
+void ClientApp::sample_local_stats() {
+    const StatsToggles toggles = stats_toggles();
+    if (!toggles.any()) return;
+    // At most one table per pass, and none at all for a purely remote client:
+    // a mirror answers -1 through the seam (U5-b) and its numbers arrive over
+    // the wire, so a client watching only mirrors does no sampling work here
+    // — the same nobody-watching-nobody-sampling rule the server keeps.
+    std::optional<platform::ProcessTable> table;
+    const std::int64_t now = app_.clock().now_nanos();
+    for (const auto& [terminal, window] : terminal_windows_) {
+        const int root = terminal->process_id();
+        if (root < 0) {
+            // A mirror — or a local child that has gone, and only the latter
+            // holds a baseline of ours and a readout to clear. Cleared once:
+            // erasing the baseline is what makes the next pass skip it.
+            const auto base = local_cpu_.find(terminal);
+            if (base != local_cpu_.end()) {
+                local_cpu_.erase(base);
+                latest_stats_[terminal] = proto::TermStats{};
+                refresh_stats_footer(*window, *terminal);
+            }
+            continue;
+        }
+        if (!table) table = platform::ProcessTable::snapshot();
+        const platform::TreeSample sample = platform::sample_tree(*table, root);
+        proto::TermStats stats;
+        if (sample.process_count > 0) {
+            stats.rss_bytes = sample.rss_bytes;
+            stats.real_bytes = sample.real_bytes;
+            stats.flags = static_cast<std::uint8_t>(proto::TermStatsFlag::Alive);
+            if (sample.has_real)
+                stats.flags |= static_cast<std::uint8_t>(proto::TermStatsFlag::HasReal);
+            LocalCpuBaseline& base = local_cpu_[terminal];
+            if (base.primed && now > base.at_nanos && sample.cpu_time_nanos >= base.cpu_nanos) {
+                const std::uint64_t wall = static_cast<std::uint64_t>(now - base.at_nanos);
+                stats.cpu_permille = static_cast<std::uint32_t>(
+                    (sample.cpu_time_nanos - base.cpu_nanos) * 1000u / wall);
+            }
+            base.cpu_nanos = sample.cpu_time_nanos;
+            base.at_nanos = now;
+            base.primed = true;
+        } else {
+            local_cpu_.erase(terminal);
+        }
+        latest_stats_[terminal] = stats;
+        refresh_stats_footer(*window, *terminal);
+    }
+}
+
     if (options_.settings.sixel_max_megapixels == megapixels) return true;
     options_.settings.sixel_max_megapixels = megapixels;
     return ckm::save_setting(ckm::platform::config_file_path(), "terminal", "sixel-max-megapixels",

@@ -140,6 +140,31 @@ CK_TEST(login_shell_false_is_read_from_the_general_section) {
     CK_CHECK(loaded.warnings.empty());
 }
 
+CK_TEST(the_view_readouts_are_off_until_the_general_section_says_otherwise) {
+    // WP-39's three keys: a readout is chrome a reader opts into, and each of
+    // the three is its own key because each is its own checkbox — a reader
+    // watching memory is not thereby watching CPU.
+    ScratchConfig scratch("readouts");
+    CK_CHECK(!Settings{}.show_cpu);
+    CK_CHECK(!Settings{}.show_memory_rss);
+    CK_CHECK(!Settings{}.show_memory_real);
+
+    scratch.write("[general]\nshow-cpu = true\nshow-memory-real = true\n");
+    const ckm::LoadedSettings asked = load_settings(scratch.path());
+    CK_CHECK(asked.settings.show_cpu);
+    CK_CHECK(!asked.settings.show_memory_rss);
+    CK_CHECK(asked.settings.show_memory_real);
+    CK_CHECK(asked.warnings.empty());
+
+    // A value that is not a bool is refused with the words to fix it, like
+    // every other boolean key.
+    ScratchConfig noisy("readouts-noisy");
+    noisy.write("[general]\nshow-memory-rss = sometimes\n");
+    const ckm::LoadedSettings refused = load_settings(noisy.path());
+    CK_CHECK(!refused.settings.show_memory_rss);
+    CK_CHECK(refused.warnings.size() == 1U);
+}
+
 CK_TEST(resize_windows_to_fit_is_off_unless_the_general_section_asks_for_it) {
     // WP-30's one setting, and the whole reason it has a default worth pinning:
     // reattaching on a smaller terminal always MOVES a window to bring it into
