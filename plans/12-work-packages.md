@@ -99,6 +99,7 @@ take first.
 | 23 | **WP-31** — Tile Horizontally / Vertically / Grid commands in ckmux | ckmux | 0.5–1 d | **Done** (2026-08-19) | U4-b ✓ |
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | **Done** (2026-08-19) | U4-a ✓ |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | **Done** (2026-08-19) | U4-c ✓ |
+| 25a | **U4-g** — A dialog too tall for its screen scrolls, buttons pinned | ckVision | 1–2 d | **Ready** | — |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Ready** | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Ready** | WP-12 ✓ |
@@ -839,6 +840,49 @@ twice under two names. Depends on U4-b. *Done when*:
 `tests/test_command_reachability.cpp` — the suite that exists because a
 live-looking menu item once had no handler — passes with all three new
 commands included, each reachable by its own chord.
+
+**U4-g — A dialog too tall for its screen scrolls, and its buttons stay
+put** *(ckVision)*. Reader-directed, 2026-08-19, out of a real measurement:
+`Settings ▸ General…` is drawn for 22 rows, and on an 80×24 terminal with
+the switcher bar and two terminals open the desktop is 21 — so the dialog
+clips, and what a reader loses is the bottom, which is where Save and
+Cancel are. A dialog that cannot show its buttons is not merely cramped;
+it is unusable, and the reader cannot tell whether it is broken or they
+are.
+
+The rule: **when a dialog's content is taller than the space it has, the
+content area scrolls and the button row stays fixed at the bottom.** Never
+the other way round — buttons that scroll away are the defect being fixed.
+A dialog that fits gains nothing: no scrollbar, no reserved column, no
+behaviour change at all.
+
+Checked before writing this, so the package is composition rather than
+invention:
+- `widgets::ScrollViewport` already scrolls an arbitrary content view and
+  installs its own `Scrollbar` children (`scroll_viewport.hpp`).
+- `materialize_dialog` already builds the buttons as their own `Row`
+  appended last to the field `Column` (`dialog.cpp`), and already has an
+  `anchor_buttons_to_bottom` path with a spacer — so the split this needs
+  is one the layout half-expresses today.
+So the shape is: fields into the viewport, button `Row` outside and below
+it, viewport gets the remaining height.
+
+**A limitation to carry honestly rather than discover later**:
+`ScrollViewport`'s own header records that a mouse wheel over the CONTENT
+does not reach the viewport — `Application` dispatch is deepest-hit-wins
+with no bubbling for mouse events, so the wheel reaches the content
+widget instead. Keyboard scrolling and the scrollbar work. That is
+acceptable for a dialog (a reader is on the keyboard, and the bar is
+clickable), and fixing it properly means mouse bubbling in `Application`,
+which is its own package and must not be smuggled into this one. Say so
+in the docs rather than leaving a reader to find it.
+
+*Done when*: a dialog whose content exceeds the available height shows a
+scrollbar, scrolls its fields by keyboard and by the bar, and shows its
+buttons at all times — asserted with numbers, the way ckVision's own
+dock tests assert; a dialog that fits is byte-identical to today,
+including no scrollbar; and focus traversal still reaches every field,
+scrolling it into view rather than leaving the cursor off-screen.
 
 **WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
 terminal windows into U4-a's bar: the title provider (the same
