@@ -477,3 +477,72 @@ CK_TEST(a_name_longer_than_the_wire_allows_is_cut_on_a_character_boundary) {
 
     terminals.close_all();
 }
+
+// --- WP-13: respawn in place ------------------------------------------------
+
+CK_TEST(a_terminal_whose_child_ended_runs_the_same_command_again_under_the_same_id) {
+    // plans/06:668 — "restart = respawn same command in same window", the
+    // build loop a reader restarts with Enter. Same window means same id: a
+    // client's window is keyed on it, so a respawn that renumbered would close
+    // the window and open another, which is not what the footer offers.
+    Terminals terminals(test_settings());
+    Terminal& terminal = terminals.open(spec_running("printf 'ran\\r\\n'; exit 3"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    CK_CHECK(pump_until(terminals, [&] { return terminal.exit_status().has_value(); }));
+    CK_CHECK(terminal.exit_status() == 3);
+    CK_CHECK(screen_text(terminal).find("ran") != std::string::npos);
+
+    CK_CHECK(terminals.respawn(id));
+    // The id did not move, and `find` still answers with the same object —
+    // this is one terminal running again, not a second wearing its number.
+    CK_CHECK(terminals.find(id) == &terminal);
+    // And the dead child's bookkeeping is gone, or the new child's own exit
+    // would never be noticed: a window that had quietly stopped reporting.
+    CK_CHECK(!terminal.exit_status().has_value());
+
+    CK_CHECK(pump_until(terminals, [&] { return terminal.exit_status().has_value(); }));
+    CK_CHECK(terminal.exit_status() == 3);
+    CK_CHECK(screen_text(terminal).find("ran") != std::string::npos);
+}
+
+CK_TEST(a_terminal_whose_child_is_alive_refuses_to_be_respawned) {
+    // Relaunching over a living child would drop the last handle on its
+    // process group — a program still running that nothing can reach, which is
+    // the one outcome a multiplexer must never produce. A reader who wants
+    // that asks for a close first, and the close protocol does it gracefully.
+    Terminals terminals(test_settings());
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+    const ckm::server::TerminalId id = terminal.id();
+    // Give it a moment to be genuinely running rather than merely just-forked.
+    (void)pump_until(terminals, [&] { return false; }, 150);
+
+    CK_CHECK(!terminals.respawn(id));
+    // Refused means untouched: the child is still there and still has no exit.
+    CK_CHECK(terminal.live());
+    CK_CHECK(!terminal.exit_status().has_value());
+
+    // And a terminal that never existed is refused the same way, rather than
+    // being opened by the asking.
+    CK_CHECK(!terminals.respawn(id + 1000U));
+}
+
+CK_TEST(a_respawned_child_is_told_the_size_the_window_is_now) {
+    // The spec remembers the size the DEAD child started at. A reader who
+    // resized the window before pressing Enter meant the new child to fill it,
+    // so the relaunch reads the terminal's current geometry instead — which is
+    // the whole reason `respawn_spec()` exists rather than the stored spec
+    // being used as-is.
+    Terminals terminals(test_settings());
+    Terminal& terminal = terminals.open(spec_running("exit 0"));
+    const ckm::server::TerminalId id = terminal.id();
+    CK_CHECK(pump_until(terminals, [&] { return terminal.exit_status().has_value(); }));
+
+    terminal.resize(72, 20, 0, 0);
+    CK_CHECK(terminals.respawn(id));
+    // The new child's emulator is the resized one, not the 40x10 the spec was
+    // opened with — asserted on the grid, which is what the child was told.
+    const ckv::term::TerminalSnapshot after = terminal.snapshot();
+    CK_CHECK(after.cells.width == 72);
+    CK_CHECK(after.cells.height == 20);
+}

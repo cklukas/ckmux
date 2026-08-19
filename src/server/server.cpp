@@ -722,6 +722,50 @@ void Server::handle(Client& client, const proto::Message& message) {
         if (Client* const watcher = client_attached_to(session->id)) send(*watcher, opened);
         return;
     }
+    if (const auto* request = std::get_if<proto::RespawnTerminal>(&message)) {
+        // WP-13: the same command in the same window (plans/06:668). The id
+        // does not change — that is what "same window" means to a client,
+        // whose window is keyed on it — so this is not an id being reused for
+        // a second terminal (WP-3), it is one terminal running again.
+        Terminal* const terminal = terminals_.find(request->term);
+        if (terminal == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "RespawnTerminal";
+            error.human = "no such terminal";
+            send(client, error);
+            return;
+        }
+        // Refused while the child is alive. Relaunching over a running program
+        // would drop the last handle on its process group — a process still
+        // running that nothing can reach — which is the one outcome a
+        // multiplexer must never produce. A reader who wants that asks for a
+        // close first, and the close protocol exists to do it gracefully.
+        if (!terminals_.respawn(request->term)) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "RespawnTerminal";
+            error.human = "that terminal is still running";
+            send(client, error);
+            return;
+        }
+        // Everything believed about this terminal is now wrong in every cell,
+        // so the belief is dropped rather than diffed against: the next tick
+        // finds no differ and states the terminal whole. `TermOpened` re-announces
+        // it under the id the client already has, which is what lets the window
+        // survive its child.
+        diffs_.forget(request->term);
+        stats_baselines_.erase(request->term);
+        if (Session* const home = session_holding(request->term)) {
+            proto::TermOpened opened;
+            opened.term = request->term;
+            opened.session = home->id;
+            opened.columns = static_cast<std::uint16_t>(terminal->columns());
+            opened.rows = static_cast<std::uint16_t>(terminal->rows());
+            if (Client* const watcher = client_attached_to(home->id)) send(*watcher, opened);
+        }
+        return;
+    }
     if (const auto* input = std::get_if<proto::Input>(&message)) {
         // Opaque on purpose: the bytes were encoded by the client against
         // mirrored mode state (plans/04), so the server writes them to the PTY

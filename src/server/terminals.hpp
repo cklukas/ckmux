@@ -177,6 +177,25 @@ public:
     bool exit_announced() const noexcept { return exit_announced_; }
     void mark_exit_announced() noexcept { exit_announced_ = true; }
 
+    // The launch to make this terminal again. WP-13's respawn is "the same
+    // command in the same window" (plans/06:668) — a build loop a reader
+    // restarts with Enter — and "the same command" is only knowable if the
+    // spec outlives the child that ran it, which is why one is kept.
+    //
+    // The GEOMETRY, though, is this terminal's current size rather than the
+    // spec's: a reader who resized the window before pressing Enter meant the
+    // new child to fill it, and the stored spec remembers the size the dead
+    // one started at. Answered here rather than by handing out the fields,
+    // so there is one place that knows which half of the spec is stale.
+    TerminalSpec respawn_spec() const;
+
+    // Puts a fresh child behind this same terminal, discarding the exited
+    // one's bookkeeping. The id does not change, which is the whole point:
+    // the client keeps the window it already has, and WP-3's "an id is never
+    // reused" is not bent by it — this is the same terminal running again,
+    // not a second terminal wearing the first one's number.
+    void relaunch(std::unique_ptr<ckv::term::PosixTerminalSubsession> session) noexcept;
+
     // What a reader who is not looking at this terminal has missed: a bell it
     // rang, and output it produced (plans/05's `TermMeta` flags).
     //
@@ -292,6 +311,7 @@ private:
     int rows_ = 0;
     int pixel_width_ = 0;
     int pixel_height_ = 0;
+    TerminalSpec spec_;
     std::optional<int> exit_status_;
     bool closed_ = false;
     bool exit_announced_ = false;
@@ -332,6 +352,12 @@ public:
     // be told what went wrong in that window, not left with a gap where one
     // was about to be.
     Terminal& open(const TerminalSpec& spec);
+
+    // Runs a terminal's command again, in place. False when there is no such
+    // terminal, or when its child is still alive — respawning a running
+    // program would leave the old child with nobody holding it, which is the
+    // one outcome a multiplexer must never produce.
+    bool respawn(TerminalId id);
 
     Terminal* find(TerminalId id) noexcept;
     const Terminal* find(TerminalId id) const noexcept;

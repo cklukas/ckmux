@@ -106,7 +106,35 @@ Terminal::Terminal(TerminalId id, std::unique_ptr<ckv::term::PosixTerminalSubses
       columns_(std::max(1, spec.columns)),
       rows_(std::max(1, spec.rows)),
       pixel_width_(std::max(0, spec.pixel_width)),
-      pixel_height_(std::max(0, spec.pixel_height)) {}
+      pixel_height_(std::max(0, spec.pixel_height)),
+      spec_(spec) {}
+
+TerminalSpec Terminal::respawn_spec() const {
+    TerminalSpec again = spec_;
+    again.columns = columns_;
+    again.rows = rows_;
+    again.pixel_width = pixel_width_;
+    again.pixel_height = pixel_height_;
+    return again;
+}
+
+void Terminal::relaunch(std::unique_ptr<ckv::term::PosixTerminalSubsession> session) noexcept {
+    session_ = std::move(session);
+    // Everything the exited child left behind. `exit_announced_` especially:
+    // left true, the new child's own exit would never be announced, and the
+    // reader would sit in front of a window that had quietly stopped saying
+    // anything about the program in it.
+    exit_status_.reset();
+    exit_announced_ = false;
+    closed_ = false;
+    // The screen is new, so whatever the client believes about this terminal
+    // is now wrong in every cell. Saying so is the caller's job — `Server`
+    // drops the differ — but the marks are ours: a bell from the dead child is
+    // not a bell from this one.
+    bell_marked_ = false;
+    activity_marked_ = false;
+    marks_announced_ = true;
+}
 
 void Terminal::resize(int columns, int rows, int pixel_width, int pixel_height) {
     // Whatever the emulator reports as changed after this is the resize, not
@@ -238,6 +266,24 @@ void Terminal::close() noexcept {
 Terminals::Terminals(Settings settings) : settings_(std::move(settings)) {}
 
 Terminals::~Terminals() { close_all(); }
+
+bool Terminals::respawn(TerminalId id) {
+    Terminal* const terminal = find(id);
+    if (terminal == nullptr) return false;
+    // A living child is refused rather than replaced. Relaunching over one
+    // would drop the last reference to its subsession, and with it the only
+    // handle anything has on that process group — a program still running with
+    // nobody able to reach it, which is the opposite of what this server is for.
+    if (terminal->live()) return false;
+
+    // The spec it was launched from, with the size it has NOW: a reader who
+    // resized the window before pressing Enter meant the new child to fill it,
+    // and the original spec remembers the size the old one started at.
+    const TerminalSpec again = terminal->respawn_spec();
+    terminal->relaunch(ckv::term::PosixTerminalSubsession::launch(
+        launch_spec_for(settings_, again), subsession_options_for(settings_)));
+    return true;
+}
 
 Terminal& Terminals::open(const TerminalSpec& spec) {
     std::unique_ptr<ckv::term::PosixTerminalSubsession> session =
