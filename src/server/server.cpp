@@ -485,6 +485,21 @@ void Server::handle(Client& client, const proto::Message& message) {
     }
     if (const auto* request = std::get_if<proto::NewSession>(&message)) {
         Session& session = create_session(request->name);
+        // The fields this message always carried and this handler ignored,
+        // found by WP-11: `ckmux new 'make -j8'` made an empty session and
+        // dropped the command on the floor — and `spawn_first` DEFAULTS to on,
+        // so the silent half was the default. The terminal opens at the
+        // conventional size, because a session created over a bare connection
+        // has no watcher whose display could say better; the first client to
+        // attach resizes it a frame later, exactly as a `NewTerminal` opened
+        // before layout is.
+        if (request->spawn_first != 0) {
+            TerminalSpec spec;
+            spec.command = request->command;
+            spec.working_directory = options_.working_directory;
+            spec.host_sixel = client.host_sixel;
+            (void)open_terminal(session.id, spec);
+        }
         std::fprintf(stderr, "ckmux server: session %llu \"%s\" created\n",
                      static_cast<unsigned long long>(session.id), session.name.c_str());
         // The list, not just an id: the client that asked wants to show the

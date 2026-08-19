@@ -660,6 +660,10 @@ CK_TEST(a_move_reparents_the_terminal_and_the_child_never_notices) {
 
     ckm::proto::NewSession second;
     second.name = "two";
+    // An empty destination, asked for explicitly: `spawn_first` is honoured
+    // now (it used to be silently ignored, and this test leaned on the
+    // defect), and what a move test needs is a session with nothing in it.
+    second.spawn_first = 0;
     client.say(second);
     ckm::proto::SessionList with_two;
     CK_CHECK(await_message(server, clock, client, with_two));
@@ -1510,5 +1514,98 @@ CK_TEST(a_layout_report_is_filed_against_a_session_or_answered) {
         CK_CHECK(untouched->layout().rect == (ckm::proto::Rect{6, 3, 18, 5}));
 
     server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(new_session_spawns_its_first_terminal_and_the_command_reaches_the_child) {
+    // The fields `NewSession` always carried and the handler ignored (found by
+    // WP-11): `spawn_first` defaults to ON, so the silent half was the
+    // default — `ckmux new 'cmd'` made an empty session and dropped the
+    // command on the floor.
+    const std::filesystem::path socket = private_socket("spawn");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    client.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, client, greeting));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+
+    ckm::proto::NewSession request;
+    request.name = "work";
+    request.command = "printf NS-STAMP; sleep 30";
+    client.say(request);
+    ckm::proto::Message answer;
+    CK_CHECK(pump(server, client, answer));
+    const auto* list = std::get_if<ckm::proto::SessionList>(&answer);
+    CK_CHECK(list != nullptr);
+    bool counted = false;
+    if (list != nullptr) {
+        for (const ckm::proto::SessionInfo& info : list->sessions)
+            if (info.name == "work") counted = info.terminals == 1;
+    }
+    CK_CHECK(counted);
+
+    // The command is not merely stored: the child is real, and what it printed
+    // is on the terminal's own grid. Stepped against the wall deadline because
+    // a child schedules itself; reaching the deadline is the failure.
+    bool stamped = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!stamped && std::chrono::steady_clock::now() < deadline) {
+        CK_CHECK(server.step());
+        for (const auto id : server.terminals().ids()) {
+            ckm::server::Terminal* const terminal = server.terminals().find(id);
+            if (terminal == nullptr) continue;
+            const ckv::term::TerminalSnapshot snapshot = terminal->snapshot();
+            std::string text;
+            for (const ckv::Cell& cell : snapshot.cell_buffer)
+                if (!cell.is_continuation()) text += cell.grapheme();
+            if (text.find("NS-STAMP") != std::string::npos) stamped = true;
+        }
+    }
+    CK_CHECK(stamped);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(new_session_spawn_first_off_means_an_empty_session_on_purpose) {
+    const std::filesystem::path socket = private_socket("nospawn");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    client.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, client, greeting));
+    CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(greeting));
+
+    ckm::proto::NewSession request;
+    request.name = "empty-on-purpose";
+    request.spawn_first = 0;
+    client.say(request);
+    ckm::proto::Message answer;
+    CK_CHECK(pump(server, client, answer));
+    const auto* list = std::get_if<ckm::proto::SessionList>(&answer);
+    CK_CHECK(list != nullptr);
+    bool empty = false;
+    if (list != nullptr) {
+        for (const ckm::proto::SessionInfo& info : list->sessions)
+            if (info.name == "empty-on-purpose") empty = info.terminals == 0;
+    }
+    CK_CHECK(empty);
+    CK_CHECK(server.terminals().ids().empty());
+
     forget(socket);
 }
