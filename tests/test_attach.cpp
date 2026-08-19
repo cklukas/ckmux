@@ -137,6 +137,18 @@ struct Client {
 };
 
 // Steps the server until a predicate holds, with the tick advancing each pass.
+//
+// The clock is manual but the children are real: a wait whose predicate needs
+// a child's OUTPUT (a printf crossing a PTY) is bounded by the machine's
+// scheduler, not by this loop's virtual ticks — and without the sleep below,
+// two hundred passes complete in single-digit real milliseconds, which under
+// several suites running concurrently is less time than the child needs to be
+// scheduled at all (field flake, 2026-08-19: two different child-output waits
+// expired under parallel-suite load and passed on every quiet rerun). One
+// real millisecond per unsatisfied pass gives the default budget a fifth of a
+// real second and a child-output wait (kChildOutputPasses) two full seconds,
+// while a predicate that is already true still returns on its first pass.
+inline constexpr int kChildOutputPasses = 2000;
 template <typename Ready>
 bool run_until(Server& server, ckv::ManualClock& clock, Client& client, Ready ready,
                int passes = 200) {
@@ -145,6 +157,7 @@ bool run_until(Server& server, ckv::ManualClock& clock, Client& client, Ready re
         if (!server.step()) return false;
         client.pump();
         if (ready()) return true;
+        ::usleep(1000);
     }
     return false;
 }
@@ -626,7 +639,8 @@ CK_TEST(a_picture_a_child_draws_reaches_the_mirror_with_its_pixels) {
     }
     ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
     CK_CHECK(mirrored != nullptr);
-    CK_CHECK(run_until(server, clock, watcher, [&] { return !mirrored->rasters().empty(); }));
+    CK_CHECK(run_until(server, clock, watcher, [&] { return !mirrored->rasters().empty(); },
+                       kChildOutputPasses));
 
     if (!mirrored->rasters().empty()) {
         const ckv::core::TerminalRaster& raster = mirrored->rasters().front();
@@ -685,7 +699,8 @@ CK_TEST(a_host_that_shows_no_graphics_opens_children_that_are_told_not_to_draw) 
     if (opened != nullptr) {
         // The refusal is said out loud where a debugger looks for it.
         CK_CHECK(run_until(server, clock, watcher,
-                           [&] { return !opened->session().diagnostics().empty(); }));
+                           [&] { return !opened->session().diagnostics().empty(); },
+                           kChildOutputPasses));
     }
     ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
     CK_CHECK(mirrored != nullptr);
@@ -736,7 +751,9 @@ CK_TEST(a_pane_opened_after_the_hosts_sixel_probe_resolves_still_gets_told_it_ca
     }
     ckm::client::RemoteTerminalSubsession* mirrored = watcher.session.terminal(ids.front());
     CK_CHECK(mirrored != nullptr);
-    CK_CHECK(run_until(server, clock, watcher, [&] { return mirrored != nullptr && !mirrored->rasters().empty(); }));
+    CK_CHECK(run_until(server, clock, watcher,
+                       [&] { return mirrored != nullptr && !mirrored->rasters().empty(); },
+                       kChildOutputPasses));
     if (mirrored != nullptr) CK_CHECK(!mirrored->rasters().empty());
     server.terminals().close_all();
     forget(socket);
@@ -775,7 +792,7 @@ CK_TEST(a_heal_under_steady_news_converges_instead_of_looping) {
     CK_CHECK(run_until(server, clock, client, [&] {
         mirrored = client.session.terminal(pictured.id());
         return mirrored != nullptr && !mirrored->rasters().empty();
-    }));
+    }, kChildOutputPasses));
 
     // The fall: the client stops reading while the busy child floods, until
     // the server has marked it for healing.
