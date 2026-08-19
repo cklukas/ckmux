@@ -96,7 +96,7 @@ take first.
 | 20 | **U4-b** — Tile Horizontally/Vertically + filled-layout query | ckVision | 2–3 d | **Ready** | — |
 | 21 | **U4-c** — Maximize-follows-on-open capability | ckVision | 1 d | **Ready** | — |
 | 22 | **WP-30** — Reattach layout restoration (move, resize-if-opted-in, maximize, tiled-fraction) | ckmux | 3–4 d | Blocked | WP-28, WP-29, U4-b |
-| 23 | **WP-31** — Tile Horizontally / Tile Vertically commands in ckmux | ckmux | 0.5–1 d | Blocked | U4-b |
+| 23 | **WP-31** — Tile Horizontally / Vertically / Grid commands in ckmux | ckmux | 0.5–1 d | Blocked | U4-b |
 | 24 | **WP-32** — Window Switcher Bar integration in ckmux | ckmux | 1–2 d | Blocked | U4-a |
 | 25 | **WP-33** — Maximize-follows integration in ckmux | ckmux | 0.5 d | Blocked | U4-c |
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Ready** (head start landed) | WP-2 ✓, WP-8 ✓ |
@@ -760,13 +760,26 @@ one.
   contents the host supplied; a maximized window's bounds visibly exclude
   the bar's row.
 
-**U4-b — Tile Horizontally / Tile Vertically, and a filled-layout query**
-*(ckVision)*. Two new standard window commands beside the existing `Tile`
+**U4-b — Tile Horizontally / Vertically / Grid, and a filled-layout query**
+*(ckVision)*. Three new standard window commands beside the existing `Tile`
 and `Cascade`. Tile Horizontally arranges every window in full-width
 horizontal bands stacked top to bottom; Tile Vertically arranges them in
 full-height vertical bands side by side — the conventional meaning from
 desktop taskbars' own "Tile Windows" commands, stated explicitly here
-because the two words are used inconsistently across platforms.
+because the two words are used inconsistently across platforms. **Tile
+Grid** arranges them near-square: four windows become two columns by two
+rows.
+
+The grid is specified as an exact cover, which is a correctness
+requirement rather than a neatness one — the filled-layout query below and
+the shadow suppression that rides on it both have to recognise a grid as
+filled, and a ragged last row would make them wrong. So: `cols =
+ceil(sqrt(n))`, `rows = ceil(n / cols)`, each row's height `area.height /
+rows` with the last row absorbing the remainder, and within a row of `k`
+windows each width `area.width / k` with the last absorbing that
+remainder — so a short final row stretches across the full width instead
+of leaving desktop showing. n=3 is the case that proves it: two windows
+above, one full-width below.
 
 **Checked against the code before implementation, and it changed the
 package (2026-08-19):** the existing `Desktop::tile()` is *already* the
@@ -776,8 +789,14 @@ file and plans/06 described it as "a near-square grid", which it has never
 been. So `Tile Vertically` names the arrangement ckVision already produces
 rather than adding a second one, `tile()`'s own behaviour is left exactly
 as it is (`kTile` is a standard command other applications call, and a
-downstream consumer was promised these packages are additive), and only
-`Tile Horizontally` is genuinely new geometry. Both produce an even, non-overlapping, desktop-filling
+downstream consumer was promised these packages are additive), and
+`Tile Horizontally` and `Tile Grid` are the genuinely new geometry. The
+grid the plans had claimed all along is thus finally built rather than
+merely described — which is the whole reason to read the code before
+writing the package. `Tile Vertically` and the bare `Tile` deliberately
+produce the same arrangement; ckmux offers the three explicit names in its
+Window menu and leaves the unqualified one to applications that already
+call it. Both produce an even, non-overlapping, desktop-filling
 arrangement, which is also what the rest of this package detects: **checked
 against the current code, and this does not exist yet** —
 `Desktop::child_casts_shadow` reads only each window's own `casts_shadow()`
@@ -805,14 +824,18 @@ wrong default elsewhere. *Done when*: with the capability enabled, opening a
 window while the active one is maximized places the new one maximized too;
 disabled (ckVision's own default), behavior is unchanged.
 
-**WP-31 — Tile Horizontally / Tile Vertically in ckmux.** Menu entries
-under `Window ▸`, beside the existing Tile/Cascade; keybindings, which-key
+**WP-31 — Tile Horizontally / Vertically / Grid in ckmux.** Menu entries
+under `Window ▸`, beside the existing Cascade; keybindings, which-key
 rows and help-page entries through the one `Keymap` every other command
 already goes through (R6 made `chord_spelling()`/`parse_chord()` the single
-spelling authority — new bindings use it, not a table of their own).
-Depends on U4-b. *Done when*: `tests/test_command_reachability.cpp` — the
-suite that exists because a live-looking menu item once had no handler —
-passes with both new commands included, each reachable by its own chord.
+spelling authority — new bindings use it, not a table of their own). The
+menu offers the three explicitly named tilings and leaves the unqualified
+`Tile` out of ckmux's own surface: it produces the same arrangement as
+Tile Vertically, and a menu listing both would be offering one behaviour
+twice under two names. Depends on U4-b. *Done when*:
+`tests/test_command_reachability.cpp` — the suite that exists because a
+live-looking menu item once had no handler — passes with all three new
+commands included, each reachable by its own chord.
 
 **WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
 terminal windows into U4-a's bar: the title provider (the same
