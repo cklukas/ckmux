@@ -571,8 +571,15 @@ removes.
 
 ## Window management details
 
-- New windows cascade from the last created position; `Tile` arranges all
-  non-minimized windows in a near-square grid; `Cascade` restacks.
+- New windows cascade from the last created position; `Cascade` restacks.
+  `Tile` arranges all windows in **full-height vertical bands side by side** —
+  this line said "a near-square grid" until 2026-08-19, when implementing
+  U4-b sent someone to read `Desktop::tile()` and find it slicing width alone
+  and handing every window the full content height. The grid was never built;
+  the sentence had simply never been checked against the code, which is the
+  drift class the 2026-08-18 review kept finding. `Tile Vertically` (U4-b)
+  names that existing arrangement honestly, and `Tile Horizontally` adds its
+  transpose: full-width bands stacked top to bottom.
 - Zoom maximizes to the desktop (layout remembered for restore). While any
   window is zoomed, `^B n/p` cycles zoomed (tmux-like flow).
 - Focus policy: click-to-focus + raise; `^B n/p/1-9` keyboard focus.

@@ -727,13 +727,22 @@ as specified:
 open window listed by title, click to activate and raise, right-click for a
 host-supplied context menu — "like Windows taskbar," in the reader's own
 words. Docked at the bottom, stacked immediately above whatever a host
-already docks there (ckmux's own footer) — plans/06 records the footer as
-`Desktop::dock_bottom`; whether that slot already stacks more than one bar or
-needs to be taught to is the first thing to establish, not something this
-description can promise either way. `Desktop`'s content-area and
-maximize-geometry accounting must reserve the bar's height the same way it
-already reserves the `MenuBar`'s at the top, so a maximized window's bounds
-exclude it and it is never covered. Customizable, per the request: the
+already docks there (ckmux's own footer).
+
+**Established before implementation (2026-08-19), so nobody has to guess:**
+`Desktop::dock_bottom` holds exactly ONE view per edge — its own header says
+docking a second "replaces the first as far as auto-positioning goes, but
+does NOT remove it". So the bar is **not** a second dock; the host composes
+`ui::Column{ WindowSwitcherBar, StatusLine }` and docks that Column. This is
+the right answer rather than the convenient one: `Column`'s vertical hint
+sums its children, so the reserved height is correct automatically and
+`content_area()` — and therefore a maximized window's bounds — already
+excludes the whole stack, which is precisely the "never covered"
+requirement. It also needs **no change to the dock API**, which matters
+beyond elegance: another session is building the CK Office launcher against
+`Desktop`/`Window` right now and was promised these packages are additive.
+The bar therefore ships as a widget that works anywhere a view can be
+placed, not as a privileged second dock slot. Customizable, per the request: the
 window set listed, the context menu's contents, and what "activate" does are
 all host-supplied (a title/window provider and a menu-builder callback), not
 hardcoded to ckmux — ckmux is its first consumer, deliberately not its only
@@ -753,13 +762,22 @@ one.
 
 **U4-b — Tile Horizontally / Tile Vertically, and a filled-layout query**
 *(ckVision)*. Two new standard window commands beside the existing `Tile`
-(near-square grid) and `Cascade`: Tile Horizontally arranges every
-non-minimized window in full-width horizontal bands stacked top to bottom;
-Tile Vertically arranges them in full-height vertical bands side by side —
-the conventional meaning from desktop taskbars' own "Tile Windows"
-commands, stated explicitly here because the two words are used
-inconsistently across platforms; confirm this matches intent before
-building it. Both produce an even, non-overlapping, desktop-filling
+and `Cascade`. Tile Horizontally arranges every window in full-width
+horizontal bands stacked top to bottom; Tile Vertically arranges them in
+full-height vertical bands side by side — the conventional meaning from
+desktop taskbars' own "Tile Windows" commands, stated explicitly here
+because the two words are used inconsistently across platforms.
+
+**Checked against the code before implementation, and it changed the
+package (2026-08-19):** the existing `Desktop::tile()` is *already* the
+vertical-bands arrangement — it slices `content_area().width` by the window
+count and gives each window the full height (`desktop.cpp:589`). Both this
+file and plans/06 described it as "a near-square grid", which it has never
+been. So `Tile Vertically` names the arrangement ckVision already produces
+rather than adding a second one, `tile()`'s own behaviour is left exactly
+as it is (`kTile` is a standard command other applications call, and a
+downstream consumer was promised these packages are additive), and only
+`Tile Horizontally` is genuinely new geometry. Both produce an even, non-overlapping, desktop-filling
 arrangement, which is also what the rest of this package detects: **checked
 against the current code, and this does not exist yet** —
 `Desktop::child_casts_shadow` reads only each window's own `casts_shadow()`
