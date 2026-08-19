@@ -134,7 +134,7 @@ take first.
 | 48b | **U5-b** — `process_id()` lifted to the `core::TerminalSubsession` seam, default −1 | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `4d0afef`) | U5-a ✓ |
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
-| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-20, ckmux-53; central gate requested) | WP-38 ✓ |
+| 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1629,6 +1629,21 @@ menu-driven e2e lives in the in-process display suite reading
 `Window::footer()` directly rather than a PTY screen-scrape — the same
 public dispatch path, with the assertion on the value the frame draws from
 rather than on where the frame happened to wrap.
+
+*Gated 2026-08-20* by the test-coordinator session at ckmux `d3c69e0` ×
+ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, every stats suite named
+and green in both lanes; the one red is a neighbour's positional menu
+locator (`menus()[2]`), tripped by the View menu's insertion and owned by
+its own package. The landing itself took three commits (`da70a8e`,
+`c66eb9d`, `e8e7095`): the first swept another session's in-flight work via
+whole-file adds — including a splice that briefly broke HEAD — and the two
+repairs restored parent-plus-own-hunks and a parseable tests/CMakeLists.txt.
+What it taught is now fleet doctrine, stated here so the queue remembers it:
+a deletion/foreign audit of a shared dirty file must run at STAGING time, in
+the same command chain as the add, because an audit run before the add
+measures a tree that no longer exists when the add happens; and a ckmux gate
+is only meaningful against a NAMED ckVision SHA — both repos were
+individually green for hours while the pair was broken.
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
 attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty
