@@ -91,6 +91,32 @@ struct TerminalSpec {
     bool host_sixel = true;
 };
 
+// A printer policy, as one scope states it. Every field is optional because a
+// scope may override one thing and defer the rest — a reader who sets "always
+// capture for this session" has said nothing about how big its spool may be,
+// and inheriting the rest is the whole point of having scopes (plans/06:
+// terminal → session → global → built-in).
+struct PrinterOverride {
+    std::optional<PrinterMode> mode;
+    std::optional<std::uint32_t> ask_cache;
+    std::optional<std::uint32_t> spool_limit;
+
+    bool empty() const noexcept { return !mode && !ask_cache && !spool_limit; }
+};
+
+// The three numbers in force somewhere, with the scope each came from — which
+// is not decoration: plans/06 requires the Printer Settings dialog to show the
+// effective values *and where they came from*, so that a per-session override
+// a reader forgot about is never invisible to them.
+struct EffectivePrinterPolicy {
+    PrinterMode mode = PrinterMode::Ask;
+    std::uint32_t ask_cache = 0;
+    std::uint32_t spool_limit = 0;
+    proto::PrinterScope mode_from = proto::PrinterScope::Global;
+    proto::PrinterScope ask_cache_from = proto::PrinterScope::Global;
+    proto::PrinterScope spool_limit_from = proto::PrinterScope::Global;
+};
+
 // One terminal: a PTY, the program in it, and the emulator that reads it.
 //
 // The reads a diff engine needs are forwarded rather than exposed as the
@@ -271,6 +297,73 @@ public:
     bool custom_title_announced() const noexcept { return custom_title_announced_; }
     void note_custom_title_announced() noexcept { custom_title_announced_ = true; }
 
+    // --- The virtual printer's spool (PRINT-1…6) ---------------------
+    //
+    // What this terminal has captured and not yet been told to let go of.
+    //
+    // Here rather than in the emulator because the emulator DRAINS: ckVision
+    // hands each finished job over once through `take_printer_jobs()` and
+    // forgets it, which is what keeps a snapshot from carrying a megabyte of
+    // captured text (plans/04's `take_printer_jobs` note). Something has to
+    // hold what it hands over, and it has to be the same place the layout and
+    // the reader's name for this terminal live — a session outlives its
+    // clients, and a print a reader has not answered yet is exactly the thing
+    // they come back to.
+    //
+    // The TEXT is held and never volunteered. A job travels as metadata on
+    // `PrintJobAdded` and in the attach snapshot; the payload moves only when
+    // a client asks for it with `PrintJobFetch`, because a reader who never
+    // opens the preview should not have paid to ship it.
+    struct HeldJob {
+        std::uint64_t id = 0;
+        proto::PrintJobKind kind = proto::PrintJobKind::Screen;
+        std::string text;
+        // Lines, counted once when the job arrives rather than on every
+        // listing: the metadata is sent on the tick and again in every
+        // snapshot, and counting newlines through a megabyte each time would
+        // be work proportional to what a reader has NOT looked at.
+        std::uint32_t lines = 0;
+        std::int64_t at = 0;
+        // The emulator freed this job's buffer rather than truncating it. The
+        // text is empty on purpose — a host that showed the first megabyte of
+        // a longer document as though it were the document would be lying
+        // about what was printed — and a reader is told so rather than shown
+        // a short job.
+        bool overflowed = false;
+    };
+    // What THIS terminal says about printing, overriding its session and the
+    // global setting for whichever of the three numbers it names. Stored per
+    // terminal rather than resolved once and cached, because the answer
+    // depends on scopes above it that a reader can change at any time — a
+    // cached copy would be a fourth place the policy lives.
+    const PrinterOverride& printer_override() const noexcept { return printer_; }
+    void set_printer_override(const PrinterOverride& printer) { printer_ = printer; }
+
+    std::span<const HeldJob> print_jobs() const noexcept { return jobs_; }
+    // Takes whatever the emulator has finished and adds it to the spool,
+    // stamping each with `now`. Returns the ids added, so the caller announces
+    // exactly what arrived rather than diffing the list.
+    std::vector<std::uint64_t> collect_print_jobs(std::int64_t now);
+    const HeldJob* print_job(std::uint64_t id) const noexcept;
+    // Forgets one job, or — with id 0 — every job this terminal holds, which
+    // is what the frame button's "discard" means with nothing selected.
+    // Answers whether anything was actually forgotten.
+    bool discard_print_jobs(std::uint64_t id) noexcept;
+    // Says the printer's numbers moved for a reason the emulator does not know
+    // about — a job discarded, a policy changed. The tick sends `PrintState`
+    // off the emulator's own damage flag, which nothing outside it can set.
+    // The printer policy, changed on a terminal that is already running —
+    // ckVision's own setter, forwarded, because a reader changing a preference
+    // must not have to lose their shell to it.
+    void set_printer_policy(ckv::term::TerminalPrinterPolicy policy);
+    void set_printer_spool_limit(std::size_t bytes);
+    void mark_printer_news() noexcept { printer_news_ = true; }
+    bool take_printer_news() noexcept {
+        const bool news = printer_news_;
+        printer_news_ = false;
+        return news;
+    }
+
     // Whether the last thing to change this terminal's screen was a client
     // resizing it rather than its child saying something. Read once and
     // cleared, on the tick.
@@ -326,6 +419,15 @@ private:
     // place nobody has stated has no place to state.
     bool layout_announced_ = true;
     std::string custom_title_;
+    PrinterOverride printer_;
+    bool printer_news_ = false;
+    std::vector<HeldJob> jobs_;
+    // Never reused within this terminal's life, for the reason a terminal id
+    // is not (plans/05, invariant 3): a client that asks for a job after it
+    // was discarded must be told there is no such job, not handed a different
+    // one — and a preview showing somebody else's captured output is a worse
+    // failure than an error.
+    std::uint64_t next_job_id_ = 1;
     // True until a reader names it, once more for the same reason: a terminal
     // nobody has named has no name to announce.
     bool custom_title_announced_ = true;

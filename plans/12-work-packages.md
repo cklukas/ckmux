@@ -120,7 +120,7 @@ take first.
 | 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Done** (2026-08-20, ckmux `f4cab08`, gated) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Done** (2026-08-20) | WP-6 ✓, U0-c ✓ |
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** (ckmux-03, `uds:/tmp/cc-socks/31309.sock`) | WP-6 ✓, U1-c ✓, U1-d ✓ |
-| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-20, ckmux-63) | WP-16 ✓ |
+| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **In progress** (ckmux-63, uds:/tmp/cc-socks/27414.sock) | WP-16 ✓ |
 | 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |

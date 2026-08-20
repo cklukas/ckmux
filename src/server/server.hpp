@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <deque>
 #include <unordered_map>
@@ -67,6 +68,9 @@ struct Session {
     // `[general] desktop-size`, and under the default it is set once, by the
     // first client to arrive, and left alone afterwards.
     ckv::Size desktop{0, 0};
+    // What this session says about printing, for the terminals in it that do
+    // not say otherwise themselves.
+    PrinterOverride printer;
 };
 
 class Server {
@@ -139,6 +143,11 @@ public:
     // watch a client cross the high-water mark for real rather than by
     // arithmetic.
     std::size_t queued_bytes() const noexcept;
+    // The printer policy in force for one terminal, and where each of its
+    // three numbers came from: terminal → session → global → built-in
+    // (plans/06, plans/08). Public because it is what `Printer Settings` shows
+    // and what a test asserts on; there is no second copy of this rule.
+    EffectivePrinterPolicy effective_printer_policy(TerminalId id) const;
     bool waiting_to_heal() const noexcept;
     // The pixels held for clients that have not caught up yet. The other half
     // of the same gauge: `queued_bytes` measures what is on the wire, which is
@@ -409,7 +418,18 @@ private:
     // session too, when the reader's kill-empty-session says so.
     void remove_terminal(TerminalId term, bool exited);
     // The session whose terminal list holds this id, or nullptr.
+    // Takes whatever the emulator has finished, adds it to the terminal's
+    // spool, and names each new job to the watching client. Drains even with
+    // nobody watching — see the call site.
+    void collect_and_announce_print_jobs(TerminalId id, Terminal& terminal, Client* watcher);
+    // Pushes the resolved policy down into every terminal's emulator, and
+    // sizes its spool. Called whenever a scope changes, because a policy the
+    // emulator has not been told is a policy that is not in force.
+    void apply_printer_policies();
     Session* session_holding(TerminalId term);
+    // The const half, for the readers that only ask. Same lookup; a second
+    // implementation would be a second answer waiting to disagree.
+    const Session* session_holding(TerminalId term) const;
     // Reparents one terminal into another session — or into a fresh one, when
     // the request says so. The child never notices; the watchers do.
     void move_terminal(Client& client, const proto::MoveTerminal& request);

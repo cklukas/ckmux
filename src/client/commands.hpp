@@ -51,6 +51,12 @@ inline constexpr std::string_view kMoveTerminal = "ckmux.terminal.move-session";
 // name, and separate from anything the child does with OSC 0/2: this is the
 // override, and what the child says goes on being recorded underneath it.
 inline constexpr std::string_view kRenameTerminal = "ckmux.terminal.rename";
+// What a program printed, and the settings that decide whether it is kept.
+// Two commands rather than one: looking at captures and changing the policy
+// are different intents, and a reader who wants the second should not have to
+// pass through a list of the first.
+inline constexpr std::string_view kPrintOutput = "ckmux.terminal.print-output";
+inline constexpr std::string_view kPrinterSettings = "ckmux.terminal.printer-settings";
 inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 // Collapsing ckmux's own bottom chrome: the footer goes and the window bar
 // drops to the last row (WP-35). ckmux's rather than ckVision's because the

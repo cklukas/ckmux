@@ -43,6 +43,18 @@ constexpr const char* kVersion = "0.0.1 (M1)";
 // fits the 80-column terminal plans/06 sizes every dialog against.
 constexpr int kDialogTitleColumns = 56;
 
+// ckmux's own printer mode, in the wire's vocabulary. The two enums are
+// separate on purpose (proto::Rect's reasoning), so this is a stated mapping
+// rather than a cast that would follow a renumbering silently.
+proto::PrinterMode wire_printer_mode_of(PrinterMode mode) {
+    switch (mode) {
+        case PrinterMode::Ask: return proto::PrinterMode::Ask;
+        case PrinterMode::Capture: return proto::PrinterMode::Capture;
+        case PrinterMode::Off: return proto::PrinterMode::Off;
+    }
+    return proto::PrinterMode::Ask;
+}
+
 w::TerminalView* terminal_view_of(w::Window* window) {
     if (window == nullptr) return nullptr;
     return dynamic_cast<w::TerminalView*>(window->content());
@@ -336,6 +348,18 @@ void ClientApp::register_commands() {
             // a row that is not there.
             declare(binding.key, binding.title, "Window",
                     [this] { set_chrome_collapsed(!chrome_collapsed_); });
+        } else if (binding.key == commands::kPrintOutput) {
+            const u::CommandId print = declare(binding.key, binding.title, "Terminal", [this] {
+                show_print_output_dialog(terminal_shown_by(active_terminal()));
+            });
+            registry.set_enabled_predicate(print,
+                                           [this] { return active_terminal() != nullptr; });
+        } else if (binding.key == commands::kPrinterSettings) {
+            const u::CommandId settings = declare(binding.key, binding.title, "Terminal", [this] {
+                show_printer_settings_dialog(terminal_shown_by(active_terminal()));
+            });
+            registry.set_enabled_predicate(settings,
+                                           [this] { return active_terminal() != nullptr; });
         } else if (binding.key == commands::kMoveResize) {
             declare(binding.key, binding.title, "Window", [this] {
                 if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
@@ -516,6 +540,7 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal),
          item(commands::kRenameTerminal), item(commands::kMoveTerminal), separator,
+         item(commands::kPrintOutput), item(commands::kPrinterSettings), separator,
          item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
          separator, item(commands::kCopyMode), item(commands::kPaste), separator,
          item(commands::kSendPrefix)}};
@@ -1759,6 +1784,10 @@ std::string ClientApp::effective_title(const TerminalTitle& title) {
 
 void ClientApp::refresh_terminal_titles() {
     if (desktop_ == nullptr) return;
+    // The printer button rides this poll rather than one of its own: its byte
+    // counter must move while a child prints, and the same tick that re-reads
+    // a caption is exactly as often as either can visibly change.
+    refresh_printer_buttons();
     for (w::Window* window : desktop_->windows()) {
         const auto entry = titles_.find(window);
         if (entry == titles_.end()) continue;  // a dialog, not a terminal
@@ -1991,6 +2020,481 @@ void ClientApp::show_rename_terminal_dialog(ckv::term::TerminalSubsession* termi
             rename_terminal(named, result.values.front());
         });
     retain_dialog(presentation);
+}
+
+// --- The virtual printer (PRINT-3…6) ---------------------------------------
+
+PrinterButtonModel ClientApp::printer_model_for(w::Window* window) const {
+    PrinterButtonModel model;
+    if (window == nullptr) return model;
+    const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(
+        const_cast<w::Window*>(window));
+    if (terminal == nullptr) return model;
+    // Whatever the session layer knows. Unset is M1, where the client owns its
+    // terminals directly and reads the emulator's own scalars.
+    if (options_.printer_status) {
+        model = options_.printer_status(*terminal);
+    } else {
+        const ckv::term::TerminalStatus status = terminal->status();
+        model.mode = wire_printer_mode_of(options_.settings.printer_mode);
+        model.state = status.printer_sunk       ? proto::PrinterState::Sunk
+                      : status.printer_controller_active ? proto::PrinterState::Capturing
+                                                         : proto::PrinterState::Idle;
+        model.pending_bytes = status.printer_pending_bytes;
+        model.jobs = status.printer_jobs_ready;
+    }
+    const auto surface = printers_.find(const_cast<w::Window*>(window));
+    model.answered = surface != printers_.end() && surface->second.answered;
+    return model;
+}
+
+void ClientApp::refresh_printer_buttons() {
+    if (desktop_ == nullptr) return;
+    for (w::Window* window : desktop_->windows()) {
+        if (titles_.find(window) == titles_.end()) continue;  // a dialog, not a terminal
+        const PrinterButtonModel model = printer_model_for(window);
+        PrinterSurface& surface = printers_[window];
+        const bool wanted = printer_button_state(model) != PrinterButtonState::Hidden;
+
+        if (!wanted) {
+            // Taken away rather than left blank. An overlay that draws nothing
+            // still occupies its slot, and a window that once printed would
+            // keep a dead cell on its border for the rest of its life.
+            if (surface.button != nullptr) {
+                window->remove_frame_overlay(surface.button).reset();
+                surface.button = nullptr;
+            }
+            continue;
+        }
+        if (surface.button == nullptr) {
+            auto button = std::make_unique<PrinterButton>();
+            const std::weak_ptr<void> alive = alive_;
+            // Bound to the WINDOW, not to whatever is active: the button is
+            // drawn on one window's frame and must act on that window, which
+            // is the same rule the switcher bar's context menu follows.
+            w::Window* const owner = window;
+            button->on_activate = [this, alive, owner](PrinterButtonState state) {
+                if (alive.expired()) return;
+                ckv::term::TerminalSubsession* const target = terminal_shown_by(owner);
+                if (target == nullptr) return;
+                switch (state) {
+                    case PrinterButtonState::Asking:
+                        show_printer_ask_dialog(target);
+                        break;
+                    case PrinterButtonState::Sunk:
+                        // The only useful next move: what would have let the
+                        // document through. Print Output would show an empty
+                        // list, which answers nothing.
+                        show_printer_settings_dialog(target);
+                        break;
+                    case PrinterButtonState::Holding:
+                    case PrinterButtonState::Full:
+                        show_print_output_dialog(target);
+                        break;
+                    case PrinterButtonState::Hidden:
+                        break;
+                }
+            };
+            // Bottom border, left-aligned: the bottom inset clears the resize
+            // grips exactly, and frame overlays cast no shadow (plans/06).
+            surface.button = window->add_frame_overlay(
+                std::move(button),
+                w::FrameSlot{w::Edge::Bottom, u::Alignment::Start, 0});
+        }
+        surface.button->set_model(model);
+    }
+}
+
+void ClientApp::show_printer_ask_dialog(ckv::term::TerminalSubsession* terminal) {
+    if (terminal == nullptr || desktop_ == nullptr) return;
+    w::Window* const window = window_showing(terminal);
+    if (window == nullptr) return;
+    const PrinterButtonModel model = printer_model_for(window);
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Print output";
+    const auto note = [&descriptor](std::string line) {
+        w::FieldDescriptor field;
+        field.kind = w::FieldKind::Note;
+        field.label = std::move(line);
+        descriptor.fields.push_back(std::move(field));
+    };
+    note("A program in this terminal is sending output to a printer.");
+    note(format_bytes(model.pending_bytes) + " captured so far.");
+
+    // The four answers, and each names the scope it applies to — because "yes"
+    // to one terminal and "yes" to everything are different promises, and a
+    // dialog that collapsed them would make the reader's answer bigger than
+    // their intent.
+    const std::size_t answer_field = descriptor.fields.size();
+    w::FieldDescriptor answer;
+    answer.kind = w::FieldKind::Radio;
+    answer.label = "";
+    answer.options = {"Keep capturing — this terminal", "Keep capturing — this session",
+                      "Keep capturing — always (save as default)",
+                      "Stop capturing (report \"no printer\")"};
+    // The session, because it is the answer that is almost always meant: a
+    // reader saying yes to one print usually means yes to this piece of work,
+    // not to this window and not to every terminal they will ever open.
+    answer.initial_selection = 1;
+    descriptor.fields.push_back(std::move(answer));
+
+    ckv::term::TerminalSubsession* const asked = terminal;
+    const std::weak_ptr<void> alive = alive_;
+    w::Window* const owner = window;
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        "&View / Save…", w::ButtonRole::Dismiss, [this, alive, asked] {
+            if (alive.expired()) return;
+            // Looking counts as answering: a reader who opened the document
+            // has engaged with the question, and asking again while they read
+            // it would be the same prompt twice.
+            if (w::Window* const shown = window_showing(asked)) printers_[shown].answered = true;
+            show_print_output_dialog(asked);
+        }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        "&Discard", w::ButtonRole::Dismiss, [this, alive, asked] {
+            if (alive.expired() || window_showing(asked) == nullptr) return;
+            if (options_.discard_print_job) options_.discard_print_job(*asked, 0);
+        }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{
+        "&Settings…", w::ButtonRole::Dismiss, [this, alive, asked] {
+            if (alive.expired()) return;
+            show_printer_settings_dialog(asked);
+        }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&OK", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, alive, asked, owner, answer_field](const w::DialogResult& result) {
+            if (alive.expired() || !result.accepted) return;
+            if (result.selected.size() <= answer_field) return;
+            const int chosen = result.selected[answer_field];
+            if (chosen < 0) return;
+            // Answered either way — including "stop", which is an answer and
+            // must not leave the button asking the same question again.
+            if (owner != nullptr) printers_[owner].answered = true;
+            const PrinterMode mode = chosen == 3 ? PrinterMode::Off : PrinterMode::Capture;
+            const proto::PrinterScope scope = chosen == 0   ? proto::PrinterScope::Terminal
+                                              : chosen == 1 ? proto::PrinterScope::Session
+                                                            : proto::PrinterScope::Global;
+            apply_printer_choice(asked, scope, mode);
+        });
+    retain_dialog(presentation);
+}
+
+void ClientApp::apply_printer_choice(ckv::term::TerminalSubsession* terminal,
+                                     proto::PrinterScope scope, PrinterMode mode) {
+    if (terminal == nullptr) return;
+    if (options_.set_printer_policy) {
+        options_.set_printer_policy(0, terminal, scope, mode,
+                                    static_cast<std::uint32_t>(
+                                        options_.settings.printer_ask_cache_bytes),
+                                    static_cast<std::uint32_t>(
+                                        options_.settings.printer_spool_limit_bytes));
+    } else {
+        // M1: no scopes above this process, so every scope is the same one and
+        // the client's own setting IS the policy.
+        options_.settings.printer_mode = mode;
+    }
+    // "Always" is the one answer that outlives the session, so it is the one
+    // that touches the reader's file. The others are deliberately not written:
+    // a per-terminal yes that quietly became a permanent default would be an
+    // answer larger than the question asked.
+    if (scope == proto::PrinterScope::Global) {
+        const char* const written = mode == PrinterMode::Off      ? "off"
+                                    : mode == PrinterMode::Capture ? "capture"
+                                                                   : "ask";
+        (void)ckm::save_setting(ckm::platform::config_file_path(), "printer", "mode", written);
+    }
+}
+
+void ClientApp::show_printer_settings_dialog(ckv::term::TerminalSubsession* terminal) {
+    if (desktop_ == nullptr) return;
+    const Settings& now = options_.settings;
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Printer Settings";
+    const auto note = [&descriptor](std::string line) {
+        w::FieldDescriptor field;
+        field.kind = w::FieldKind::Note;
+        field.label = std::move(line);
+        descriptor.fields.push_back(std::move(field));
+    };
+
+    const std::size_t scope_field = descriptor.fields.size();
+    w::FieldDescriptor scope;
+    scope.kind = w::FieldKind::Radio;
+    scope.label = "Scope";
+    scope.options = {"This terminal", "This session", "Global"};
+    // The session again, for the reason the Ask popup defaults there: it is
+    // the scope a reader almost always means, and the one whose effect they
+    // can see without it following them into tomorrow.
+    scope.initial_selection = terminal == nullptr ? 2 : 1;
+    descriptor.fields.push_back(std::move(scope));
+
+    const std::size_t mode_field = descriptor.fields.size();
+    w::FieldDescriptor mode;
+    mode.kind = w::FieldKind::Radio;
+    mode.label = "When a program prints";
+    mode.options = {"Ask me (capture, show the button)", "Always capture",
+                    "Off — report \"no printer\""};
+    mode.initial_selection = now.printer_mode == PrinterMode::Ask       ? 0
+                             : now.printer_mode == PrinterMode::Capture ? 1
+                                                                        : 2;
+    descriptor.fields.push_back(std::move(mode));
+
+    const std::size_t ask_cache_field = descriptor.fields.size();
+    w::FieldDescriptor ask_cache;
+    ask_cache.kind = w::FieldKind::Number;
+    ask_cache.label = "Ask cache (KB)";
+    ask_cache.initial_text = std::to_string(now.printer_ask_cache_bytes / 1024);
+    ask_cache.minimum = 1;
+    ask_cache.maximum = 1024 * 1024;
+    descriptor.fields.push_back(std::move(ask_cache));
+    note("  Discarded whole if exceeded — nothing has been consented to yet.");
+
+    const std::size_t spool_field = descriptor.fields.size();
+    w::FieldDescriptor spool;
+    spool.kind = w::FieldKind::Number;
+    spool.label = "Spool limit (KB)";
+    spool.initial_text = std::to_string(now.printer_spool_limit_bytes / 1024);
+    spool.minimum = 1;
+    spool.maximum = 1024 * 1024;
+    descriptor.fields.push_back(std::move(spool));
+    note("  Per terminal, once capturing. Finished jobs are kept.");
+
+    const std::size_t format_field = descriptor.fields.size();
+    w::FieldDescriptor format;
+    format.kind = w::FieldKind::Combo;
+    format.label = "Default format";
+    format.options = {"Plain text (.txt)", "Original stream (.ansi)"};
+    format.initial_selection = now.printer_save_format == PrinterSaveFormat::Ansi ? 1 : 0;
+    descriptor.fields.push_back(std::move(format));
+
+    const std::size_t folder_field = descriptor.fields.size();
+    w::FieldDescriptor folder;
+    folder.kind = w::FieldKind::Text;
+    folder.label = "Default folder";
+    folder.initial_text = now.printer_save_folder;
+    descriptor.fields.push_back(std::move(folder));
+
+    const std::size_t ask_name_field = descriptor.fields.size();
+    w::FieldDescriptor ask_name;
+    ask_name.kind = w::FieldKind::Check;
+    ask_name.label = "Ask for a filename every time (else auto-name)";
+    ask_name.initial_checked = now.printer_save_ask_name;
+    descriptor.fields.push_back(std::move(ask_name));
+
+    // What is actually in force here, and WHERE IT CAME FROM. plans/06 makes
+    // the provenance a requirement rather than a nicety: a per-session
+    // override a reader set an hour ago and forgot is precisely the thing an
+    // effective-value display must not hide, and a dialog showing only the
+    // number would leave them editing a scope that loses.
+    if (options_.printer_effective && terminal != nullptr) {
+        note("");
+        note("Effective here: " + options_.printer_effective(*terminal));
+    }
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Save as default", w::ButtonRole::Neutral, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&OK", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+
+    ckv::term::TerminalSubsession* const target = terminal;
+    const std::weak_ptr<void> alive = alive_;
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, alive, target, scope_field, mode_field, ask_cache_field, spool_field,
+         format_field, folder_field, ask_name_field](const w::DialogResult& result) {
+            if (alive.expired() || !result.accepted) return;
+            const auto selected = [&result](std::size_t field, int fallback) {
+                return field < result.selected.size() && result.selected[field] >= 0
+                           ? result.selected[field]
+                           : fallback;
+            };
+            const auto number = [&result](std::size_t field, std::uint32_t fallback) {
+                if (field >= result.values.size() || result.values[field].empty()) return fallback;
+                return static_cast<std::uint32_t>(std::strtoul(result.values[field].c_str(),
+                                                              nullptr, 10));
+            };
+            const int chosen_mode = selected(mode_field, 0);
+            const PrinterMode mode = chosen_mode == 0   ? PrinterMode::Ask
+                                     : chosen_mode == 1 ? PrinterMode::Capture
+                                                        : PrinterMode::Off;
+            const int chosen_scope = selected(scope_field, 1);
+            const proto::PrinterScope scope = chosen_scope == 0   ? proto::PrinterScope::Terminal
+                                              : chosen_scope == 1 ? proto::PrinterScope::Session
+                                                                  : proto::PrinterScope::Global;
+            // KB in the dialog, bytes everywhere else. A reader types 256, not
+            // 262144; the conversion belongs here, once, rather than in each
+            // place that reads the setting.
+            const std::uint32_t ask_cache = number(ask_cache_field, 256) * 1024U;
+            const std::uint32_t spool = number(spool_field, 1024) * 1024U;
+
+            options_.settings.printer_save_format =
+                selected(format_field, 0) == 1 ? PrinterSaveFormat::Ansi : PrinterSaveFormat::Text;
+            if (folder_field < result.values.size() && !result.values[folder_field].empty())
+                options_.settings.printer_save_folder = result.values[folder_field];
+            if (ask_name_field < result.checked.size())
+                options_.settings.printer_save_ask_name = result.checked[ask_name_field];
+
+            if (options_.set_printer_policy) {
+                options_.set_printer_policy(0, target, scope, mode, ask_cache, spool);
+            } else {
+                options_.settings.printer_mode = mode;
+                options_.settings.printer_ask_cache_bytes = ask_cache;
+                options_.settings.printer_spool_limit_bytes = spool;
+            }
+        });
+    retain_dialog(presentation);
+}
+
+void ClientApp::show_print_output_dialog(ckv::term::TerminalSubsession* terminal) {
+    if (terminal == nullptr || desktop_ == nullptr) return;
+    w::Window* const window = window_showing(terminal);
+    if (window == nullptr) return;
+
+    std::vector<proto::PrintJobInfo> jobs;
+    if (options_.printer_jobs) jobs = options_.printer_jobs(*terminal);
+
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Print output";
+    const auto note = [&descriptor](std::string line) {
+        w::FieldDescriptor field;
+        field.kind = w::FieldKind::Note;
+        field.label = std::move(line);
+        descriptor.fields.push_back(std::move(field));
+    };
+
+    if (jobs.empty()) {
+        // Reachable: a reader opens the window, another client discards, or
+        // the ask cache overflowed and freed everything. An empty list with no
+        // sentence would read as a broken dialog rather than an answer.
+        note("Nothing has been captured from this terminal.");
+        descriptor.buttons.push_back(w::ButtonDescriptor{"&Settings…", w::ButtonRole::Dismiss,
+                                                        [this, terminal] {
+                                                            show_printer_settings_dialog(terminal);
+                                                        }});
+        descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
+        auto empty = std::make_shared<w::DescriptorDialogPresentation>(
+            w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        retain_dialog(empty);
+        return;
+    }
+
+    const PrinterButtonModel model = printer_model_for(window);
+    if (model.state == proto::PrinterState::Full) {
+        // The warning line plans/06 asks for. What was captured is whole and
+        // worth opening; what is added is that nothing further will be kept.
+        note("The spool is full — these are kept, but nothing more will be.");
+        note("");
+    }
+
+    const std::size_t choice_field = descriptor.fields.size();
+    w::FieldDescriptor choice;
+    choice.kind = w::FieldKind::Radio;
+    choice.label = jobs.size() == 1 ? "1 capture" : std::to_string(jobs.size()) + " captures";
+    for (const proto::PrintJobInfo& job : jobs) choice.options.push_back(print_job_summary(job));
+    // The newest, because a reader opening this has almost always just watched
+    // it arrive.
+    choice.initial_selection = static_cast<int>(jobs.size()) - 1;
+    descriptor.fields.push_back(std::move(choice));
+
+    note("");
+    note("Saved as " + std::string(print_job_extension(options_.settings.printer_save_format)) +
+         " in " + options_.settings.printer_save_folder + ".");
+
+    ckv::term::TerminalSubsession* const source = terminal;
+    const std::weak_ptr<void> alive = alive_;
+    // Captured by value: the dialog outlives this call, and the server may
+    // have discarded a job by the time a button is pressed — an index into a
+    // list that has since changed is how the wrong document gets saved.
+    const std::vector<proto::PrintJobInfo> listed = jobs;
+
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Discard all", w::ButtonRole::Dismiss,
+                                                    [this, alive, source] {
+                                                        if (alive.expired()) return;
+                                                        if (window_showing(source) == nullptr)
+                                                            return;
+                                                        if (options_.discard_print_job)
+                                                            options_.discard_print_job(*source, 0);
+                                                    }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Settings…", w::ButtonRole::Dismiss,
+                                                    [this, alive, source] {
+                                                        if (alive.expired()) return;
+                                                        show_printer_settings_dialog(source);
+                                                    }});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Save", w::ButtonRole::Accept, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler(
+        [this, presentation, alive, source, listed, choice_field](const w::DialogResult& result) {
+            if (alive.expired() || !result.accepted) return;
+            if (choice_field >= result.selected.size()) return;
+            const int chosen = result.selected[choice_field];
+            if (chosen < 0 || static_cast<std::size_t>(chosen) >= listed.size()) return;
+            if (window_showing(source) == nullptr) return;  // the terminal ended meanwhile
+            const proto::PrintJobInfo& job = listed[static_cast<std::size_t>(chosen)];
+            if (job.bytes == 0) {
+                // An overflowed job has nothing to write. Saying so beats
+                // producing an empty file the reader would later mistake for
+                // the document.
+                show_printer_problem("That capture was too large to keep, so there is "
+                                     "nothing to save.");
+                return;
+            }
+            save_print_job(*source, job.job,
+                           options_.settings.printer_save_folder + "/" +
+                               print_job_auto_name(0, job.job,
+                                                   options_.settings.printer_save_format));
+        });
+    retain_dialog(presentation);
+}
+
+void ClientApp::save_print_job(ckv::term::TerminalSubsession& terminal, std::uint64_t job,
+                               const std::string& path) {
+    // The text may not be here yet: the payload never travels unasked, so a
+    // reader who has not opened this job before is asking for it now and the
+    // answer arrives on a later tick.
+    const std::string* text =
+        options_.print_job_text ? options_.print_job_text(terminal, job) : nullptr;
+    if (text == nullptr) {
+        if (options_.fetch_print_job) {
+            awaiting_print_job_ = job;
+            pending_save_path_ = path;
+            options_.fetch_print_job(terminal, job);
+            return;
+        }
+        show_printer_problem("That capture could not be read back.");
+        return;
+    }
+    const std::string bytes =
+        print_job_formatted(*text, options_.settings.printer_save_format);
+    if (!options_.write_print_file) {
+        show_printer_problem("This build cannot write files.");
+        return;
+    }
+    if (options_.write_print_file(path, bytes)) return;
+    // A save that failed silently is the worst of the four outcomes: the
+    // reader believes they have the document and finds out when they need it.
+    std::string why = "Could not save to " + path + ".";
+    if (options_.printer_save_problem) {
+        const std::string said = options_.printer_save_problem();
+        if (!said.empty()) why += "\n\n" + said;
+    }
+    show_printer_problem(why);
+}
+
+void ClientApp::show_printer_problem(const std::string& what) {
+    if (desktop_ == nullptr) return;
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+        app_, *desktop_, roles_,
+        w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Print output", what,
+                                w::MessageBoxButtons::Ok})));
 }
 
 std::vector<WindowPlacement> ClientApp::capture_layout() const {

@@ -37,6 +37,12 @@ enum class Action : unsigned char {
     // labels the thing the session picker lists. Two names because they are
     // two commands, and a reader writes whichever they meant.
     RenameTerminal,
+    // What a program in this terminal printed, and what to do with it. A
+    // command rather than only a frame button, because a reader whose window
+    // is small enough to have dropped the button still has to be able to reach
+    // their captures (plans/06 rule 2: everything is in the menu).
+    PrintOutput,
+    PrinterSettings,
     NextTerminal,
     PreviousTerminal,
     WindowList,

@@ -231,6 +231,85 @@ bool Terminal::set_custom_title(std::string title) {
     return true;
 }
 
+namespace {
+
+// The wire's word for what produced a job. Stated here rather than derived by
+// a cast, because the two enums are separate on purpose: ckVision's is what
+// the emulator means and this is what the protocol carries, and a cast would
+// make the wire follow a change in the library's enum silently (the same rule
+// `proto::Rect` exists for).
+proto::PrintJobKind wire_job_kind(ckv::core::TerminalPrinterJob::Origin origin) {
+    switch (origin) {
+        case ckv::core::TerminalPrinterJob::Origin::Screen: return proto::PrintJobKind::Screen;
+        case ckv::core::TerminalPrinterJob::Origin::Line: return proto::PrintJobKind::Line;
+        case ckv::core::TerminalPrinterJob::Origin::Controller:
+            return proto::PrintJobKind::Controller;
+        case ckv::core::TerminalPrinterJob::Origin::Autoprint:
+            return proto::PrintJobKind::Autoprint;
+    }
+    return proto::PrintJobKind::Controller;
+}
+
+// Lines as a reader would count them: the number of newline-separated pieces,
+// so a job with no trailing newline still counts its last line. Empty text is
+// zero rather than one — an overflowed job printed nothing this server can
+// show, and claiming "1 line" for it would be the same lie as showing a
+// truncated one.
+std::uint32_t count_lines(std::string_view text) {
+    if (text.empty()) return 0;
+    std::uint32_t lines = 1;
+    for (const char c : text)
+        if (c == '\n') ++lines;
+    // A trailing newline ends the last line rather than starting another.
+    if (text.back() == '\n') --lines;
+    return lines;
+}
+
+}  // namespace
+
+std::vector<std::uint64_t> Terminal::collect_print_jobs(std::int64_t now) {
+    std::vector<std::uint64_t> added;
+    for (ckv::core::TerminalPrinterJob& job : session_->take_printer_jobs()) {
+        HeldJob held;
+        held.id = next_job_id_++;
+        held.kind = wire_job_kind(job.origin);
+        held.lines = count_lines(job.text);
+        held.at = now;
+        held.overflowed = job.overflowed;
+        held.text = std::move(job.text);
+        added.push_back(held.id);
+        jobs_.push_back(std::move(held));
+    }
+    return added;
+}
+
+const Terminal::HeldJob* Terminal::print_job(std::uint64_t id) const noexcept {
+    for (const HeldJob& job : jobs_)
+        if (job.id == id) return &job;
+    return nullptr;
+}
+
+bool Terminal::discard_print_jobs(std::uint64_t id) noexcept {
+    if (id == 0) {
+        if (jobs_.empty()) return false;
+        jobs_.clear();
+        return true;
+    }
+    const auto found = std::find_if(jobs_.begin(), jobs_.end(),
+                                    [id](const HeldJob& job) { return job.id == id; });
+    if (found == jobs_.end()) return false;
+    jobs_.erase(found);
+    return true;
+}
+
+void Terminal::set_printer_policy(ckv::term::TerminalPrinterPolicy policy) {
+    session_->set_printer_policy(policy);
+}
+
+void Terminal::set_printer_spool_limit(std::size_t bytes) {
+    session_->set_printer_spool_limit(bytes);
+}
+
 bool Terminal::take_client_resize() noexcept {
     const bool resized = resized_by_a_client_;
     resized_by_a_client_ = false;

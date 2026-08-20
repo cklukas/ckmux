@@ -77,8 +77,20 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
     bell_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
     activity_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
     printer_active_ = state.printer_state == proto::PrinterState::Capturing;
+    printer_state_ = state.printer_state;
+    printer_mode_ = state.printer_mode;
+    printer_scope_ = state.printer_scope;
     printer_bytes_ = state.printer_bytes;
     printer_jobs_ = state.print_jobs.size();
+    // The jobs a reattaching reader finds waiting. Metadata only — the text
+    // stays on the server until somebody opens a preview.
+    print_jobs_ = state.print_jobs;
+    // Any fetch that was in flight when this snapshot arrived was against a
+    // terminal whose state has just been restated wholesale. Its chunks may be
+    // for jobs that are no longer there, and half a document assembled across
+    // a resnapshot is worse than none.
+    fetching_.clear();
+    fetched_.clear();
     // The clipboard WATERMARK, and no text with it — the server sends none in a
     // snapshot on purpose (proto::TerminalState). A reattaching client that was
     // handed the last text would put it on its reader's system clipboard over
@@ -255,6 +267,52 @@ void TerminalMirror::apply(const proto::TermMeta& meta) {
     activity_marked_ = (meta.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
 }
 
+void TerminalMirror::apply(const proto::PrintJobAdded& added) {
+    // Restated rather than appended blindly: the server announces a job once,
+    // but a reattach can restate one this mirror already holds, and a reader
+    // must not see the same capture listed twice.
+    for (proto::PrintJobInfo& held : print_jobs_) {
+        if (held.job != added.job.job) continue;
+        held = added.job;
+        printer_jobs_ = print_jobs_.size();
+        return;
+    }
+    print_jobs_.push_back(added.job);
+    printer_jobs_ = print_jobs_.size();
+}
+
+bool TerminalMirror::apply(const proto::PrintJobData& chunk) {
+    // Assembled per job. Two previews open at once is a thing a reader can do,
+    // the wire allows their chunks to interleave, and one buffer would splice
+    // two documents into each other without either looking wrong.
+    std::string& assembling = fetching_[chunk.job];
+    assembling += chunk.bytes;
+    if (chunk.final_chunk == 0) return false;
+    fetched_[chunk.job] = std::move(assembling);
+    fetching_.erase(chunk.job);
+    return true;
+}
+
+const std::string* TerminalMirror::print_job_text(std::uint64_t job) const {
+    const auto found = fetched_.find(job);
+    return found == fetched_.end() ? nullptr : &found->second;
+}
+
+void TerminalMirror::forget_print_jobs(std::uint64_t job) {
+    if (job == 0) {
+        print_jobs_.clear();
+        fetching_.clear();
+        fetched_.clear();
+    } else {
+        std::erase_if(print_jobs_, [job](const proto::PrintJobInfo& held) {
+            return held.job == job;
+        });
+        fetching_.erase(job);
+        fetched_.erase(job);
+    }
+    printer_jobs_ = print_jobs_.size();
+}
+
 void TerminalMirror::apply(const proto::ClipboardSet& clipboard) {
     clipboard_text_ = clipboard.text;
     // Forward, always. What the number IS does not matter to anything here —
@@ -265,7 +323,13 @@ void TerminalMirror::apply(const proto::ClipboardSet& clipboard) {
 
 void TerminalMirror::apply(const proto::PrintState& printing) {
     printer_active_ = printing.state == proto::PrinterState::Capturing;
+    printer_state_ = printing.state;
+    printer_mode_ = printing.mode;
     printer_bytes_ = printing.bytes;
+    // The COUNT is the server's, and the list this mirror holds may be shorter
+    // — a job announced while this client was away is counted here and
+    // described only by the next snapshot. Trusting the list's length instead
+    // would make the button say a capture had gone when it had not.
     printer_jobs_ = printing.jobs;
 }
 

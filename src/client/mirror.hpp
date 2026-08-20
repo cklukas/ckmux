@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,32 @@ public:
     bool printer_active() const noexcept { return printer_active_; }
     std::size_t printer_bytes() const noexcept { return printer_bytes_; }
     std::size_t printer_jobs() const noexcept { return printer_jobs_; }
+    // Which of the four things the frame button has to be able to say is true
+    // (plans/06): idle, capturing, sunk after an over-limit job, or holding a
+    // full spool. A count and a bool cannot spell four states, and the two
+    // that matter most to a reader — "a document is being kept" and "a
+    // document is being thrown away" — are the two a bool cannot tell apart.
+    proto::PrinterState printer_state() const noexcept { return printer_state_; }
+    proto::PrinterMode printer_mode() const noexcept { return printer_mode_; }
+    // Which scope the mode in force came from, so Printer Settings can say
+    // "(from: session)" without asking the server a second question.
+    proto::PrinterScope printer_scope() const noexcept { return printer_scope_; }
+    // The jobs this terminal is holding, newest last, as metadata. The text is
+    // not here and never arrives unasked: a reader who never opens the preview
+    // should not have paid to ship a megabyte they did not look at.
+    std::span<const proto::PrintJobInfo> print_jobs() const noexcept { return print_jobs_; }
+    // One job's text, once a `PrintJobData` run has completed for it. Empty
+    // for a job never fetched and for one that overflowed — those are
+    // different facts, and `PrintJobInfo::bytes` is what tells them apart.
+    const std::string* print_job_text(std::uint64_t job) const;
+    // Feeds one chunk in. Answers whether THIS chunk completed a job, so a
+    // caller knows the moment a preview has something whole to show rather
+    // than polling for it.
+    bool apply(const proto::PrintJobData& chunk);
+    void apply(const proto::PrintJobAdded& added);
+    // Forgets one job, or every one with id 0 — the same rule the wire's
+    // discard follows.
+    void forget_print_jobs(std::uint64_t job);
     // The terminal's newest complaint, or nothing. At most one entry: the ring
     // is the emulator's, and a client is given its last line.
     std::span<const ckv::core::TerminalDiagnostic> diagnostics() const noexcept {
@@ -202,6 +229,15 @@ private:
     std::size_t printer_bytes_ = 0;
     std::size_t printer_jobs_ = 0;
     bool printer_active_ = false;
+    proto::PrinterState printer_state_ = proto::PrinterState::Idle;
+    proto::PrinterMode printer_mode_ = proto::PrinterMode::Ask;
+    proto::PrinterScope printer_scope_ = proto::PrinterScope::Global;
+    std::vector<proto::PrintJobInfo> print_jobs_;
+    // Chunks arriving for a job whose run is not finished. Keyed by job so two
+    // previews opened at once cannot interleave into one another's text — the
+    // wire allows it and a single buffer would silently splice them.
+    std::unordered_map<std::uint64_t, std::string> fetching_;
+    std::unordered_map<std::uint64_t, std::string> fetched_;
     bool needs_snapshot_ = false;
     bool exited_ = false;
     bool hold_ = false;

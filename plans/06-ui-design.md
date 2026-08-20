@@ -487,12 +487,12 @@ appears only when there is something to say:
    ┌ 2: report.sh ───────────────────────[▫][x]┐
    │ Generating monthly summary…               │
    │                                           │
-   └[ PRINT? · 12.4 KB ]───────────────────────┘
+   └[ PRINT? · 12 KB ]─────────────────────────┘
 ```
 
 | State | Label | Click opens |
 |---|---|---|
-| `ask`, unanswered | `[ PRINT? · 12.4 KB ]`, counter live | the Ask popup |
+| `ask`, unanswered | `[ PRINT? · 12 KB ]`, counter live | the Ask popup |
 | answered / `capture` | `[ PRINT · 3 · 1.2 MB ]` | Print Output |
 | ask-cache overflowed | `[ Print settings ]` | Printer Settings |
 | `capture` spool full | `[ PRINT · 2 · 1 MB — full ]` | Print Output, warning line |
@@ -509,8 +509,23 @@ Clicks reach the button without upstream work: delivery is
 frame's own drag and grip handling.
 
 **Byte counts** use one shared formatter everywhere (button, dialogs, job
-list): below 1024 → `512 Bytes`; then `KB`/`MB`/`GB` on a 1024 base, one
-decimal below 10 and none above — `1.4 KB`, `12.4 KB`, `1.2 MB`, `340 MB`.
+list) — `client/stats_format.hpp`'s `format_bytes`, which WP-39 landed for the
+View menu's readouts and PRINT reuses rather than writing a second. One
+formatter is the requirement; two that agree today and drift tomorrow is the
+thing it exists to prevent.
+
+Its rules are the ones stated here with two corrections this document owes it,
+both found when PRINT came to reuse it. It prints `512 B` rather than
+`512 Bytes` — the unit ladder is uniform, and a reader scanning a column of
+sizes reads `B`/`KB`/`MB` more easily than one row spelled out. And it promotes
+at **1000** rather than 1024, so a number never spends four digits saying what
+three can: `999 KB` is the last of its unit and `1000` bytes is already
+`1.0 KB`. The base stays 1024. One decimal below ten and none above, as
+before — but the third correction is that this document's own example broke
+that rule: `12.4 KB` shows a decimal above ten, so the real answer for 12 700
+bytes is **`12 KB`**. The examples that hold are `1.4 KB`, `1.2 MB` and
+`340 MB`, and the frame button's mock-up above reads `[ PRINT? · 12 KB ]`.
+An example that contradicts the rule beside it teaches the example.
 
 **The Ask popup** — not modal; the program is still running:
 

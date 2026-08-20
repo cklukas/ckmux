@@ -546,3 +546,125 @@ CK_TEST(a_respawned_child_is_told_the_size_the_window_is_now) {
     CK_CHECK(after.cells.width == 72);
     CK_CHECK(after.cells.height == 20);
 }
+
+// --- The virtual printer's spool (PRINT-1) ---------------------------------
+
+CK_TEST(a_finished_print_job_leaves_the_emulator_once_and_is_held_by_the_terminal) {
+    // The emulator DRAINS: it hands each job over exactly once and forgets it,
+    // which is what keeps a snapshot from carrying a megabyte of captured
+    // text. Something has to hold what it hands over, and it is the terminal —
+    // a session outlives its clients, and a capture nobody has answered yet is
+    // exactly what a reader comes back to.
+    ckm::Settings settings = test_settings();
+    settings.printer_mode = ckm::PrinterMode::Capture;
+    Terminals terminals(settings);
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+    CK_CHECK(terminal.print_jobs().empty());
+
+    // A child prints: controller on, a document, controller off.
+    terminal.session().feed_output("\x1b[5ihello printer\r\n\x1b[4i");
+    CK_CHECK(pump_until(terminals, [&] {
+        return terminal.status().printer_jobs_ready > 0;
+    }));
+
+    const std::vector<std::uint64_t> added = terminal.collect_print_jobs(1234);
+    CK_CHECK(added.size() == 1U);
+    CK_CHECK(terminal.print_jobs().size() == 1U);
+    // Handed over ONCE: a second collect finds nothing, because the emulator
+    // has already forgotten it. A host that drained twice would show a reader
+    // the same capture twice.
+    CK_CHECK(terminal.collect_print_jobs(1235).empty());
+    CK_CHECK(terminal.print_jobs().size() == 1U);
+
+    const Terminal::HeldJob* const job = terminal.print_job(added.front());
+    CK_CHECK(job != nullptr);
+    if (job == nullptr) {
+        terminals.close_all();
+        return;
+    }
+    CK_CHECK(job->text.find("hello printer") != std::string::npos);
+    CK_CHECK(job->kind == ckm::proto::PrintJobKind::Controller);
+    CK_CHECK(job->at == 1234);  // the injected clock, not wall time
+    CK_CHECK(job->lines >= 1);
+    CK_CHECK(!job->overflowed);
+
+    terminals.close_all();
+}
+
+CK_TEST(a_job_id_is_never_reused_so_a_stale_fetch_is_refused_rather_than_answered) {
+    // The same rule a terminal id follows (plans/05, invariant 3), and for a
+    // sharper reason: a preview showing somebody else's captured output is a
+    // worse failure than an error.
+    ckm::Settings settings = test_settings();
+    settings.printer_mode = ckm::PrinterMode::Capture;
+    Terminals terminals(settings);
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+
+    terminal.session().feed_output("\x1b[5ifirst\x1b[4i");
+    CK_CHECK(pump_until(terminals, [&] { return terminal.status().printer_jobs_ready > 0; }));
+    const std::uint64_t first = terminal.collect_print_jobs(1).front();
+
+    CK_CHECK(terminal.discard_print_jobs(first));
+    CK_CHECK(terminal.print_job(first) == nullptr);
+    // Discarding what is already gone is stale rather than wrong — two clients
+    // answering the same capture do it — so it says so and does not throw.
+    CK_CHECK(!terminal.discard_print_jobs(first));
+
+    terminal.session().feed_output("\x1b[5isecond\x1b[4i");
+    CK_CHECK(pump_until(terminals, [&] { return terminal.status().printer_jobs_ready > 0; }));
+    const std::uint64_t second = terminal.collect_print_jobs(2).front();
+    CK_CHECK(second != first);
+    // And the id the reader's client may still be holding names nothing.
+    CK_CHECK(terminal.print_job(first) == nullptr);
+
+    terminals.close_all();
+}
+
+CK_TEST(discarding_everything_takes_the_whole_spool_and_says_whether_it_did) {
+    ckm::Settings settings = test_settings();
+    settings.printer_mode = ckm::PrinterMode::Capture;
+    Terminals terminals(settings);
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+
+    for (const char* document : {"one", "two"}) {
+        terminal.session().feed_output(std::string("\x1b[5i") + document + "\x1b[4i");
+        CK_CHECK(pump_until(terminals, [&] { return terminal.status().printer_jobs_ready > 0; }));
+        CK_CHECK(terminal.collect_print_jobs(1).size() == 1U);
+    }
+    CK_CHECK(terminal.print_jobs().size() == 2U);
+
+    // Zero means "everything this terminal holds", which is what the frame
+    // button's Discard means with nothing in particular selected.
+    CK_CHECK(terminal.discard_print_jobs(0));
+    CK_CHECK(terminal.print_jobs().empty());
+    CK_CHECK(!terminal.discard_print_jobs(0));  // nothing left to take
+
+    terminals.close_all();
+}
+
+CK_TEST(turning_capture_off_on_a_running_terminal_stops_it_without_losing_what_was_kept) {
+    // The reason ckVision grew a runtime policy setter: a reader changing a
+    // preference must not have to lose their shell to it. And what they
+    // already captured is theirs — it was collected while the policy said to
+    // keep it, so turning capture off must not delete it.
+    ckm::Settings settings = test_settings();
+    settings.printer_mode = ckm::PrinterMode::Capture;
+    Terminals terminals(settings);
+    Terminal& terminal = terminals.open(spec_running("sleep 30"));
+
+    terminal.session().feed_output("\x1b[5ikept\x1b[4i");
+    CK_CHECK(pump_until(terminals, [&] { return terminal.status().printer_jobs_ready > 0; }));
+    CK_CHECK(terminal.collect_print_jobs(1).size() == 1U);
+    CK_CHECK(terminal.print_jobs().size() == 1U);
+
+    terminal.set_printer_policy(ckv::term::TerminalPrinterPolicy::Deny);
+    // What was already captured stays.
+    CK_CHECK(terminal.print_jobs().size() == 1U);
+    // And nothing new is captured, though the child goes on printing.
+    terminal.session().feed_output("\x1b[5inot kept\x1b[4i");
+    for (int pass = 0; pass < 40; ++pass) terminals.drain(64 * 1024);
+    CK_CHECK(terminal.collect_print_jobs(2).empty());
+    CK_CHECK(terminal.print_jobs().size() == 1U);
+
+    terminals.close_all();
+}

@@ -32,8 +32,11 @@
 #include "client/commands.hpp"
 #include "client/copy_mode.hpp"
 #include "client/prefix_overlay.hpp"
+#include "client/printer_button.hpp"
+#include "client/printer_output.hpp"
 #include "client/stats_format.hpp"
 #include "common/config.hpp"
+#include "common/proto.hpp"
 #include "cvision/term/terminal_subsession.hpp"
 #include "cvision/ui/application.hpp"
 #include "cvision/ui/layout.hpp"
@@ -331,6 +334,60 @@ struct ClientOptions {
     std::function<void(ckv::term::TerminalSubsession& terminal, std::uint64_t destination,
                        bool to_new_session)>
         move_terminal;
+    // --- The virtual printer (PRINT-3…6) -----------------------------
+    //
+    // Setting the policy at one of the three scopes. The client never resolves
+    // precedence itself: the server owns the terminal → session → global rule
+    // and answers with what is in force, so a dialog showing "effective here"
+    // is showing the server's answer rather than a second implementation of it
+    // that could disagree.
+    //
+    // Unset is M1 — no server, so no scopes above this process, and the
+    // dialogs edit the client's own settings directly.
+    std::function<void(std::uint64_t terminal, ckv::term::TerminalSubsession* target,
+                       proto::PrinterScope scope, PrinterMode mode,
+                       std::uint32_t ask_cache, std::uint32_t spool_limit)>
+        set_printer_policy;
+    // Asks for one job's text. The payload never travels unasked — a reader
+    // who does not open a preview should not have paid to ship a megabyte —
+    // so this is what opening one costs, and the answer arrives later through
+    // the mirror.
+    std::function<void(ckv::term::TerminalSubsession& terminal, std::uint64_t job)>
+        fetch_print_job;
+    // Forgets one job, or every one of a terminal's with 0.
+    std::function<void(ckv::term::TerminalSubsession& terminal, std::uint64_t job)>
+        discard_print_job;
+    // What the session layer says one terminal's printer looks like now — the
+    // mode in force, whether it is capturing or sinking, the live byte count
+    // and the jobs held. A query on the client's own poll rather than a push,
+    // for the reason `custom_title` is one: the button is assembled from this
+    // and the reader's own answer together, and two readings a tick apart
+    // could disagree.
+    //
+    // Unset is M1: no server, so the client reads the emulator's own scalars.
+    std::function<PrinterButtonModel(const ckv::term::TerminalSubsession& terminal)>
+        printer_status;
+    // The jobs one terminal holds, as metadata, for the Print Output list.
+    std::function<std::vector<proto::PrintJobInfo>(const ckv::term::TerminalSubsession& terminal)>
+        printer_jobs;
+    // One job's text, once it has arrived. Null until then — which is what the
+    // preview shows as "fetching" rather than as an empty document.
+    std::function<const std::string*(const ckv::term::TerminalSubsession& terminal,
+                                     std::uint64_t job)>
+        print_job_text;
+    // The effective policy for one terminal, already worded — "Ask · 256 KB ·
+    // 1 MB   (from: session)". The SERVER resolves precedence and says where
+    // each answer came from; a client that re-derived it would be a second
+    // implementation of the rule, free to disagree with the one in force.
+    std::function<std::string(const ckv::term::TerminalSubsession& terminal)> printer_effective;
+    // Writes a saved job where the reader asked. Injected for the reason the
+    // clipboard writer is: the real one touches the filesystem, and a client
+    // that touches the filesystem is one a test cannot drive. Answers whether
+    // the write succeeded, and `printer_save_problem` says why when it did
+    // not — a save that silently failed is the worst outcome of the four.
+    std::function<bool(const std::string& path, std::string_view bytes)> write_print_file;
+    std::function<std::string()> printer_save_problem;
+
     // Where this client's terminal windows now are (WP-29), reported once the
     // reader has finished moving them.
     //
@@ -665,6 +722,44 @@ private:
     // dialog does: a terminal can end while its dialog is open, and the lookup
     // failing IS the answer.
     void show_rename_terminal_dialog(ckv::term::TerminalSubsession* terminal);
+    // --- The virtual printer's three surfaces (PRINT-4…6) -------------
+    //
+    // The Ask popup: a program is printing and nobody has said what to do
+    // about it. Deliberately NOT modal — the program is still running, and a
+    // modal box would stop a reader working in the terminal beside it while
+    // they decide. Leaving it unanswered is a stable state, bounded by the ask
+    // cache (plans/04).
+    void show_printer_ask_dialog(ckv::term::TerminalSubsession* terminal);
+    // Carries one answer to wherever it applies: the server when there is one,
+    // this client's own settings when there is not, and the reader's file when
+    // — and only when — the scope was global.
+    void apply_printer_choice(ckv::term::TerminalSubsession* terminal, proto::PrinterScope scope,
+                              PrinterMode mode);
+    // Printer Settings: the three scopes, the mode, the two limits, and the
+    // saving preferences. Shows the EFFECTIVE values and which scope each came
+    // from, because a per-session override a reader set an hour ago and forgot
+    // is exactly what an effective-value display must not hide.
+    void show_printer_settings_dialog(ckv::term::TerminalSubsession* terminal);
+    // Print Output: what this terminal has captured, and what a reader may do
+    // with it — look, save, discard.
+    void show_print_output_dialog(ckv::term::TerminalSubsession* terminal);
+    // Saves one job, either to a name the reader chose or to the auto-name.
+    void save_print_job(ckv::term::TerminalSubsession& terminal, std::uint64_t job,
+                        const std::string& path);
+    // What a reader is told when a save could not happen. A warning box rather
+    // than a footer line: a save that failed quietly is the worst of the
+    // outcomes, because the reader believes they have the document and finds
+    // out when they need it.
+    void show_printer_problem(const std::string& what);
+    // What the frame button on one window should now say, assembled from the
+    // mirror and this client's own memory of what its reader has answered.
+    PrinterButtonModel printer_model_for(ckv::widgets::Window* window) const;
+    // Re-reads every terminal's printer state and puts the button where it
+    // belongs — adding the overlay when there is something to say and taking
+    // it away when there is not. Runs on the same poll the captions do: the
+    // byte counter has to move while a child prints, and the emulator raises
+    // no event a client could subscribe to.
+    void refresh_printer_buttons();
     // Pins the caption, or — with an empty name — hands it back to whatever
     // the program says it is. One function for both because they are one
     // decision with two answers, and splitting them would be two places for
@@ -911,6 +1006,23 @@ private:
         bool activity_seen = false;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
+    // The button on each window that has something to say about printing, and
+    // whether this reader has answered the ask for that terminal.
+    //
+    // `answered` is the CLIENT's, not the server's, and that is the whole
+    // point of it: it records what this reader has been shown and decided, and
+    // a second client attaching to the same session has been shown nothing.
+    // Putting it on the server would make one reader's "yes" silently answer
+    // for another's terminal.
+    struct PrinterSurface {
+        PrinterButton* button = nullptr;
+        bool answered = false;
+    };
+    std::unordered_map<ckv::widgets::Window*, PrinterSurface> printers_;
+    // The job a preview is waiting for, so the text can be shown the moment it
+    // finishes arriving rather than by polling for it.
+    std::uint64_t awaiting_print_job_ = 0;
+    std::string pending_save_path_;
     // What one terminal's window is called, given everything currently known
     // about it: the reader's name if they set one, else the program's if it
     // claimed one, else ckmux's own. The single answer, so the title poll, the

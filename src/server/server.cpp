@@ -123,6 +123,18 @@ proto::PrinterMode wire_printer_mode(PrinterMode mode) {
     return proto::PrinterMode::Ask;
 }
 
+// And back. Two functions rather than a cast for the reason the wire's Rect is
+// not ckVision's: the two enums are separate on purpose, and a cast would make
+// one silently follow a renumbering of the other.
+PrinterMode wire_printer_mode_in(proto::PrinterMode mode) {
+    switch (mode) {
+        case proto::PrinterMode::Ask: return PrinterMode::Ask;
+        case proto::PrinterMode::Capture: return PrinterMode::Capture;
+        case proto::PrinterMode::Off: return PrinterMode::Off;
+    }
+    return PrinterMode::Ask;
+}
+
 const char* name_of(proto::MessageType type) {
     switch (type) {
         case proto::MessageType::Hello: return "Hello";
@@ -166,6 +178,49 @@ std::size_t Server::greeted_count() const noexcept {
     for (const std::unique_ptr<Client>& client : clients_)
         if (client->greeted) ++count;
     return count;
+}
+
+EffectivePrinterPolicy Server::effective_printer_policy(TerminalId id) const {
+    // Terminal → session → global → built-in, in that order, and each of the
+    // three numbers resolved SEPARATELY. A scope that says "always capture"
+    // and nothing else must not also drag its own idea of a spool size along
+    // with it: what a reader set is what a reader set, and the rest keeps
+    // coming from wherever it was already coming from (plans/06, plans/08).
+    //
+    // The scope each answer came from travels with it, because the Printer
+    // Settings dialog is required to show a reader not only what is in force
+    // but where it came from — a per-session override they set an hour ago and
+    // forgot is exactly the thing an effective-value display must not hide.
+    EffectivePrinterPolicy resolved;
+    resolved.mode = options_.settings.printer_mode;
+    resolved.ask_cache =
+        static_cast<std::uint32_t>(std::min<std::size_t>(options_.settings.printer_ask_cache_bytes,
+                                                         0xFFFFFFFFu));
+    resolved.spool_limit = static_cast<std::uint32_t>(
+        std::min<std::size_t>(options_.settings.printer_spool_limit_bytes, 0xFFFFFFFFu));
+
+    const auto apply = [&resolved](const PrinterOverride& said, proto::PrinterScope from) {
+        if (said.mode) {
+            resolved.mode = *said.mode;
+            resolved.mode_from = from;
+        }
+        if (said.ask_cache) {
+            resolved.ask_cache = *said.ask_cache;
+            resolved.ask_cache_from = from;
+        }
+        if (said.spool_limit) {
+            resolved.spool_limit = *said.spool_limit;
+            resolved.spool_limit_from = from;
+        }
+    };
+
+    // Widest first, so the narrowest scope that says anything is the one whose
+    // answer survives — and `..._from` ends up naming it.
+    if (const Session* const home = session_holding(id))
+        apply(home->printer, proto::PrinterScope::Session);
+    if (const Terminal* const terminal = terminals_.find(id))
+        apply(terminal->printer_override(), proto::PrinterScope::Terminal);
+    return resolved;
 }
 
 std::size_t Server::queued_bytes() const noexcept {
@@ -565,6 +620,116 @@ void Server::handle(Client& client, const proto::Message& message) {
         // use — including to the client that asked, which needs to be told what
         // the server actually stored rather than to assume its own request was
         // honoured verbatim.
+        return;
+    }
+    if (const auto* request = std::get_if<proto::PrintJobFetch>(&message)) {
+        Terminal* const terminal = terminals_.find(request->term);
+        const Terminal::HeldJob* const job =
+            terminal == nullptr ? nullptr : terminal->print_job(request->job);
+        if (job == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "PrintJobFetch";
+            error.human = terminal == nullptr ? "no such terminal" : "no such print job";
+            send(client, error);
+            return;
+        }
+        // Chunked, because a job may be a megabyte and one frame carrying it
+        // would stall every other terminal behind it — the same reason a
+        // picture is chunked (plans/05). The sequence lets a client assemble
+        // without trusting arrival order, and `final_chunk` is what says the
+        // document is whole rather than merely paused.
+        //
+        // An overflowed job has no text and still gets one final, empty chunk:
+        // "this job printed nothing we kept" is an answer, and a client left
+        // waiting for a chunk that never came would show a spinner forever.
+        constexpr std::size_t kChunk = 48U * 1024U;
+        const std::string& text = job->text;
+        std::uint32_t seq = 0;
+        for (std::size_t at = 0; at < text.size() || at == 0; at += kChunk) {
+            proto::PrintJobData data;
+            data.term = request->term;
+            data.job = job->id;
+            data.seq = seq++;
+            const std::size_t take = std::min(kChunk, text.size() - std::min(at, text.size()));
+            data.bytes = text.substr(std::min(at, text.size()), take);
+            data.final_chunk = (at + kChunk >= text.size()) ? 1 : 0;
+            send(client, data);
+            if (data.final_chunk != 0) break;
+        }
+        return;
+    }
+    if (const auto* request = std::get_if<proto::PrintJobDiscard>(&message)) {
+        Terminal* const terminal = terminals_.find(request->term);
+        if (terminal == nullptr) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+            error.context = "PrintJobDiscard";
+            error.human = "no such terminal";
+            send(client, error);
+            return;
+        }
+        // A discard of a job already gone is stale rather than wrong — it
+        // happens whenever two clients answer the same capture — so it is not
+        // refused. What it must do is leave the reader's count right, which
+        // the `PrintState` on the next tick does.
+        if (terminal->discard_print_jobs(request->job)) terminal->mark_printer_news();
+        return;
+    }
+    if (const auto* request = std::get_if<proto::SetPrinterPolicy>(&message)) {
+        // Which scope is being written is the request's to say, and only the
+        // narrowest two name a target: `global` is this server's own setting
+        // and has no id (plans/08).
+        PrinterOverride said;
+        said.mode = wire_printer_mode_in(request->mode);
+        if (request->ask_cache != 0) said.ask_cache = request->ask_cache;
+        if (request->spool_limit != 0) said.spool_limit = request->spool_limit;
+
+        switch (request->scope) {
+            case proto::PrinterScope::Terminal: {
+                Terminal* const terminal = terminals_.find(request->target);
+                if (terminal == nullptr) {
+                    proto::Error error;
+                    error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchTerminal);
+                    error.context = "SetPrinterPolicy";
+                    error.human = "no such terminal";
+                    send(client, error);
+                    return;
+                }
+                terminal->set_printer_override(said);
+                break;
+            }
+            case proto::PrinterScope::Session: {
+                Session* const session =
+                    session_for(request->target != 0 ? request->target : client.session);
+                if (session == nullptr) {
+                    proto::Error error;
+                    error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+                    error.context = "SetPrinterPolicy";
+                    error.human = "no such session";
+                    send(client, error);
+                    return;
+                }
+                session->printer = said;
+                break;
+            }
+            case proto::PrinterScope::Global:
+                // The server's own setting, which is also what gets written
+                // back to the file when a reader chooses "save as default"
+                // (plans/08) — that write is the CLIENT's, because the file is
+                // the reader's and a server may be running for somebody else.
+                if (said.mode) options_.settings.printer_mode = *said.mode;
+                if (said.ask_cache) options_.settings.printer_ask_cache_bytes = *said.ask_cache;
+                if (said.spool_limit)
+                    options_.settings.printer_spool_limit_bytes = *said.spool_limit;
+                break;
+        }
+        // Every terminal the change could reach is told what it now is. A
+        // policy is only real once the emulator enforcing it agrees: a
+        // terminal left on its launch-time policy would go on capturing after
+        // a reader turned capture off, which is the one outcome this dialog
+        // exists to prevent.
+        apply_printer_policies();
         return;
     }
     if (const auto* request = std::get_if<proto::Attach>(&message)) {
@@ -1231,17 +1396,44 @@ void Server::announce_terminal_news() {
         // controller is on, the child's output is going to the printer and NOT
         // to the screen — the one printer fact a reader must be shown, or they
         // are watching a terminal that has apparently stopped responding.
-        if (damage.printer) {
+        // Either the child's doing or ours: the emulator raises its own
+        // printer damage, and a job discarded or a policy changed by a reader
+        // moves the same numbers without the emulator knowing.
+        if (damage.printer || terminal->take_printer_news()) {
+            // Taken BEFORE the state is read, because taking is what moves the
+            // numbers: a job that finished this tick is still counted in
+            // `printer_jobs_ready` until it is drained, and a `PrintState`
+            // sent first would tell a client about a job it is about to be
+            // told about again by name.
+            //
+            // Drained even with nobody watching. The emulator hands each job
+            // over exactly once and forgets it, so a server that only drained
+            // while a client was attached would lose every job printed into a
+            // detached session — which is precisely the session state a
+            // multiplexer exists to keep (plans/03).
+            collect_and_announce_print_jobs(id, *terminal, watcher);
+
             const ckv::term::TerminalStatus status = terminal->status();
+            const EffectivePrinterPolicy policy = effective_printer_policy(id);
             proto::PrintState printing;
             printing.term = id;
-            printing.mode = wire_printer_mode(options_.settings.printer_mode);
-            printing.state = status.printer_controller_active ? proto::PrinterState::Capturing
-                                                              : proto::PrinterState::Idle;
+            printing.mode = wire_printer_mode(policy.mode);
+            // Four states rather than two, because the frame button has four
+            // (plans/06) and only the server knows which one is true. `Sunk`
+            // is the emulator having freed an over-limit job and gone on
+            // scanning for `CSI 4 i` without storing anything — a reader whose
+            // button said "capturing" through that would be told a document
+            // was being kept that was not.
+            printing.state = status.printer_sunk
+                                 ? proto::PrinterState::Sunk
+                                 : (status.printer_controller_active
+                                        ? proto::PrinterState::Capturing
+                                        : proto::PrinterState::Idle);
             printing.bytes = static_cast<std::uint32_t>(
                 std::min<std::size_t>(status.printer_pending_bytes, 0xFFFFFFFFu));
-            printing.jobs = static_cast<std::uint16_t>(
-                std::min<std::size_t>(status.printer_jobs_ready, 0xFFFFu));
+            printing.jobs =
+                static_cast<std::uint16_t>(std::min<std::size_t>(terminal->print_jobs().size(),
+                                                                 0xFFFFu));
             send(*watcher, printing);
         }
 
@@ -1351,11 +1543,66 @@ void Server::remove_terminal(TerminalId id, bool exited) {
         forget_session(home->id, proto::DetachReason::SessionKilled, "its last terminal closed");
 }
 
+void Server::apply_printer_policies() {
+    for (const TerminalId id : terminals_.ids()) {
+        Terminal* const terminal = terminals_.find(id);
+        if (terminal == nullptr) continue;
+        const EffectivePrinterPolicy policy = effective_printer_policy(id);
+        // `ask` and `capture` are the same thing to an EMULATOR: capture the
+        // bytes, tell the child the printer is ready. The whole difference is
+        // consent — whether the reader has agreed to keep the result — which
+        // is the host's question, not the terminal's (plans/04). So the
+        // emulator is told Capture for both, and what separates them is which
+        // bound applies and what this server does with the jobs afterwards.
+        terminal->set_printer_policy(policy.mode == PrinterMode::Off
+                                         ? ckv::term::TerminalPrinterPolicy::Deny
+                                         : ckv::term::TerminalPrinterPolicy::Capture);
+        // And the bound that goes with the mode. `ask` collects into the ask
+        // cache, which is smaller on purpose: nothing has been consented to
+        // yet, so the worst case a reader can be left holding for a terminal
+        // they have not answered is that cache and nothing more (plans/04).
+        // Once they say "capture", the larger spool applies because they asked
+        // for the document.
+        terminal->set_printer_spool_limit(policy.mode == PrinterMode::Ask ? policy.ask_cache
+                                                                         : policy.spool_limit);
+        terminal->mark_printer_news();
+    }
+}
+
+void Server::collect_and_announce_print_jobs(TerminalId id, Terminal& terminal,
+                                            Client* watcher) {
+    // The clock, not wall time: every timestamp this server records comes from
+    // the injected one, so a test can say when a job arrived (plans/11).
+    for (const std::uint64_t job_id : terminal.collect_print_jobs(clock_.now_nanos())) {
+        // No watcher, no message — and nothing lost. The job is in the spool,
+        // and the snapshot the next client attaches with carries every job
+        // this terminal holds. A session nobody is watching is exactly when a
+        // capture most needs keeping.
+        if (watcher == nullptr) continue;
+        const Terminal::HeldJob* const job = terminal.print_job(job_id);
+        if (job == nullptr) continue;
+        proto::PrintJobAdded added;
+        added.term = id;
+        // Metadata only. A megabyte of captured text never rides the tick;
+        // the payload moves when a reader actually opens the preview and the
+        // client asks for it by name (`PrintJobFetch`).
+        added.job = proto::PrintJobInfo{job->id, job->kind,
+                                        static_cast<std::uint32_t>(
+                                            std::min<std::size_t>(job->text.size(), 0xFFFFFFFFu)),
+                                        job->lines, job->at};
+        send(*watcher, added);
+    }
+}
+
 Session* Server::session_holding(TerminalId id) {
     for (Session& session : sessions_)
         for (const TerminalId held : session.terminals)
             if (held == id) return &session;
     return nullptr;
+}
+
+const Session* Server::session_holding(TerminalId id) const {
+    return const_cast<Server*>(this)->session_holding(id);
 }
 
 void Server::move_terminal(Client& client, const proto::MoveTerminal& request) {
@@ -1600,7 +1847,33 @@ void Server::send_snapshot(Client& client) {
         // differ reads a terminal and this is configuration. Said here so that
         // a snapshot and the `PrintState` that follows it agree about the mode
         // rather than one of them defaulting.
-        state.printer_mode = wire_printer_mode(options_.settings.printer_mode);
+        const EffectivePrinterPolicy printer = effective_printer_policy(id);
+        state.printer_mode = wire_printer_mode(printer.mode);
+        // The scope the MODE came from, so a reattaching client can say "from:
+        // session" in Printer Settings without asking again. plans/06 requires
+        // the dialog to show where the effective value came from; a client
+        // that only knew the value would have to guess, and a per-session
+        // override a reader forgot is exactly what must not be invisible.
+        state.printer_scope = printer.mode_from;
+        // And the jobs this terminal is holding, as metadata. A reattaching
+        // reader finds their captures waiting — which is the whole reason the
+        // spool is session state rather than the client's (plans/03).
+        state.print_jobs.clear();
+        for (const Terminal::HeldJob& job : terminal->print_jobs())
+            state.print_jobs.push_back(proto::PrintJobInfo{
+                job.id, job.kind,
+                static_cast<std::uint32_t>(std::min<std::size_t>(job.text.size(), 0xFFFFFFFFu)),
+                job.lines, job.at});
+        {
+            const ckv::term::TerminalStatus printer_status = terminal->status();
+            state.printer_state = printer_status.printer_sunk
+                                      ? proto::PrinterState::Sunk
+                                      : (printer_status.printer_controller_active
+                                             ? proto::PrinterState::Capturing
+                                             : proto::PrinterState::Idle);
+            state.printer_bytes = static_cast<std::uint32_t>(
+                std::min<std::size_t>(printer_status.printer_pending_bytes, 0xFFFFFFFFu));
+        }
         // Where the reader last had this window. The layout half of what
         // survives a detach, said with everything else a reattaching client
         // gets rather than through a message of its own — the arrangement is
