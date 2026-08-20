@@ -203,6 +203,29 @@ grep -c <the other session's symbol>` should be 0 — and that the tree moved:
 a commit whose tree equals its parent's is a failed commit whatever its
 message says.
 
+**`git add <file>` then `git commit` commits the INDEX, not your file.** The
+shared index is shared: another session may have staged something minutes ago,
+and `git commit` takes everything staged regardless of what you just added.
+This is not the same hazard as `git add` staging a whole file — it is one
+level up, and it bites the careful case, because adding exactly one path feels
+like committing exactly one path.
+
+```bash
+git diff --cached --name-only     # what is ACTUALLY staged, before every commit
+git commit -- <paths>             # commits these paths only, ignoring the index
+```
+
+`git commit -- <paths>` is the safe form and should be the default here. The
+audit is the backstop: run it *in the same command chain* as the commit, not
+minutes before, or it is a statement about a moment rather than about what you
+are about to land.
+
+Written after `3858004` — the commit that added this section — swept a staged
+reversion of `plans/12` into itself, reverting another session's claim on row
+29 and deleting the eight-line note they had written under it. The author had
+staged one file and believed that was what they were committing. The tree at
+the time held eight staged files belonging to two other sessions.
+
 **Plumbing does not write the working tree, and this is the expensive one.**
 The moment such a commit lands, the shared copy is behind HEAD by exactly
 your change, and every further plumbing commit by any session widens the gap.
