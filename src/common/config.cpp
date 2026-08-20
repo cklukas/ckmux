@@ -308,6 +308,10 @@ constexpr std::array<EnumChoice<SixelMode>, 2> kSixelModes{
     {{"auto", SixelMode::Auto}, {"off", SixelMode::Off}}};
 constexpr std::array<EnumChoice<PrinterMode>, 3> kPrinterModes{
     {{"ask", PrinterMode::Ask}, {"capture", PrinterMode::Capture}, {"off", PrinterMode::Off}}};
+constexpr std::array<EnumChoice<DesktopSizePolicy>, 3> kDesktopSizePolicies{
+    {{"fixed", DesktopSizePolicy::Fixed},
+     {"fit-smallest", DesktopSizePolicy::FitSmallest},
+     {"fit-latest", DesktopSizePolicy::FitLatest}}};
 constexpr std::array<EnumChoice<PrinterSaveFormat>, 2> kSaveFormats{
     {{"txt", PrinterSaveFormat::Text}, {"ansi", PrinterSaveFormat::Ansi}}};
 
@@ -424,6 +428,11 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
         // M-T1 was a key parsed under a section the dialog did not write to and
         // a reader blamed for a line ckmux had written itself.
         if (key == "resize-windows-to-fit") return boolean(settings.resize_windows_to_fit);
+        // A session's desktop, not this client's screen — the two are
+        // different numbers and only one of them reflows anybody's windows
+        // (WP-40).
+        if (key == "desktop-size")
+            return enumerated(settings.desktop_size, kDesktopSizePolicies);
         // The View menu's readouts (WP-39), written back by the menu items
         // themselves through `save_setting` exactly as the Settings dialog's
         // checkboxes are — so the preference survives the session because the

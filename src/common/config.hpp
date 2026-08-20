@@ -82,6 +82,17 @@ enum class ExitPolicy : unsigned char { Close, Hold, HoldOnError };
 enum class SixelMode : unsigned char { Auto, Off };
 enum class PrinterMode : unsigned char { Ask, Capture, Off };
 enum class PrinterSaveFormat : unsigned char { Text, Ansi };
+// [general] desktop-size — what happens to a SESSION's virtual desktop when a
+// client of another size attaches to it (WP-40, plans/03 "Two clients at
+// once").
+//
+// `Fixed` is the default and the honest one: the desktop is set by the first
+// client to attach and changed only when a reader asks. `FitSmallest` shrinks
+// to a newcomer and — deliberately — never grows back when they leave, because
+// a session whose geometry oscillates with people's attach cycles is worse
+// than one that is merely too small. `FitLatest` adopts whoever attached last,
+// which is what tmux does by default and is offered for readers who want it.
+enum class DesktopSizePolicy : unsigned char { Fixed, FitSmallest, FitLatest };
 
 // One entry of [terminal] clipboard, in the order the file listed them: the
 // copy targets are tried in turn, so the order is the setting.
@@ -160,6 +171,11 @@ struct Settings {
     // more use with a second hand than without. `minutes` and `off` are the
     // other two answers (Settings ▸ General…).
     ClockMode clock = ClockMode::Seconds;
+    // [general] desktop-size. See DesktopSizePolicy: a client's own screen
+    // never silently reflows a session's windows, because reflowing them
+    // SIGWINCHes every child in it — for every reader watching, not just the
+    // one who attached.
+    DesktopSizePolicy desktop_size = DesktopSizePolicy::Fixed;
     // [general] resize-windows-to-fit. What happens to a window that is still
     // too large for the desktop AFTER a reattach has moved it as far up and
     // left as it can (WP-30).

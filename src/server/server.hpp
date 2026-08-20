@@ -57,6 +57,16 @@ struct Session {
     std::string name;
     std::vector<TerminalId> terminals;
     std::uint64_t focused = 0;
+    // The session's VIRTUAL DESKTOP: the coordinate space every window rect in
+    // this session is expressed in (plans/03, WP-40). Not any client's screen
+    // — a client that differs from it has a viewing problem, and reflowing the
+    // windows to fit one reader SIGWINCHes every child for every reader.
+    //
+    // Zero until the first client attaches, because a session made by `ckmux
+    // new` has no screen to take a size from; what happens then is
+    // `[general] desktop-size`, and under the default it is set once, by the
+    // first client to arrive, and left alone afterwards.
+    ckv::Size desktop{0, 0};
 };
 
 class Server {

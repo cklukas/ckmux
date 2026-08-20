@@ -583,6 +583,11 @@ void Server::handle(Client& client, const proto::Message& message) {
         // is sized by the client that draws it (`MoveResize`, below). Resizing
         // every terminal to the desktop is what put a shell's prompt above the
         // top of its own window.
+        // And NOT the session's desktop (WP-40). A reader making their own
+        // window bigger must not reflow a session's windows — theirs or
+        // anybody else's — and must not SIGWINCH a single child. The session's
+        // desktop changes when a reader asks for it, never as a side effect of
+        // a screen changing size.
         client.desktop = ckv::Size{resize->columns, resize->rows};
         client.cell_pixels = cell_metric_of(*resize);
         return;
@@ -1293,8 +1298,14 @@ void Server::announce_layout() {
         // The desktop this client declared, the same number the snapshot
         // states, because a fraction of a desktop means nothing without the
         // desktop it is a fraction of.
-        layout.desktop_columns = static_cast<std::uint16_t>(std::max(0, watcher->desktop.width));
-        layout.desktop_rows = static_cast<std::uint16_t>(std::max(0, watcher->desktop.height));
+        // The session's, not the watcher's — see send_snapshot. Two clients
+        // reading one arrangement have to be told the same coordinate space or
+        // the rects mean two different things.
+        const ckv::Size desktop = session.desktop.width > 0 && session.desktop.height > 0
+                                      ? session.desktop
+                                      : watcher->desktop;
+        layout.desktop_columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
+        layout.desktop_rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
         for (const TerminalId id : session.terminals) {
             Terminal* const terminal = terminals_.find(id);
             if (terminal == nullptr) continue;
@@ -1478,6 +1489,34 @@ void Server::attach(Client& client, const proto::Attach& request) {
         send(client, error);
         return;
     }
+    // The session's desktop, and what this client's own size may do to it
+    // (WP-40). A first attach sets it, because a session created by `ckmux
+    // new` has no screen of its own to take one from; after that, `[general]
+    // desktop-size` decides, and its default is to leave it alone. Reflowing a
+    // session's windows to fit whoever just arrived SIGWINCHes every child in
+    // it — for every reader watching, not only the one who attached.
+    const ckv::Size arriving{static_cast<int>(request.columns), static_cast<int>(request.rows)};
+    if (arriving.width > 0 && arriving.height > 0) {
+        if (session->desktop.width <= 0 || session->desktop.height <= 0) {
+            session->desktop = arriving;
+        } else {
+            switch (options_.settings.desktop_size) {
+                case DesktopSizePolicy::Fixed:
+                    break;
+                case DesktopSizePolicy::FitSmallest:
+                    // Sticky: it shrinks to a newcomer and does not grow back
+                    // when they leave. A session whose geometry oscillates
+                    // with people's attach cycles is worse than one that is
+                    // merely too small.
+                    session->desktop = ckv::Size{std::min(session->desktop.width, arriving.width),
+                                                 std::min(session->desktop.height, arriving.height)};
+                    break;
+                case DesktopSizePolicy::FitLatest:
+                    session->desktop = arriving;
+                    break;
+            }
+        }
+    }
     // Granted immediately, and taken from whoever held THAT session (plans/03).
     // A reader whose laptop slept cannot be kept out by the client that is
     // nominally still holding their session — which is why the previous holder
@@ -1528,8 +1567,18 @@ void Server::send_snapshot(Client& client) {
     // re-snapshot loop (M-S5); the shared `ready_for_screen` gate is the other.
     client.dirty_snapshot = false;
     proto::Snapshot snapshot;
-    snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, client.desktop.width));
-    snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, client.desktop.height));
+    // The SESSION's desktop (WP-40), not this client's screen echoed back at
+    // it — a client already knows how big its own terminal is, and what it
+    // needs from the server is the coordinate space the window rects below are
+    // expressed in. Falls back to the client's own size only for a session
+    // nobody has attached to yet, which cannot happen on this path but keeps
+    // the field from ever being zero.
+    const Session* const home = session_for(client.session);
+    const ckv::Size desktop = home != nullptr && home->desktop.width > 0 && home->desktop.height > 0
+                                  ? home->desktop
+                                  : client.desktop;
+    snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
+    snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
     const Session* const session = session_for(client.session);
     snapshot.focused_term = session != nullptr ? session->focused : 0;
     const std::vector<TerminalId> held =
