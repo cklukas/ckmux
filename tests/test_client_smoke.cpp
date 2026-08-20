@@ -2089,6 +2089,48 @@ CK_TEST(the_host_is_rung_once_per_bell_and_only_when_asked) {
     CK_CHECK(f.rings == 2);
 }
 
+CK_TEST(visiting_a_terminal_puts_its_mark_down_for_good) {
+    // The mark is a statement about THIS READER — "something happened where
+    // you were not looking" — so visiting the window answers it. The server's
+    // flag cannot do that job: it is sticky, set when the child rings and
+    // cleared only when the terminal is respawned, so it says "this terminal
+    // has rung at some point", not "since you last looked".
+    //
+    // Without a client-side memory the footer therefore shows a bell for the
+    // rest of the session: hidden while the reader is in that window, back the
+    // moment they step out of it. That is what shipped in the first cut of
+    // WP-19, and this is the case that says so.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    f.poll();
+    ckv::widgets::Window* first = nullptr;
+    ckv::widgets::Window* second = nullptr;
+    for (ckv::widgets::Window* w : f.client.desktop().windows()) {
+        if (subsession_of(w) == nullptr) continue;
+        (w == f.client.desktop().active_window() ? first : second) = w;
+    }
+    CK_CHECK(first != nullptr && second != nullptr);
+    if (first == nullptr || second == nullptr) return;
+
+    // It rings while the reader is elsewhere, and is flagged.
+    f.marks[subsession_of(second)] = ckm::client::TerminalMarks{true, false};
+    f.poll();
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+
+    // The reader goes and looks at it. The server's flag is unchanged — it
+    // never clears — so everything below is about what the CLIENT remembers.
+    f.client.desktop().activate(second);
+    f.poll();
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
+
+    // And back to the first window. The bell has been seen; it must not
+    // return, or the footer becomes a permanent ornament a reader learns to
+    // ignore — which is the same as not having it.
+    f.client.desktop().activate(first);
+    f.poll();
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
+}
+
 CK_TEST(activity_arriving_under_a_held_bell_does_not_ring_again) {
     // Found by mutation: removing the rising-edge clause left every test
     // green, because none of them changed one mark while the other stood.

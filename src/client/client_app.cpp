@@ -1794,10 +1794,24 @@ void ClientApp::refresh_terminal_titles() {
         if (options_.terminal_marks && terminal != nullptr && desktop_ != nullptr) {
             const bool elsewhere = window != desktop_->active_window();
             const TerminalMarks marks = options_.terminal_marks(*terminal);
-            // A window the reader is IN is not telling them anything they
-            // cannot see, which is also what makes these clear as they visit.
-            const bool wants = elsewhere && marks.bell;
-            const bool busy = elsewhere && marks.activity;
+            // A fact that has gone away is a mark a reader may be told about
+            // again. The server does not retract one today — its flag is
+            // sticky until respawn — but this is written against the fact,
+            // so it needs no change when the wire learns to say "rang again".
+            if (!marks.bell) entry->second.bell_seen = false;
+            if (!marks.activity) entry->second.activity_seen = false;
+            // Looking at it IS the answer, and it is THIS reader's answer:
+            // the server's flag says "this terminal has rung at some point",
+            // which is not what a footer flag means. Without this a visited
+            // bell returns the moment the reader steps out, and the footer
+            // becomes an ornament they learn to ignore — the same as not
+            // having one.
+            if (!elsewhere) {
+                if (marks.bell) entry->second.bell_seen = true;
+                if (marks.activity) entry->second.activity_seen = true;
+            }
+            const bool wants = elsewhere && marks.bell && !entry->second.bell_seen;
+            const bool busy = elsewhere && marks.activity && !entry->second.activity_seen;
             if (wants != entry->second.lit || busy != entry->second.noted_activity) {
                 // The rising edge is the bell, and only the rising edge: this
                 // poll runs several times a second, and a reader whose host
@@ -2241,32 +2255,29 @@ void ClientApp::refresh_footer() {
     const Context current = context();
     std::vector<w::StatusLineItem> items;
     // What the terminals a reader is NOT looking at have been doing
-    // (plans/06:330's status area). First, and at the highest priority in the
-    // line, because a bell that is dropped when the window narrows is a bell
-    // that did not happen as far as the reader is concerned — and these are
-    // two glyphs, so they cost almost nothing to keep.
+    // (plans/06:330's status area), at the highest priority in the line: a
+    // bell dropped when the window narrows is a bell that did not happen as
+    // far as the reader is concerned, and these are two glyphs.
     //
-    // The counts are of WINDOWS, not of events: "three terminals want you" is
-    // actionable, "eleven bells" is not, and the marks are "since you last
-    // heard" rather than totals anyway.
-    if (options_.terminal_marks && desktop_ != nullptr) {
+    // The counts are of WINDOWS wanting attention, which is the actionable
+    // number — "eleven bells" is not — and they are read off what the title
+    // poll decided rather than recomputed. There used to be a second copy of
+    // the "is this the active window" rule here, and a mutation showed why
+    // that is a trap: inverting the poll's copy changed nothing any test
+    // could see, because every assertion read the footer and the footer had
+    // its own. One behaviour, one place.
+    {
         int bells = 0;
-        int active = 0;
-        for (w::Window* const window : desktop_->windows()) {
-            const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window);
-            if (terminal == nullptr) continue;
-            // The window a reader is looking at is not telling them anything
-            // they cannot already see, so it never raises a flag — which is
-            // also what makes the flags go away as they visit the windows.
-            if (window == desktop_->active_window()) continue;
-            const TerminalMarks marks = options_.terminal_marks(*terminal);
-            if (marks.bell) ++bells;
-            if (marks.activity) ++active;
+        int busy = 0;
+        for (const auto& [flagged, title] : titles_) {
+            (void)flagged;
+            if (title.lit) ++bells;
+            if (title.noted_activity) ++busy;
         }
         if (bells > 0)
             items.emplace_back("\u2022 " + std::to_string(bells), ckv::ui::kInvalidCommand, 100);
-        if (active > 0)
-            items.emplace_back("! " + std::to_string(active), ckv::ui::kInvalidCommand, 99);
+        if (busy > 0)
+            items.emplace_back("! " + std::to_string(busy), ckv::ui::kInvalidCommand, 99);
     }
     for (const KeyBinding* binding : keymap_.footer(current)) {
         // In the prefix context the reader has already pressed the prefix, so

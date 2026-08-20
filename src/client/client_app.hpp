@@ -898,6 +898,17 @@ private:
         // the `[exit]` badge went in above.
         bool lit = false;
         bool noted_activity = false;
+        // What this reader has already answered by looking. The server's flag
+        // is sticky — set when the child rings, cleared only on respawn — so
+        // it says "this terminal has rung at some point", not "since you last
+        // looked". The second sentence is the one a footer flag means, and it
+        // is a statement about a READER rather than about a terminal: two
+        // clients on one session are each in a different window, so the same
+        // terminal is simultaneously one somebody is watching and one nobody
+        // is. So the answer is remembered here, per client, and the terminal
+        // keeps only the fact.
+        bool bell_seen = false;
+        bool activity_seen = false;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
     // What one terminal's window is called, given everything currently known
