@@ -157,6 +157,36 @@ instruments are the ones nobody else audits:
   inferred from a commit subject, and a live claim read as abandoned because a
   name did not resolve, were both wrong on the same afternoon and in opposite
   directions. Asking costs a message; being wrong costs their day.
+The budget-gate session's own, recorded because three of the four are claims
+about *other sessions' work*, which is the kind this file says needs its own
+check:
+
+- **Attributed a stale working copy's diff to a named session.** 267 lines
+  appeared to leave `test_session_desktop.cpp` beside an untracked WP-43 file,
+  so the `FitDesktop` removal was reported as ckmux-53's in-flight work and
+  they were asked to check their own tree. Nothing had been removed by anyone.
+  A copy behind HEAD renders arrivals it never received as departures, so
+  non-delivery reads as deletion — the diff was checked and what the diff was
+  *of* was not.
+- **Relayed a break report without checking it still reproduced.** A ckVision
+  `MouseEvent::position` compile error was passed on as current; it had been
+  fixed hours earlier in `bad4077`. A second-hand report inherits the
+  confidence of the first-hand one and none of its timestamp.
+- **Reported two red suites at HEAD when one was a peer's untracked file** that
+  CMake compiled off the shared tree. `git status` had been checked minutes
+  before the build, and a working-tree measurement was quoted as evidence about
+  a commit.
+- **Wrote the expiry rule that authorised reading a live claim as abandoned** —
+  "a session no longer active reverts to `Ready`" — thinking of a dead session
+  blocking the queue, never of a live one whose name had drifted. It cost
+  another session an afternoon's wrong turn within hours of landing.
+
+A fifth, not a claim but the same family: the **membership test** this session
+proposed — "working-copy lines absent from HEAD" — was retired because it
+cannot distinguish unlanded work from a stale copy, and reported phantom work
+with full confidence. An instrument that cannot tell two states apart will
+report confidently on both.
+
 - **Record your own instances.** Every session in this fleet has entries in
   this list, which is the only reason the list is usable: a ledger with one
   session's failures in it is a reputation, and nobody writes those down. Say
