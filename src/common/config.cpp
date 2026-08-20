@@ -399,6 +399,7 @@ AssignmentResult apply_assignment(std::string_view section, std::string_view key
             return integer(settings.max_terminals, kMaxTerminalsMin, kMaxTerminalsMax);
         if (key == "theme") return enumerated(settings.theme, kThemes);
         if (key == "on-exit") return enumerated(settings.on_exit, kExitPolicies);
+        if (key == "audible-bell") return boolean(settings.audible_bell);
         if (key == "confirm-kill") return boolean(settings.confirm_kill);
         if (key == "kill-empty-session") return boolean(settings.kill_empty_session);
         // [general], where plans/08 documents it, where this struct's own

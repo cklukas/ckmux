@@ -52,6 +52,8 @@ prefix          = C-b          # the one stolen key; C-a, F12, … accepted
 shell           = $SHELL       # what New Terminal runs
 login-shell     = true         # start it as a login shell (Settings ▸ General…)
 scrollback      = 10000        # lines per terminal (0 = off)
+audible-bell    = false        # ring the host terminal too; the border flash
+                               # and the footer flag are always on (WP-19)
 theme           = dark         # dark | light | mono (Settings ▸ General…)
 on-exit         = hold-on-error# close | hold | hold-on-error
 confirm-kill    = true         # confirm dialogs for kill/close of live apps

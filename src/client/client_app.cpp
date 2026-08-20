@@ -1779,6 +1779,54 @@ void ClientApp::refresh_terminal_titles() {
         const std::string pinned = options_.custom_title && terminal != nullptr
                                        ? options_.custom_title(*terminal)
                                        : entry->second.custom;
+        // What this window is saying to a reader who is elsewhere (WP-19).
+        //
+        // The border is HELD rather than blinked: a blink needs a timer per
+        // window and shows a reader who looks away between frames nothing at
+        // all, while a border that stays lit until they visit says the same
+        // thing the footer count says and keeps saying it. Deliberate
+        // deviation from plans/06's word "flash", recorded in the row.
+        //
+        // No new colour either: the window is drawn with its own ACTIVE frame
+        // role while unfocused, so a window asking for attention looks like
+        // the window a reader is in. That reuses a colour every theme already
+        // guarantees is legible rather than inventing one.
+        if (options_.terminal_marks && terminal != nullptr && desktop_ != nullptr) {
+            const bool elsewhere = window != desktop_->active_window();
+            const TerminalMarks marks = options_.terminal_marks(*terminal);
+            // A window the reader is IN is not telling them anything they
+            // cannot see, which is also what makes these clear as they visit.
+            const bool wants = elsewhere && marks.bell;
+            const bool busy = elsewhere && marks.activity;
+            if (wants != entry->second.lit || busy != entry->second.noted_activity) {
+                // The rising edge is the bell, and only the rising edge: this
+                // poll runs several times a second, and a reader whose host
+                // rang on every tick would turn the setting off and never
+                // learn what it was for.
+                if (wants && !entry->second.lit && options_.settings.audible_bell &&
+                    options_.ring_host_bell)
+                    options_.ring_host_bell();
+                if (wants != entry->second.lit) {
+                    const ckv::ui::RoleId frame_active =
+                        app_.roles().find("ckv.window.frame.active");
+                    const ckv::ui::RoleId title_active =
+                        app_.roles().find("ckv.window.title.active");
+                    window->set_role_override(
+                        frame_active,
+                        wants ? frame_active : app_.roles().find("ckv.window.frame.inactive"),
+                        title_active,
+                        wants ? title_active : app_.roles().find("ckv.window.title.inactive"));
+                }
+                entry->second.lit = wants;
+                entry->second.noted_activity = busy;
+                // And the footer, which counts these windows. Asked here
+                // because this poll is the moment ckmux LEARNS a mark changed —
+                // nothing pushes it — so without this the flags would appear
+                // only when some unrelated event happened to redraw the
+                // footer, which for a reader waiting on a build is never.
+                refresh_footer();
+            }
+        }
         // While its history is being read the caption belongs to copy mode,
         // which writes the badge and the scroll position into it. Both names
         // are still recorded, so leaving copy mode restores whatever the
@@ -2192,6 +2240,34 @@ void ClientApp::refresh_footer() {
     }
     const Context current = context();
     std::vector<w::StatusLineItem> items;
+    // What the terminals a reader is NOT looking at have been doing
+    // (plans/06:330's status area). First, and at the highest priority in the
+    // line, because a bell that is dropped when the window narrows is a bell
+    // that did not happen as far as the reader is concerned — and these are
+    // two glyphs, so they cost almost nothing to keep.
+    //
+    // The counts are of WINDOWS, not of events: "three terminals want you" is
+    // actionable, "eleven bells" is not, and the marks are "since you last
+    // heard" rather than totals anyway.
+    if (options_.terminal_marks && desktop_ != nullptr) {
+        int bells = 0;
+        int active = 0;
+        for (w::Window* const window : desktop_->windows()) {
+            const ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window);
+            if (terminal == nullptr) continue;
+            // The window a reader is looking at is not telling them anything
+            // they cannot already see, so it never raises a flag — which is
+            // also what makes the flags go away as they visit the windows.
+            if (window == desktop_->active_window()) continue;
+            const TerminalMarks marks = options_.terminal_marks(*terminal);
+            if (marks.bell) ++bells;
+            if (marks.activity) ++active;
+        }
+        if (bells > 0)
+            items.emplace_back("\u2022 " + std::to_string(bells), ckv::ui::kInvalidCommand, 100);
+        if (active > 0)
+            items.emplace_back("! " + std::to_string(active), ckv::ui::kInvalidCommand, 99);
+    }
     for (const KeyBinding* binding : keymap_.footer(current)) {
         // In the prefix context the reader has already pressed the prefix, so
         // the bare key is what they need to see next; otherwise the full

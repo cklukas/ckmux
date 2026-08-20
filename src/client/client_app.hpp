@@ -132,6 +132,17 @@ struct WindowPlacement {
     friend bool operator==(const WindowPlacement&, const WindowPlacement&) = default;
 };
 
+// The two things a terminal can be saying to a reader who is elsewhere. Both
+// are the SERVER's marks: it sets them when the child rings or writes, and
+// clears them once it has told the client, so what a client holds is "since
+// you last heard", not "ever".
+struct TerminalMarks {
+    bool bell = false;
+    bool activity = false;
+
+    bool any() const noexcept { return bell || activity; }
+};
+
 struct ClientOptions {
     // Everything the configuration file said, defaults included (plans/08).
     // The client reads its own settings out of this rather than holding a
@@ -299,6 +310,21 @@ struct ClientOptions {
     // PTY re-encodes it.
     std::function<bool(const ckv::term::TerminalSubsession& terminal, std::string bytes)>
         paste_credited;
+    // What a terminal has done that a reader who is not looking at it would
+    // want to know: it rang the bell, or it produced output (WP-19,
+    // plans/06:330). Asked for rather than derived, exactly as `exit_status`
+    // is: the server owns both marks and sets them on `TermMeta`, the mirror
+    // decodes them, and this layer has no way to reach that from a
+    // `TerminalSubsession` alone. Unset means a client with nothing to ask —
+    // the marks are simply never raised, which is what an unattached client
+    // should show, since a reader with one desktop is looking at every
+    // terminal it has.
+    std::function<TerminalMarks(const ckv::term::TerminalSubsession& terminal)> terminal_marks;
+    // Rings the reader's OWN terminal, for `[general] audible-bell`. Injected
+    // because a client must not reach past ckVision to its host's output —
+    // the same reason `clipboard_writer` is injected — and because a headless
+    // test needs to count rings without a real terminal anywhere.
+    std::function<void()> ring_host_bell;
     // Moves one terminal to another session, so its program keeps running
     // somewhere this desktop is not showing. `to_new_session` outranks
     // `destination`: the reader asked for a fresh one.
@@ -861,6 +887,17 @@ private:
         // desktop's insertion order. The two agree until a window in the
         // middle closes, and then only the caption is visible.
         int number = 0;
+        // What this window was last seen to be saying (WP-19), so the border
+        // override, the host bell and the footer are each touched once per
+        // CHANGE rather than rewritten on every poll — this runs several times
+        // a second for every window.
+        //
+        // LAST in the struct deliberately: the one construction site
+        // initialises positionally, and a field added in the middle silently
+        // shifts `number` into `custom` — which is exactly what it did when
+        // the `[exit]` badge went in above.
+        bool lit = false;
+        bool noted_activity = false;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
     // What one terminal's window is called, given everything currently known

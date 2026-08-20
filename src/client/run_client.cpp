@@ -351,6 +351,22 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         session.paste(*id, std::move(bytes));
         return true;
     };
+    // What each terminal has been doing while the reader was elsewhere
+    // (WP-19). Straight off the mirror, which decodes both flags from a
+    // snapshot and from every `TermMeta`.
+    options.client.terminal_marks =
+        [&session](const ckv::term::TerminalSubsession& terminal) -> ckm::client::TerminalMarks {
+        ckm::client::TerminalMarks marks;
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return marks;
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        if (remote == nullptr) return marks;
+        marks.bell = remote->mirror().bell_marked();
+        marks.activity = remote->mirror().activity_marked();
+        return marks;
+    };
+    // And the host's own bell, when the reader asked for one.
+    options.client.ring_host_bell = [&terminal] { terminal.bell(); };
     // `Enter restart` on a held window: the same command, in the same window,
     // which is the server's to do because the server owns the child. Set only
     // here — a client with no server leaves it unset, and the footer stops

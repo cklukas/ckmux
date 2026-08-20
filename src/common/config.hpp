@@ -131,6 +131,14 @@ struct Settings {
     // and a runaway script asking for terminals in a loop would otherwise take
     // the machine's descriptors with it.
     int max_terminals = 64;
+    // Whether a child's bell reaches the reader's own terminal as a bell
+    // (plans/06:697: "audible bell to the host optional via config"). The
+    // VISUAL half — the window's border flash and the footer flag — is not
+    // configurable and is always on: it is how a reader learns that a window
+    // they are not looking at wants them, which is the whole point of a bell
+    // in a multiplexer. What a reader may reasonably not want is the noise,
+    // especially with several terminals running, so only that is a setting.
+    bool audible_bell = false;
     Theme theme = Theme::Dark;
     // What happens to a window when its program exits. hold-on-error keeps
     // the window when the exit status is non-zero, which is the one case

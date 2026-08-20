@@ -1011,3 +1011,25 @@ CK_TEST(the_per_session_terminal_limit_is_read_bounded_and_honoured) {
     for (const std::string& entry : ckm::keys_not_honoured_yet())
         CK_CHECK(entry.find("max-terminals") == std::string::npos);
 }
+
+CK_TEST(the_audible_bell_is_off_until_a_reader_asks_and_is_honoured_when_they_do) {
+    // WP-19. Only the NOISE is configurable: the border and the footer flag
+    // are how a reader learns that a window they are not looking at wants
+    // them, which is the whole point of a bell in a multiplexer, so those are
+    // always on. What a reader may reasonably not want — especially with
+    // several terminals running — is their own terminal ringing.
+    CK_CHECK(!ckm::Settings{}.audible_bell);
+
+    ScratchConfig scratch("bell");
+    scratch.write("[general]\naudible-bell = true\n");
+    const ckm::LoadedSettings loaded = load_settings(scratch.path());
+    CK_CHECK(loaded.warnings.empty());
+    CK_CHECK(loaded.settings.audible_bell);
+
+    // And it must not be on the not-yet-honoured list: the client rings the
+    // host the moment the key lands. Landing a key without wiring it, or
+    // wiring it and leaving it on that list, are the two halves of the defect
+    // `on-exit` had, and neither breaks a build.
+    for (const std::string& entry : ckm::keys_not_honoured_yet())
+        CK_CHECK(entry.find("audible-bell") == std::string::npos);
+}

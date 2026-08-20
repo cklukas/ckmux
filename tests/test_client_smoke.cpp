@@ -1975,3 +1975,174 @@ CK_TEST(enter_restarts_a_held_window_and_x_closes_it) {
     // And closing did not also ask for a restart on the way out.
     CK_CHECK(restarts == 1);
 }
+
+// --- WP-19: bell and activity monitors --------------------------------------
+
+namespace {
+
+// A client whose terminals report whatever the test says they are doing. The
+// marks are the SERVER's in a real client, so a test supplies them the same
+// way the server would — through the seam, not by reaching into a window.
+struct MarkedFixture {
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    std::map<const ckv::term::TerminalSubsession*, ckm::client::TerminalMarks> marks;
+    int rings = 0;
+    ClientApp client;
+
+    explicit MarkedFixture(bool audible = false)
+        : client{app, [this, audible] {
+                     ClientOptions options = test_options();
+                     options.settings.audible_bell = audible;
+                     options.terminal_marks =
+                         [this](const ckv::term::TerminalSubsession& asked_about) {
+                             const auto found = marks.find(&asked_about);
+                             return found == marks.end() ? ckm::client::TerminalMarks{}
+                                                         : found->second;
+                         };
+                     options.ring_host_bell = [this] { ++rings; };
+                     return options;
+                 }()} {}
+
+    void poll() {
+        clock.advance(200'000'000);
+        app.step(clock.now_nanos());
+    }
+};
+
+const ckv::term::TerminalSubsession* subsession_of(ckv::widgets::Window* window) {
+    auto* const view = window == nullptr
+                           ? nullptr
+                           : dynamic_cast<ckv::widgets::TerminalView*>(window->content());
+    return view == nullptr ? nullptr
+                           : dynamic_cast<const ckv::term::TerminalSubsession*>(&view->session());
+}
+
+}  // namespace
+
+CK_TEST(a_terminal_the_reader_is_not_looking_at_says_so_in_the_footer) {
+    // plans/06:330's status area. The counts are of WINDOWS wanting attention,
+    // which is the actionable number — "eleven bells" is not.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    f.poll();
+    std::vector<ckv::widgets::Window*> windows;
+    for (ckv::widgets::Window* w : f.client.desktop().windows())
+        if (subsession_of(w) != nullptr) windows.push_back(w);
+    CK_CHECK(windows.size() == 2U);
+    if (windows.size() < 2) return;
+
+    // Nothing marked: no flags at all, rather than a zero.
+    f.poll();
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "•"));
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "!"));
+
+    // The window the reader is NOT in rings.
+    ckv::widgets::Window* const elsewhere =
+        windows.front() == f.client.desktop().active_window() ? windows.back() : windows.front();
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true};
+    f.poll();
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "! 1"));
+}
+
+CK_TEST(the_window_a_reader_is_in_never_raises_a_flag_about_itself) {
+    // A terminal a reader is looking at is not telling them anything they
+    // cannot already see. This is also what makes the flags go away as they
+    // visit the windows, rather than needing to be dismissed.
+    MarkedFixture f;
+    f.poll();
+    ckv::widgets::Window* const only = f.client.desktop().active_window();
+    CK_CHECK(subsession_of(only) != nullptr);
+    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true};
+    f.poll();
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "! 1"));
+}
+
+CK_TEST(the_host_is_rung_once_per_bell_and_only_when_asked) {
+    // The rising edge, not the condition: this poll runs several times a
+    // second, and a reader whose terminal rang on every tick would turn the
+    // setting off and never learn what it was for.
+    MarkedFixture f{/*audible=*/true};
+    f.client.open_terminal("second");
+    f.poll();
+    ckv::widgets::Window* elsewhere = nullptr;
+    for (ckv::widgets::Window* w : f.client.desktop().windows())
+        if (subsession_of(w) != nullptr && w != f.client.desktop().active_window()) elsewhere = w;
+    CK_CHECK(elsewhere != nullptr);
+    if (elsewhere == nullptr) return;
+
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.poll();
+    CK_CHECK(f.rings == 1);
+    f.poll();
+    f.poll();
+    CK_CHECK(f.rings == 1);  // still one: the condition held, no new edge
+
+    // Cleared and rung again is a second bell.
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{};
+    f.poll();
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.poll();
+    CK_CHECK(f.rings == 2);
+}
+
+CK_TEST(activity_arriving_under_a_held_bell_does_not_ring_again) {
+    // Found by mutation: removing the rising-edge clause left every test
+    // green, because none of them changed one mark while the other stood.
+    // A terminal that rang and then kept printing is the ordinary case — a
+    // build that beeped and carried on — and it must ring once, not once per
+    // line of output.
+    MarkedFixture f{/*audible=*/true};
+    f.client.open_terminal("second");
+    f.poll();
+    ckv::widgets::Window* elsewhere = nullptr;
+    for (ckv::widgets::Window* w : f.client.desktop().windows())
+        if (subsession_of(w) != nullptr && w != f.client.desktop().active_window()) elsewhere = w;
+    CK_CHECK(elsewhere != nullptr);
+    if (elsewhere == nullptr) return;
+
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.poll();
+    CK_CHECK(f.rings == 1);
+    // The bell still stands; the terminal is now also producing output.
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true};
+    f.poll();
+    CK_CHECK(f.rings == 1);
+}
+
+CK_TEST(the_window_a_reader_is_in_neither_rings_nor_lights) {
+    // The footer has its own "not the active window" guard, so a test that
+    // only reads the footer leaves the poll's guard uncovered — which is what
+    // a mutation showed: inverting it changed nothing any test could see.
+    // The ring is the observable that goes through the poll.
+    MarkedFixture f{/*audible=*/true};
+    f.poll();
+    ckv::widgets::Window* const only = f.client.desktop().active_window();
+    CK_CHECK(subsession_of(only) != nullptr);
+    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true};
+    f.poll();
+    f.poll();
+    // A reader looking straight at the terminal that rang does not need their
+    // own terminal to ring about it.
+    CK_CHECK(f.rings == 0);
+}
+
+CK_TEST(a_reader_who_did_not_ask_for_noise_does_not_get_any) {
+    // The visual half is not configurable and the audible half is — so with
+    // the setting off the flag still appears and the host stays silent.
+    MarkedFixture f{/*audible=*/false};
+    f.client.open_terminal("second");
+    f.poll();
+    ckv::widgets::Window* elsewhere = nullptr;
+    for (ckv::widgets::Window* w : f.client.desktop().windows())
+        if (subsession_of(w) != nullptr && w != f.client.desktop().active_window()) elsewhere = w;
+    CK_CHECK(elsewhere != nullptr);
+    if (elsewhere == nullptr) return;
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.poll();
+    CK_CHECK(f.rings == 0);
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+}
