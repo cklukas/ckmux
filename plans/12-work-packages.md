@@ -140,7 +140,7 @@ take first.
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **In progress** (ckmux-53, `uds:/tmp/cc-socks/91796.sock`) — the half that consumes U7-a waits for row 55; the client-learns-the-session-desktop half starts now on WP-40's landed wire (`35b94f7`), the WP-29 two-halves precedent | U7-a, WP-40 |
-| 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-40, WP-41, WP-42, WP-43 |
+| 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`) — marks half waits on WP-41 | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1945,6 +1945,34 @@ reports a change it did not originate); one client detaching leaves the other
 attached and the session alive; and the default path — attach with no flag —
 still takes the session over, with the notice WP-14 puts in front of the
 reader who lost it.
+
+*WP-44 landed* (2026-08-20, ckmux `41bda41`). `Attach.share` is the whole
+opt-in: without it the contract is what it always was, and with it the readers
+already there stay. The work was `client_attached_to`, which returned the FIRST
+attached client at twelve broadcast sites — each of which would have left a
+second reader watching a screen that stopped changing — now `for_each_attached`
+with every site asked whether it means everybody watching or the one who asked.
+`SessionInfo::attached` became a count, because it is the only fact about
+simultaneity a reader ever sees and "busy" cannot say "two of you are in here".
+
+**The echo argument had to be rebuilt rather than the code alone.**
+`announce_layout`'s comment rested on there being at most one watcher: the
+client told is the client that reported, so an unchanged layout ends the
+exchange. That premise stops being true here. What holds instead was already in
+the code — the announce gate is an EDGE, fired only when a terminal's
+`layout_announced` says something moved, so a client applying what it was told
+produces no new edge, and the client half reports on a gesture's END rather
+than on every settle. Found by ckmux-be, who read the comment rather than the
+code and noticed its premise had changed underneath it. **Two readers also make
+it a "whose arrangement wins" question**, decided rather than discovered: the
+reporting client's arrangement is authoritative and the other is told, which is
+the rule one reader has always had with themselves.
+
+*Still open, and named rather than implied*: "each client sees the marks it is
+owed" cannot be satisfied while `TermMeta` carries a level rather than an edge
+— WP-41's blocked piece. A second reader gets its own snapshot, its own focus
+and its own view of the desktop; it gets the marks when the wire learns to say
+"rang again".
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
 attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty
