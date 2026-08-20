@@ -9,6 +9,7 @@ set(CKMUX_TEST_SOURCES
     test_commands.cpp
     test_command_reachability.cpp
     test_attach.cpp
+    test_budgets.cpp
     test_cli.cpp
     test_client_pacing.cpp
     test_client_smoke.cpp
@@ -84,6 +85,10 @@ ckmux_strict(ckmux_tests)
 # is exactly what this block exists to catch.
 set(CKMUX_LABELS_test_cli "script;pty;e2e")
 set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
+# WP-20's budget gates. `benchmark` because the assertions are deterministic
+# counters rather than behaviour, and `pty` because Terminals::open forks a real
+# child for every terminal a gate measures.
+set(CKMUX_LABELS_test_budgets "benchmark;pty")
 set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
