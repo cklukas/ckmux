@@ -122,6 +122,25 @@ struct WireClient {
     ckm::platform::Stream stream;
     ckm::proto::FrameReader reader;
     ckm::client::ServerSession session{nullptr};
+    // Every byte the server has written to this connection. Counted where the
+    // bytes actually arrive rather than at the server's send site, because the
+    // server under test is a forked process with its stderr on /dev/null —
+    // instrumenting it would need a file and a shutdown hook, and this end
+    // sees the same wire.
+    std::size_t bytes_received = 0;
+
+    bool connect_only(const std::filesystem::path& socket) {
+        ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
+        if (result.status != ckm::platform::ConnectStatus::Connected) return false;
+        stream = ckm::platform::Stream(result.fd);
+        session = ckm::client::ServerSession([this](const ckm::proto::Message& message) {
+            (void)stream.send(ckm::proto::encode(message));
+        });
+        ckm::proto::Hello hello;
+        hello.build = "a test";
+        (void)stream.send(ckm::proto::encode(hello));
+        return true;
+    }
 
     bool connect_and_attach(const std::filesystem::path& socket, ckv::Size desktop) {
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
@@ -141,6 +160,7 @@ struct WireClient {
     std::size_t pump() {
         std::string arrived;
         (void)stream.receive(arrived);
+        bytes_received += arrived.size();
         if (!arrived.empty() && !reader.append(arrived)) return 0;
         std::size_t count = 0;
         for (;;) {
@@ -464,10 +484,36 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     CK_CHECK(client.pump_until(
         [&] { return client.screen_of(terminal).find("ckmux-flood-line") != std::string::npos; }));
 
-    // Ten round trips through a server that is reading a flood the whole time.
+    // Ten round trips through a server that is reading a flood the whole time
+    // — measured against an un-attached connection PAIRED with them rather
+    // than run afterwards.
+    //
+    // Running the two loops in sequence, as this rig first did, leaves the
+    // second one timing a deeper flood than the first: the child has been
+    // writing for the whole of the first loop before the second starts. That
+    // cannot turn a near-zero into half a second, so the original conclusion
+    // stands, but it does inflate whichever loop runs second — and simply
+    // swapping them would move the bias onto the other measurement rather than
+    // remove it. Alternating the two within one window is what actually
+    // removes it: each pair of pings meets the same flood depth, so the
+    // difference between the two numbers is the difference between the two
+    // CONNECTIONS and nothing else.
+    //
+    // The byte counter rides in the same window for the same reason. Two runs
+    // would each have their own flood depth, and a bytes-per-second from one
+    // divided by a latency from the other would be a ratio of two different
+    // experiments.
+    WireClient idle;
+    const bool idle_connected = idle.connect_only(socket);
+    const std::size_t bytes_before = client.bytes_received;
+    const clock_type::time_point window_began = clock_type::now();
     double worst_ms = 0.0;
     double total_ms = 0.0;
+    double idle_worst = 0.0;
+    double idle_total = 0.0;
     for (std::uint64_t attempt = 1; attempt <= 10; ++attempt) {
+        // The attached client: the server's answer PLUS this client's decode of
+        // the flood standing in front of it.
         ckm::proto::Ping ping;
         ping.nonce = attempt;
         const clock_type::time_point sent = clock_type::now();
@@ -485,9 +531,48 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
             std::chrono::duration<double, std::milli>(clock_type::now() - sent).count();
         worst_ms = std::max(worst_ms, elapsed);
         total_ms += elapsed;
+
+        // The un-attached one, immediately after, against the same flood.
+        // Deltas go out via `for_each_attached`, so this connection is handed
+        // nothing to decode: what it times is the server's answer alone.
+        if (!idle_connected) continue;
+        ckm::proto::Ping idle_ping;
+        idle_ping.nonce = 100 + attempt;
+        const clock_type::time_point idle_sent = clock_type::now();
+        idle.session.request(idle_ping);
+        (void)idle.stream.flush();
+        bool idle_answered = false;
+        const clock_type::time_point idle_deadline = idle_sent + std::chrono::milliseconds(2000);
+        while (!idle_answered && clock_type::now() < idle_deadline) {
+            idle.pump();
+            idle_answered = idle.last_pong_nonce_ == 100 + attempt;
+            if (!idle_answered) ::usleep(200);
+        }
+        const double idle_elapsed =
+            std::chrono::duration<double, std::milli>(clock_type::now() - idle_sent).count();
+        idle_worst = std::max(idle_worst, idle_elapsed);
+        idle_total += idle_elapsed;
     }
+    const double window_ms =
+        std::chrono::duration<double, std::milli>(clock_type::now() - window_began).count();
+    const std::size_t flood_bytes = client.bytes_received - bytes_before;
     std::printf("  [flood gate] Ping round trip under a `yes` flood: %.1f ms worst, %.1f ms mean\n",
                 worst_ms, total_ms / 10.0);
+    if (idle_connected) {
+        std::printf(
+            "  [server latency] same flood, un-attached connection, paired: %.1f ms worst, %.1f ms "
+            "mean\n",
+            idle_worst, idle_total / 10.0);
+    } else {
+        std::printf("  [server latency] un-attached connection refused; not measured\n");
+    }
+    // What the server actually put on the wire over that same window. This is
+    // the number the volume hypothesis lives or dies on: if a regression made
+    // the flood cost more to send, it shows here; if it is flat, the time is
+    // being spent somewhere that is not the wire.
+    std::printf("  [flood bytes] %zu bytes to the attached client over %.1f ms (%.2f MB/s)\n",
+                flood_bytes, window_ms,
+                (static_cast<double>(flood_bytes) / (1024.0 * 1024.0)) / (window_ms / 1000.0));
     // Generous on purpose: what is being asserted is that the server never stops
     // answering, not how fast this machine is. A server that read without a
     // budget, or wrote to a slow client without a queue, would not answer at all
