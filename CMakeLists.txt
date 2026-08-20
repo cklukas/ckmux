@@ -141,6 +141,11 @@ add_library(ckmux_platform STATIC
     src/platform/process_stats.cpp
     src/platform/socket.cpp)
 target_include_directories(ckmux_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# The ONE mention of ckvision::cvision on any link line. PUBLIC here, it
+# propagates to every downstream target through the PUBLIC chain
+# (platform -> common -> client/server -> ckmux, tests), and naming it
+# again downstream is what doubled the archive on the two final links
+# (`ld: warning: ignoring duplicate libraries`).
 target_link_libraries(ckmux_platform PUBLIC ckvision::cvision)
 ckmux_strict(ckmux_platform)
 
@@ -159,7 +164,7 @@ add_library(ckmux_common STATIC
     src/common/proto.cpp
     src/common/shell.cpp)
 target_include_directories(ckmux_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_common PUBLIC ckmux_platform ckvision::cvision)
+target_link_libraries(ckmux_common PUBLIC ckmux_platform)
 ckmux_strict(ckmux_common)
 
 # The client object graph is a plain library so every part of it is reachable
@@ -180,7 +185,7 @@ add_library(ckmux_client STATIC
     src/client/server_session.cpp
     src/client/stats_format.cpp)
 target_include_directories(ckmux_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_client PUBLIC ckmux_common ckvision::cvision)
+target_link_libraries(ckmux_client PUBLIC ckmux_common)
 ckmux_strict(ckmux_client)
 
 # The server is its own library and reaches ckVision through `core` and `term`
@@ -198,13 +203,13 @@ add_library(ckmux_server STATIC
     src/server/server.cpp
     src/server/terminals.cpp)
 target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(ckmux_server PUBLIC ckmux_common ckvision::cvision)
+target_link_libraries(ckmux_server PUBLIC ckmux_common)
 ckmux_strict(ckmux_server)
 
 # The one installed artifact: ckmux itself. Everything it needs is linked in
 # statically, so the prefix gets a binary and nothing else.
 add_executable(ckmux src/main.cpp)
-target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server ckvision::cvision)
+target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server)
 ckmux_strict(ckmux)
 install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
