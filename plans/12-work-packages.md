@@ -117,7 +117,7 @@ take first.
 | 32 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 33 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 34 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
-| 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Ready** | WP-6 ✓ |
+| 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Ready** (wire half landed as R8's side effect — `TermMeta` carries both flags; nothing in the UI reads them yet) | WP-6 ✓, U0-c ✓ |
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Ready** | WP-6 ✓, U1-c ✓, U1-d ✓ |
 | 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **In progress** (ckmux-63, uds:/tmp/cc-socks/27414.sock) | WP-16 ✓ |
