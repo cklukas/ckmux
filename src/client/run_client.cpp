@@ -24,6 +24,7 @@
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
+#include "platform/paths.hpp"
 #include "cvision/core/assert.hpp"
 #include "cvision/core/clock.hpp"
 #include "cvision/term/terminal.hpp"
@@ -480,20 +481,20 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
                                                       std::string_view bytes) {
         save_problem.clear();
         std::error_code failed;
-        // `~` is resolved HERE, at the filesystem boundary, because this is
-        // the first place the path stops being something a reader typed and
-        // becomes something the kernel is handed. The configured folder
-        // defaults to `~/Documents` and nothing expanded it: the first working
-        // save this rig produced landed in `/tmp/~/Documents/`, a directory
-        // literally named `~` beside wherever the client happened to be
-        // running. The file was correct and a reader would never have found it.
-        std::string resolved = path;
-        if (resolved == "~" || resolved.rfind("~/", 0) == 0) {
-            const char* const home = std::getenv("HOME");
-            if (home != nullptr && *home != '\0')
-                resolved = std::string(home) + resolved.substr(1);
-        }
-        const std::filesystem::path target(resolved);
+        // `~` is APPLIED here, at the filesystem boundary — the first place a
+        // path stops being something a reader typed and becomes something the
+        // kernel is handed — but what it MEANS is decided in
+        // `platform/paths`, which is the one place that answers that and the
+        // only place with a suite saying so (`tests/test_paths.cpp`).
+        //
+        // It was decided here once, inline, and the residue is why it moved:
+        // a relative `HOME` produced a path resolved against whatever
+        // directory the client was started in, and an unset `HOME` left the
+        // `~` in the string and reproduced the original `<cwd>/~/Documents/`
+        // bug exactly. A guard whose failure mode is the defect it guards
+        // against is not one.
+        const std::filesystem::path target = ckm::platform::expand_user_path(path);
+        const std::string resolved = target.string();
         if (target.has_parent_path()) {
             std::filesystem::create_directories(target.parent_path(), failed);
             failed.clear();
