@@ -69,6 +69,12 @@ public:
     // this line belong on" and the id answers a different one. Not stored
     // here: stats are a stream for a display, not state a session holds.
     std::function<void(RemoteTerminalSubsession&, const proto::TermStats&)> on_stats;
+    // The SESSION's desktop — the world every window rect is stated in
+    // (WP-40, WP-43). From the attach snapshot and from every `LayoutDelta`
+    // of the watched session; fired when the value changes. Never from
+    // `ClientResize`: a reader's own screen is the VIEW over that world, and
+    // as of WP-40 it does not move it.
+    std::function<void(ckv::Size)> on_session_desktop;
     // Which of the two situations a layout statement came out of. They carry
     // the same shape and mean entirely different things, so the caller is told
     // which rather than left to guess (WP-30).
@@ -111,6 +117,10 @@ public:
     // outlives any number of reconnections and takeovers.
     void set_stats_watched(bool on);
     bool stats_watched() const noexcept { return stats_watched_; }
+    // What the server last said the session's desktop is; {0,0} while no
+    // server has said (before the first Attached, or a server from before
+    // WP-40 whose statement is zeros).
+    ckv::Size session_desktop() const noexcept { return session_desktop_; }
 
     // The reader's own terminal changed size while this client was attached.
     //
@@ -271,6 +281,11 @@ private:
     // that "how many times has this client had to ask?" counts requests that
     // were actually sent — which is what `resnapshots()` claims to say.
     void request_snapshot();
+    // The one door for the session-desktop fact: zeros are "nobody said" and
+    // change nothing, a repeat changes nothing, a change is stored and
+    // announced. Both messages that carry the fact come through here so the
+    // rule cannot fork.
+    void adopt_session_desktop(std::uint16_t columns, std::uint16_t rows);
 
     // A picture whose pixels are still arriving (WP-16): AddBegin opened it,
     // chunks fill it in order, End completes it into `completed_images_`,
@@ -325,6 +340,9 @@ private:
     // connection's subscription — see set_stats_watched.
     bool stats_watched_ = false;
     bool host_sixel_ = false;
+    // See session_desktop(). Adopted through adopt_session_desktop, which is
+    // where "zero means nobody said" is enforced once.
+    ckv::Size session_desktop_{0, 0};
     // The scene identity a remote terminal's rasters carry. Minted per
     // terminal, well away from Application's own adopted-subsession counter
     // (which starts at 1'000'000), because the compositor keys picture

@@ -32,6 +32,7 @@ set(CKMUX_TEST_SOURCES
     test_rename_terminal.cpp
     test_rename_wire.cpp
     test_session_desktop.cpp
+    test_session_desktop_client.cpp
     test_server_lifecycle.cpp
     test_server_loop.cpp
     test_server_terminals.cpp
@@ -113,6 +114,7 @@ set(CKMUX_LABELS_test_notifications "pty")
 set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 set(CKMUX_LABELS_test_stats_display "pty")
+set(CKMUX_LABELS_test_session_desktop_client "pty")
 # test_process_stats forks bare children of its own (fork, no exec, no PTY) —
 # a process primitive available anywhere the suite itself can run, so it stays
 # in the fast lane rather than joining `pty`, whose reason is a sandbox with

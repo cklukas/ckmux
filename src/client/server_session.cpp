@@ -49,6 +49,16 @@ void ServerSession::set_stats_watched(bool on) {
     if (send_) send_(proto::WatchStats{static_cast<std::uint8_t>(on ? 1 : 0)});
 }
 
+void ServerSession::adopt_session_desktop(std::uint16_t columns, std::uint16_t rows) {
+    // Zeros are a server that has not said — one from before WP-40, or a
+    // field nothing filled — and silence does not shrink a world.
+    if (columns == 0 || rows == 0) return;
+    const ckv::Size world{static_cast<int>(columns), static_cast<int>(rows)};
+    if (world == session_desktop_) return;
+    session_desktop_ = world;
+    if (on_session_desktop) on_session_desktop(world);
+}
+
 void ServerSession::desktop_resized(ckv::Size desktop, ckv::Size cell_pixels) {
     if (desktop.width <= 0 || desktop.height <= 0) return;
     if (desktop == desktop_ && cell_pixels == cell_pixels_) return;
@@ -153,6 +163,9 @@ void ServerSession::connection_lost() {
     attached_ = false;
     session_ = 0;
     snapshot_requested_ = false;
+    // The world went with the session. No callback: the client is tearing its
+    // desktop down anyway, and resets its own extent where it does that.
+    session_desktop_ = ckv::Size{0, 0};
     // No `on_terminal_closed`: the client takes its own windows down when it is
     // told the connection went, and calling back from here would have it doing
     // it twice for terminals nobody can close anyway.
@@ -200,6 +213,13 @@ bool ServerSession::handle(const proto::Message& message) {
         ++attachments_;
         snapshot_requested_ = false;  // whatever was asked for has arrived
         session_ = attached->session;
+        // The world, before anything is placed in it (WP-43): a window whose
+        // rect lies beyond this client's own screen must find the extent
+        // already grown when it arrives, or the view-sized desktop clamps it
+        // on adoption and a rect the session owns has moved because somebody
+        // small looked at it.
+        adopt_session_desktop(attached->snapshot.desktop_columns,
+                              attached->snapshot.desktop_rows);
         // The reader's standing wish, restated on the connection this attach
         // rode in on: the server's subscription is per connection and this
         // may be a fresh one. Idempotent when it is not.
@@ -293,8 +313,13 @@ bool ServerSession::handle(const proto::Message& message) {
         // The session is checked because the message names one and this client
         // watches exactly one: an arrangement for a session it is not showing
         // describes windows it does not have.
-        if (layout->session == session_ && on_layout)
-            on_layout(layout->entries, LayoutStatement::Delta);
+        if (layout->session == session_) {
+            // The world may have changed shape — a reader resized it, WP-40's
+            // resize-session — and the statement rides the same message the
+            // arrangement does.
+            adopt_session_desktop(layout->desktop_columns, layout->desktop_rows);
+            if (on_layout) on_layout(layout->entries, LayoutStatement::Delta);
+        }
         return true;
     }
     if (const auto* ack = std::get_if<proto::PasteAck>(&message)) {

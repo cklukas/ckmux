@@ -139,7 +139,7 @@ take first.
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
-| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **In progress** (ckmux-53, `uds:/tmp/cc-socks/91796.sock`) — the half that consumes U7-a waits for row 55; the client-learns-the-session-desktop half starts now on WP-40's landed wire (`35b94f7`), the WP-29 two-halves precedent | U7-a, WP-40 |
+| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Implementation complete — gate pending** (2026-08-20, ckmux-53; central pair gate requested at ckVision `a1a5433`) | U7-a ✓, WP-40 ✓ |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`) — marks half waits on WP-41 | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
@@ -163,6 +163,14 @@ WP-20; and WP-15 and WP-21, which are genuinely still blocked, now name only
 what is actually missing. **A `Blocked` row whose prerequisite column shows
 nothing but ✓ marks is a bug in this file** — that is the check, and it takes a
 minute.
+
+Run again 2026-08-20, and it caught one: **WP-15 was still marked `Blocked`
+after WP-13, WP-14 and WP-31 had all become `Done`** — the exact bug the
+paragraph above describes, sitting in the row directly under it. A falsely
+blocked row is worse than an unclaimed one, because a reader stops at the
+state column and never reaches the prerequisites to notice they are all ✓. So
+the check belongs on every landing rather than on a periodic sweep: a package
+going `Done` may free rows that name it, and nothing else will notice.
 
 ## Verification policy for every package
 
@@ -1952,6 +1960,36 @@ switches to a terminal off-screen means to see it. *Done when*: an 80×24
 client attached to a 200×60 session can reach every window, focus follows a
 terminal into view, and the layout the server holds is byte-identical before
 and after an hour of panning.
+
+*Implementation complete, 2026-08-20 (ckmux-53); pair gate requested at
+ckVision `a1a5433`.* The session layer learns the WORLD from the two
+messages that state it — the attach snapshot, early, so a window whose rect
+lies beyond the view finds the extent already grown when it is adopted, and
+every `LayoutDelta` of the watched session — with zeros as "nobody said",
+foreign sessions ignored, this client's own resize structurally unable to
+touch it, and the fact dying with the connection. `ClientApp` feeds it to
+U7-a's `set_extent`; a `WindowChange::Activated` subscriber calls
+`pan_to_show`, which moves paint offsets and never `bounds()`, so a report
+cannot follow from looking. The package's real integration work was
+splitting ckmux's `content_area()` consumers along U7-a's own world/view
+line: a new `view_content_area()` (identical to `content_area()` with no
+extent set — the regression bar) now anchors what belongs to the reader's
+EYES — a fresh terminal opens where they are looking, sized to their view;
+toasts; the which-key popup — while zoom, the tilings and layout
+restoration deliberately stay world-sized. Seven cases in
+`tests/test_session_desktop_client.cpp`, including: focus panning asserted
+through `pan()` in both directions with both windows' rects proven
+untouched; and the byte-identity claim as "panning alone produces NO
+report" — checked after the settle machinery has delivered the initial
+placement report, because counting that against panning was this test's own
+first bug. Two findings went upstream while consuming U7-a: painting with a
+window outside the panned view aborted (not the clip, which was correct at
+every layer — the CURSOR, reported in absolute screen cells and so addressed
+at a negative row once the pan carried its window off screen; fixed in
+ckVision `a1a5433`, with this suite's case 6 as the standing repro), and
+a `CKV_ASSERT` under `HeadlessTerminal` died mute because the message ledger
+is only printed by a live `PosixTerminal` — every headless abort in the
+fleet now names its contract on stderr instead.
 
 **WP-44 — Simultaneous attach, opt-in** *(ckmux)*. The flag, and the server
 side of it: `Attach` gains an opt-in, attaching without it takes the session

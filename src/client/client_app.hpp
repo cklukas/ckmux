@@ -552,6 +552,23 @@ public:
     // footer, formatted per the View toggles (WP-39).
     void receive_terminal_stats(const ckv::term::TerminalSubsession& terminal,
                                 const proto::TermStats& stats);
+    // The SESSION's desktop — the world (WP-40/WP-43). Becomes the desktop's
+    // extent, so a client whose screen is smaller than the session shows part
+    // of it and pans; panning follows the focused window (a reader who
+    // switches to a terminal off-screen means to see it), the offset is this
+    // client's alone and never travels, and no window's rect changes because
+    // somebody looked elsewhere — U7-a moves paint offsets, never bounds.
+    void set_session_desktop(ckv::Size world);
+    // The part of the world the reader can currently SEE, in world
+    // coordinates: `content_area()` clipped to the view at its pan, mirroring
+    // the library's own clamp arithmetic. Equal to `content_area()` itself
+    // while no extent is set, which is what keeps every consumer written
+    // before WP-43 byte-identical. The consumers that belong to the VIEW go
+    // through this — a new window opens where the reader is looking, a toast
+    // and the which-key popup hang where the reader's eyes are — while the
+    // consumers that belong to the WORLD (zoom, tilings, layout restoration)
+    // deliberately stay on `content_area()`, U7-a's own split.
+    ckv::Rect view_content_area() const;
     // Whether any View readout is on — what a (re)connection tells the server
     // through `ClientOptions::watch_stats` / `ServerSession::set_stats_watched`.
     bool stats_watch_wanted() const noexcept {

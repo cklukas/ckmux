@@ -529,6 +529,12 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // A request the server could not honour, in front of the reader who made
     // it. The client already sent one of eight `Error`s back for every
     // impossible request; what was missing was anybody to show it.
+    session.on_session_desktop = [&client](ckv::Size world) {
+        // The world, into the desktop's extent (WP-43). The session layer
+        // knows what the server said; the client knows what a desktop is;
+        // this file is the one place that has both, as ever.
+        if (client != nullptr) client->set_session_desktop(world);
+    };
     session.on_stats = [&client](RemoteTerminalSubsession& remote,
                                  const proto::TermStats& stats) {
         // Onto that terminal's window frame, formatted per the View toggles.

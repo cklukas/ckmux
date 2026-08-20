@@ -634,6 +634,19 @@ void ClientApp::build_chrome() {
                                      // Column rather than a second dock.
                                      .always_dock_status_line = false});
     desktop_ = &shell.desktop();
+    // Panning follows the focused window (WP-43): a reader who switches to a
+    // terminal off the visible region means to see it, and `pan_to_show`
+    // moves the least it can — nothing at all for a window already in view,
+    // which is every activation on a desktop whose extent equals its bounds,
+    // so a client attached to a session no larger than its screen behaves
+    // exactly as before. The pan moves paint offsets, never `bounds()`
+    // (U7-a), so no layout report can follow from it.
+    desktop_->subscribe_window_change(
+        [this](w::Desktop::WindowChange change, w::Window& window) {
+            if (change != w::Desktop::WindowChange::Activated) return;
+            desktop_->pan_to_show(window.bounds());
+        },
+        alive_);
     // A terminal opened while the reader is working maximized opens maximized
     // too (U4-c), rather than cascading a small window on top of the full-
     // screen one they were reading — which is the arrangement they had just
@@ -1010,10 +1023,12 @@ void ClientApp::place_notifications() {
         desktop_->remove_popup(going).reset();
         return;
     }
-    // Top-right of the desktop's own content area — inside the chrome rather
-    // than over it, so a toast never covers the window bar that a reader may
-    // be reaching for, and clear of the menu bar above.
-    const ckv::Rect area = desktop_->content_area();
+    // Top-right of the VISIBLE content — inside the chrome rather than over
+    // it, so a toast never covers the window bar a reader may be reaching
+    // for, and clear of the menu bar above. The view's rect, not the
+    // world's (WP-43): a toast is chrome for the reader's eyes, and a world
+    // top-right may be a screenful away from them.
+    const ckv::Rect area = view_content_area();
     int width = 0;
     for (const w::Notification& notification : toasts_->notifications())
         width = std::max(width, ckv::text::text_width(notification.text));
@@ -1312,6 +1327,10 @@ void ClientApp::forget_terminals() {
     terminal_windows_.clear();
     titles_.clear();
     forgetting_terminals_ = false;
+    // The world went with the session (WP-43): back to a desktop that is its
+    // own viewport, at its own top-left, exactly as before any attach.
+    desktop_->set_extent(ckv::Size{0, 0});
+    desktop_->set_pan(ckv::Point{0, 0});
     // The numbering starts over with the session: "Terminal 1" is the first
     // terminal of what a reader is looking at now.
     next_terminal_number_ = 1;
@@ -1420,7 +1439,14 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     auto window = std::make_unique<w::Window>(std::move(title));
     // Cascade from the top-left so a second terminal never lands exactly on
     // the first. Full placement policy is a session-model concern (M2).
-    const ckv::Rect area = desktop_->content_area();
+    //
+    // The VIEW's top-left, not the world's (WP-43): with a session desktop
+    // larger than this client's screen, the world's origin may be a screenful
+    // from where the reader is looking, and a terminal opened there would be
+    // born invisible — and sized to the world, it would be larger than the
+    // screen of the very reader who asked for it. Where no extent is set this
+    // IS content_area(), unchanged.
+    const ckv::Rect area = view_content_area();
     const int offset = static_cast<int>((number - 1) % 6) * 2;
     window->set_bounds(ckv::Rect{area.x + 2 + offset, area.y + 1 + offset,
                                  std::max(20, area.width - 8 - offset),
@@ -1429,6 +1455,14 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     const ckm::ShellLaunch shell = ckm::shell_launch(options_.settings.shell, options_.settings.login_shell);
     ckv::term::TerminalLaunchSpec launch =
         ckv::term::TerminalLaunchSpec::program(shell.executable, shell.arguments);
+    // Bounded, and this is a serverless terminal running the READER'S OWN
+    // login shell -- the case ckVision's unbounded policy cannot close. An
+    // interactive shell ignores SIGTERM by design, so under `WaitForExit` a
+    // single terminal whose shell declined to go could hold the client in its
+    // destructor for as long as that shell felt like living. The server side
+    // has always named this policy (`terminals.cpp`); the local path took the
+    // library default and so inherited an unbounded close.
+    launch.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
     launch.argv0 = shell.argv0;
     launch.profile = ckv::term::embedded_xterm_sixel_profile();
     // Let the child name its own window (OSC 0 and OSC 2). This is what makes
@@ -2835,13 +2869,13 @@ void ClientApp::arm_prefix() {
         app_.post([this, chord = std::move(chord)] { resolve_prefix(chord); });
     };
     overlay_ = desktop_->add_popup(std::move(overlay));
-    overlay_->set_bounds(overlay_->preferred_bounds(desktop_->content_area()));
+    overlay_->set_bounds(overlay_->preferred_bounds(view_content_area()));  // the reader's eyes, not the world's origin (WP-43)
     app_.set_focus(overlay_);
     which_key_timer_ = app_.start_timer(options_.which_key_delay_nanos, /*repeating=*/false, [this] {
         which_key_timer_ = 0;
         if (overlay_ == nullptr) return;
         overlay_->expand();
-        overlay_->set_bounds(overlay_->preferred_bounds(desktop_->content_area()));
+        overlay_->set_bounds(overlay_->preferred_bounds(view_content_area()));  // the reader's eyes, not the world's origin (WP-43)
     });
     refresh_footer();
 }
@@ -3290,6 +3324,37 @@ void ClientApp::refresh_stats_footer(w::Window& window,
     const auto found = latest_stats_.find(&terminal);
     window.set_footer(stats_footer(
         found == latest_stats_.end() ? proto::TermStats{} : found->second, stats_toggles()));
+}
+
+ckv::Rect ClientApp::view_content_area() const {
+    const ckv::Rect area = desktop_->content_area();
+    const ckv::Size extent = desktop_->extent();
+    if (extent.width <= 0 || extent.height <= 0) return area;
+    // The same arithmetic the library's own pan clamp uses: the view's height
+    // is the desktop's bounds minus the docked chrome, and the pan offsets
+    // within the content rows, based at the content area's own top.
+    const ckv::widgets::View* const bottom_dock = desktop_->bottom_dock();
+    const int bottom_rows =
+        bottom_dock != nullptr ? std::max(1, bottom_dock->vertical_size_hint().preferred) : 0;
+    const int view_width = std::min(area.width, desktop_->bounds().width);
+    const int view_height =
+        std::max(0, std::min(area.height, desktop_->bounds().height - area.y - bottom_rows));
+    const ckv::Point pan = desktop_->pan();
+    return ckv::Rect{pan.x, area.y + pan.y, view_width, view_height};
+}
+
+void ClientApp::set_session_desktop(ckv::Size world) {
+    if (desktop_ == nullptr) return;
+    // Zeros are "no server has said", and silence does not shrink a world —
+    // the extent keeps whatever the session last stated until a session
+    // states otherwise or this client leaves (forget_terminals clears it).
+    if (world.width <= 0 || world.height <= 0) return;
+    desktop_->set_extent(world);
+    // The pan is re-clamped by set_extent itself; what is left is the reader:
+    // if the active window fell outside a world that just changed shape,
+    // follow it exactly as an activation would have.
+    if (w::Window* const active = desktop_->active_window())
+        desktop_->pan_to_show(active->bounds());
 }
 
 void ClientApp::receive_terminal_stats(const ckv::term::TerminalSubsession& terminal,
