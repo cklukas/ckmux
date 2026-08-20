@@ -39,9 +39,9 @@ Server (one per user, per socket path)
 | `name` | UTF-8, unique among live sessions. Auto-named `1`, `2`, … on creation; renameable any time (`Session → Rename…`). |
 | `created_at`, `last_attached_at` | For the session picker. |
 | `terminals` | Ordered list (creation order = default cycling order). |
-| `desktop_size` | Cols×rows of the session's virtual desktop (see multi-client rules below). |
+| `desktop_size` | Cols×rows of the session's virtual desktop (see multi-client rules below). **Not yet real: `Server` keeps a desktop per CONNECTION (`Client::desktop`) and `Session` has no size at all.** Indistinguishable while one client is attached, and the whole of the problem the moment two are — WP-40. |
 | `layout` | Per-terminal window geometry + z-order + focused terminal + maximized flag. |
-| `attached_clients` | 0..n; v1 enforces 0..1 (takeover). |
+| `attached_clients` | 0..n; v1 enforces 0..1 (takeover). Opt-in `0..n` is WP-44. |
 
 **Decision: window layout is session state, owned by the server** — not
 client-local. Rationale: the user expects window arrangement to survive
@@ -91,6 +91,81 @@ dialogs, the session picker, copy-mode UI — all client-local, never synced.
 | `kill-session id` | Kill all terminals, drop the session. Confirmed in the UI (lists what will die). | Attached clients get `detached(reason=session-killed)` and fall back to the session picker. |
 | `kill-server` | Kill all sessions, exit. Double-confirmed in the UI. | — |
 | `resize-desktop` | Client (re)declares its size on attach and on host-terminal resize; server sets session `desktop_size`, clamps/repositions windows that would fall fully outside, broadcasts layout. | Windows are clamped, never destroyed; a shrunken desktop may overlap windows. Growing back restores nothing (no memory of pre-clamp positions in v1). |
+
+## Two clients at once: how size and layout work (WP-40…WP-44)
+
+Takeover below stays the DEFAULT and is not a v1 simplification. What this
+section specifies is the opt-in that sits beside it, and it is written here
+rather than in the parking lot because three of its findings are latent
+defects in the single-client design as it stands today.
+
+### The constraint that decides everything
+
+A child has one PTY and one grid. Two readers cannot each give it a size.
+tmux answers this at the client's own edge — `window-size` = largest /
+smallest / latest — because a tmux pane IS a region of the client's screen, so
+a second client of a different size reflows every child in the session.
+
+ckmux has a layer tmux does not: the session owns a **virtual desktop**, a
+terminal is a WINDOW on it, and a PTY's size is that window's content rect.
+No client's terminal size appears anywhere in that chain. So the answer here
+is not to reconcile sizes but to stop propagating them: **a client whose
+screen differs from the session desktop has a viewing problem, not a resize
+problem, and no child ever learns that a second reader attached.**
+
+That is also what keeps "layout is session state" true rather than trading it
+away. Its two purposes — survive reattach, and two clients agree on what they
+see — both hold, because every stored rect is in the session desktop's
+coordinates and means the same thing to everyone. WP-30's proportional
+mapping then runs when the DESKTOP changes, not once per client.
+
+### The three cases
+
+| Client screen vs session desktop | What happens | What it costs |
+|---|---|---|
+| Larger | The desktop is drawn at its own size; the margin stays blank | Unused screen |
+| Smaller | The client pans: a desktop-sized world seen through a smaller hole, offset held per client and never reported back (WP-43) | The reader cannot see all of it at once |
+| The reader wants to change it | An explicit act — `Window ▸ Fit desktop to this screen`, or `ckmux attach --adopt-size` | Reflows every window and SIGWINCHes every child, for BOTH readers |
+
+**Explicit is the point.** "Smallest attached wins" is the safe-looking
+default that silently reflows a colleague's arrangement the moment somebody
+attaches from a laptop, and pays for it with a SIGWINCH storm through every
+child in the session. `[general] desktop-size = fixed | fit-smallest |
+fit-latest`, default **fixed**: set when the session is created, changed only
+when asked. `fit-smallest` is offered for readers arriving from tmux and is
+deliberately STICKY — it shrinks to fit a newcomer and does not grow back when
+they leave, because a session whose geometry oscillates with people's attach
+cycles is worse than one that is merely too small.
+
+### What stops being session state
+
+Under one client these are indistinguishable from session state, which is why
+they were built that way and why each is a latent defect rather than a
+mistake. All of them are WP-41.
+
+| Today | Under two clients | Why |
+|---|---|---|
+| `Session::focused`, set on every `Input` | Per client; the session keeps one as the reattach default | Two readers typing steal each other's focus marker |
+| `TerminalMarks` (WP-19), set by the server and cleared once it has told **a** client | The FACT stays server-side ("rang at T", "wrote at T"); the MARK becomes each client's own | "A terminal you are not in" is a sentence about a reader. Cleared globally, the second client never sees the mark it was owed |
+| Chrome collapse (WP-35) | Per client | Whether a reader hides their own status bar is not a fact about the session |
+| Pan offset (WP-43) | Per client | It is where one reader is looking |
+| `host_sixel`, folded in per client at attach | Fixed when the TERMINAL is opened | A child's capabilities must not change under it because somebody else attached; the other client renders `TerminalView`'s text fallback |
+
+### Two hazards that are not obvious
+
+**Pastes interleave.** WP-18's credit queue is per connection and the server
+writes each chunk as it arrives, so two readers pasting into one terminal
+produce a mixture neither of them typed. A terminal needs a write slot held
+for the duration of a paste, with the second queued behind it — WP-42, and it
+must land WITH multi-attach rather than after it.
+
+**Layout can echo.** A's gesture → server → broadcast → B applies → B's clamp
+nudges geometry → B reports → server broadcasts → A applies… The pieces that
+prevent it exist: WP-29 reports only on gesture end, WP-30 has
+`layout_settled_`, and U4-n validates an arrangement against what the last
+mapping wrote so a reader's own drag invalidates rather than snapping back.
+The rule to state plainly is **a client never reports a change it did not
+originate**: fitting is local, gestures are reported.
 
 ## Multi-client policy: latest client wins (specified behavior)
 

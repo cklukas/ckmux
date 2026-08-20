@@ -135,6 +135,12 @@ take first.
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
+| 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Ready** | WP-28 ✓ |
+| 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | Blocked | WP-40 (WP-19 ✓, WP-35 ✓) |
+| 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Ready** | WP-18 ✓ |
+| 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Ready** | — |
+| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | Blocked | U7-a, WP-40 |
+| 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | Blocked | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1805,6 +1811,99 @@ the same command chain as the add, because an audit run before the add
 measures a tree that no longer exists when the add happens; and a ckmux gate
 is only meaningful against a NAMED ckVision SHA — both repos were
 individually green for hours while the pair was broken.
+
+### Two clients at once (2026-08-20)
+
+Reader-directed. The design is [03-session-model.md](03-session-model.md)
+"Two clients at once"; these are its packages. **Takeover stays the default**
+— the opt-in sits beside it, and nothing here changes what happens to a reader
+who does not ask for it.
+
+Three of the six are worth doing whether or not multi-attach is ever built,
+because each is a latent defect in the single-client design rather than new
+functionality: the session does not own its desktop, three pieces of a
+reader's own state live on the session, and two readers pasting into one
+terminal would interleave. They are not hypothetical; they are invisible only
+because one client cannot see them.
+
+**WP-40 — The session owns its desktop, and only a reader changes it**
+*(ckmux)*. plans/03's session table has said `desktop_size` since M1 and the
+code has never had it: `Server` keeps `Client::desktop` per connection
+(`server.cpp:751`) and `Session` has no size at all. Under one client the two
+are the same number; under two they are the whole problem. This makes the
+session's virtual desktop real, sets it when the session is created, and
+changes it only when a reader asks — `Window ▸ Fit desktop to this screen`,
+`ckmux attach --adopt-size`, and `[general] desktop-size = fixed |
+fit-smallest | fit-latest` defaulting to `fixed`. A `ClientResize` stops
+implying a desktop size and says only what it always meant: this client's
+screen, and the cell metric a child's `TIOCSWINSZ` pixel fields derive from.
+*Done when*: a session created by an 80×24 client keeps its desktop when a
+200×60 client attaches; the explicit fit changes it once, reflows the windows
+through WP-30's mapping, and SIGWINCHes each child exactly once; and
+`fit-smallest` is sticky — it shrinks for a newcomer and does not grow back
+when they leave, because geometry that oscillates with attach cycles is worse
+than geometry that is merely too small.
+
+**WP-41 — What belongs to a reader rather than to a session** *(ckmux)*. Four
+pieces of client state currently live on the session, each correct until a
+second client exists. `Session::focused` is set on every `Input`, so two
+readers typing steal each other's marker. WP-19's `TerminalMarks` are set by
+the server and cleared once it has told **a** client — with two attached, the
+second never sees the mark it was owed; the FACT stays server-side ("rang at
+T", "wrote at T") and the MARK becomes each client's own. WP-35's chrome
+collapse is a reader's decision about their own screen. And `host_sixel` is
+folded in per client at attach, so a child's advertised capabilities would
+change under it because somebody else connected — it is fixed when the
+TERMINAL is opened, and a client without Sixel draws `TerminalView`'s text
+fallback. *Done when*: two attached clients can focus different terminals at
+once, each sees the marks it is owed and clears only its own, one collapses
+its chrome without the other's moving, and no child's capabilities change
+because of an attach.
+
+**WP-42 — A terminal takes one paste at a time** *(ckmux)*. WP-18's credit
+queue is per connection and the server writes each chunk as it arrives, so two
+readers pasting into one terminal produce a mixture neither of them typed. A
+terminal gains a write slot, taken by the first chunk of a paste and released
+by the final one; a second paste queues behind it rather than interleaving.
+Small, and it must land WITH multi-attach rather than after it — the failure
+is silent, produces text nobody wrote, and is unreproducible by whoever
+reports it. *Done when*: two connections pasting a megabyte each into one
+terminal deliver both, whole, one after the other; a client that dies
+mid-paste releases the slot rather than wedging the terminal for everyone.
+
+**U7-a — A ckVision desktop larger than the view of it** *(ckVision)*. Today a
+`Desktop` is its own viewport: windows live in its bounds and there is nowhere
+else for them to be. This gives it a virtual extent and a pan offset — the
+world can be bigger than the hole it is seen through, with the offset a
+property of the view rather than of the windows, so nothing about a window's
+own rect changes because somebody scrolled. Wanted by any application whose
+document is a set of windows rather than one canvas, which is why it is a
+library item and not ckmux's. *Done when*: a desktop of 200×60 shown through
+80×24 draws the right region, mouse hit-testing lands on the window a reader
+pointed at rather than on the one under the unpanned coordinate, a window
+moved off the visible region is still reachable, and a viewport equal to the
+extent behaves exactly as a `Desktop` does today.
+
+**WP-43 — A client smaller than the session desktop pans** *(ckmux)*. Consume
+U7-a: a client whose screen is smaller than the session desktop shows part of
+it and can move around, with the offset held per client and **never reported
+back** — a reader looking at the corner of a desktop has not moved anybody's
+windows. Panning follows the focused window by default, since a reader who
+switches to a terminal off-screen means to see it. *Done when*: an 80×24
+client attached to a 200×60 session can reach every window, focus follows a
+terminal into view, and the layout the server holds is byte-identical before
+and after an hour of panning.
+
+**WP-44 — Simultaneous attach, opt-in** *(ckmux)*. The flag, and the server
+side of it: `Attach` gains an opt-in, attaching without it takes the session
+as it does today, and attaching with it joins the broadcast list instead. The
+list is what already exists for one client, widened. *Done when*: two clients
+see one session's windows agree; a gesture by either reaches the other through
+the existing `SetLayout`/`LayoutDelta` path without echoing (a client never
+reports a change it did not originate); one client detaching leaves the other
+attached and the session alive; and the default path — attach with no flag —
+still takes the session over, with the notice WP-14 puts in front of the
+reader who lost it.
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
 attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty

@@ -247,9 +247,15 @@ D-OPEN-1; version 1.0 acceptance audit against
 
 ## Parking lot (post-v1, explicitly not now)
 
-Simultaneous multi-client attach (protocol is ready; would be opt-in via an
-explicit flag — automatic takeover / latest-client-wins is the specified
-contract); tmux-style tiled pane mode inside a window; control mode /
+~~Simultaneous multi-client attach~~ — **left the parking lot 2026-08-20**,
+reader-directed: designed in [03](03-session-model.md) "Two clients at once"
+and scheduled as WP-40…WP-44 plus U7-a. Takeover stays the specified default;
+the flag sits beside it. Three of those packages are latent defects in the
+single-client design rather than new work — the session does not own its
+desktop, four pieces of a reader's own state live on the session, and two
+readers pasting into one terminal would interleave — so they are worth doing
+whether or not the flag is ever built. tmux-style tiled pane mode inside a
+window; control mode /
 scripting API; resurrect (relaunch
 layout+commands after server death); Windows/ConPTY (after upstream WP-50);
 kitty keyboard passthrough and kitty graphics; hyperlink activation;
