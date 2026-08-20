@@ -448,7 +448,14 @@ private:
     // the message is: a `z_order` is a position among windows, so stating one
     // window's without the others' says nothing a mirror can apply. One report
     // that moves three windows is therefore one `LayoutDelta` and not three.
-    void announce_layout();
+    // Normally edge-triggered: a session is announced only when one of its
+    // terminals reports having moved. `force_session` names a session to
+    // announce regardless, for the changes that are not a window moving —
+    // the DESKTOP itself resizing. Without it, a desktop change in a session
+    // whose windows all stayed put told nobody, and a session with no
+    // terminals at all could never announce anything: the coordinate space
+    // moved under every rect and no client heard.
+    void announce_layout(std::uint64_t force_session = 0);
     // Actually removes one terminal: the PTY, the diffs, the session row, and
     // the watcher's window. `exited` distinguishes a child that ended from a
     // terminal that merely left for another session — the client keeps a

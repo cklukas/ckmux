@@ -110,6 +110,28 @@ bool attached_desktop(ckm::server::Server& server, WireClient& client, ckv::Size
     return false;
 }
 
+// The desktop as the server ANNOUNCES it, rather than as a fresh attach reports
+// it. Reading it from `LayoutDelta` is both how a real client learns the
+// coordinate space moved and the only way to observe a change without
+// attaching another client — and attaching is itself an act that can move the
+// desktop, so the old test's "ask by re-attaching" could not distinguish the
+// answer from the question under two of the three policies.
+bool announced_desktop(ckm::server::Server& server, WireClient& client, ckv::Size& desktop,
+                       int passes = 16) {
+    for (int pass = 0; pass < passes; ++pass) {
+        if (!server.step()) return false;
+        Message message;
+        while (client.take(message)) {
+            const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr) continue;
+            if (layout->desktop_columns == 0 || layout->desktop_rows == 0) continue;
+            desktop = ckv::Size{layout->desktop_columns, layout->desktop_rows};
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 CK_TEST(the_first_client_to_attach_sets_the_sessions_desktop) {
@@ -240,17 +262,27 @@ CK_TEST(fit_latest_takes_whoever_arrived_last) {
     forget(socket);
 }
 
-CK_TEST(a_reader_resizing_their_own_window_changes_nothing_about_the_session) {
-    // `ClientResize` says what it always meant: this client's screen, and the
-    // cell metric a child's pixel fields derive from. It does not say anything
-    // about the session's desktop, and under every policy — including the ones
-    // that DO follow a client's size at attach — it must not move it, because a
-    // reader dragging their own window corner has not asked to reflow anybody's
-    // arrangement.
+CK_TEST(a_sole_readers_resize_moves_the_desktop_because_nobody_else_is_here) {
+    // THE CASE THAT WAS ASSERTED BACKWARDS. This test previously required that
+    // a `ClientResize` change nothing about the session, under every policy,
+    // and it made that requirement with ONE reader attached. So the defect a
+    // reader actually hits — resize your terminal, and half your windows are
+    // cut off with no way to reach them, because the desktop is still the size
+    // your terminal happened to be at first attach — was not merely missed by
+    // the suite. It was pinned by it. Field report, 2026-08-20.
+    //
+    // WP-40's rule is sound and survives below: a reader must not reflow
+    // somebody else's arrangement by dragging their own window corner. But
+    // "somebody else" has to exist for that to protect anyone, and in the
+    // ordinary session it does not.
+    //
+    // Under EVERY policy, because with one reader there is no competing claim
+    // for the policy to arbitrate: the policy decides between readers, and
+    // there is only one.
     for (const ckm::DesktopSizePolicy policy :
          {ckm::DesktopSizePolicy::Fixed, ckm::DesktopSizePolicy::FitSmallest,
           ckm::DesktopSizePolicy::FitLatest}) {
-        const std::filesystem::path socket = private_socket("resize");
+        const std::filesystem::path socket = private_socket("resize-sole");
         forget(socket);
         ckv::ManualClock clock;
         ckm::server::Server server(ckm::server::Server::Options{socket, test_settings(policy)},
@@ -265,27 +297,104 @@ CK_TEST(a_reader_resizing_their_own_window_changes_nothing_about_the_session) {
         CK_CHECK(attached_desktop(server, reader, desktop));
         CK_CHECK(desktop.width == 120 && desktop.height == 40);
 
-        ckm::proto::ClientResize resize;
-        resize.columns = 60;
-        resize.rows = 20;
-        resize.pixel_width = 60 * 9;
-        resize.pixel_height = 20 * 18;
-        reader.say(resize);
-        for (int pass = 0; pass < 6; ++pass) (void)server.step();
+        // Smaller: the shape of the report. A reader who shrinks their host
+        // terminal must not be left with windows beyond its edge.
+        ckm::proto::ClientResize smaller;
+        smaller.columns = 60;
+        smaller.rows = 20;
+        smaller.pixel_width = 60 * 9;
+        smaller.pixel_height = 20 * 18;
+        reader.say(smaller);
+        ckv::Size shrunk{0, 0};
+        CK_CHECK(announced_desktop(server, reader, shrunk));
+        CK_CHECK(shrunk.width == 60 && shrunk.height == 20);
 
-        // Re-attaching is the only thing that reads a client's size, so ask
-        // again the only way a test can: the session still says what it said.
-        WireClient second;
-        CK_CHECK(second.connect(socket));
-        second.greet();
-        second.attach(120, 40);
-        ckv::Size after{0, 0};
-        CK_CHECK(attached_desktop(server, second, after));
-        CK_CHECK(after.width == 120 && after.height == 40);
+        // And larger, which is the half a shrink-only fix would leave broken:
+        // the reader who makes their window bigger must get the space.
+        ckm::proto::ClientResize bigger;
+        bigger.columns = 200;
+        bigger.rows = 60;
+        bigger.pixel_width = 200 * 9;
+        bigger.pixel_height = 60 * 18;
+        reader.say(bigger);
+        ckv::Size grown{0, 0};
+        CK_CHECK(announced_desktop(server, reader, grown));
+        CK_CHECK(grown.width == 200 && grown.height == 60);
 
         server.terminals().close_all();
         forget(socket);
     }
+}
+
+CK_TEST(a_resize_leaves_the_desktop_alone_once_a_second_reader_is_watching) {
+    // WP-40's actual rule, kept: with somebody else attached, one reader's
+    // screen must not reflow the session under them. This is the case the old
+    // test meant to make and did not — it never attached a second reader while
+    // the resize happened.
+    //
+    // Under `Fixed`, the default. The other two policies deliberately follow a
+    // client's size and are covered where they are configured.
+    const std::filesystem::path socket = private_socket("resize-shared");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(
+        ckm::server::Server::Options{socket, test_settings(ckm::DesktopSizePolicy::Fixed)}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient wide;
+    CK_CHECK(wide.connect(socket));
+    wide.greet();
+    wide.attach(200, 60);
+    ckv::Size desktop{0, 0};
+    CK_CHECK(attached_desktop(server, wide, desktop));
+    CK_CHECK(desktop.width == 200 && desktop.height == 60);
+
+    // WITH THE SHARE OPT-IN, and that detail is the test. A plain `Attach`
+    // TAKES the session — the previous holder is detached (plans/03) — so two
+    // clients connecting without it leaves exactly one reader, and the case
+    // would quietly become the sole-reader case above while looking like it
+    // covered sharing. That is how the first draft of this test failed: it
+    // asserted the desktop had not moved, in a session where the fix was
+    // correctly moving it for the one reader left.
+    WireClient narrow;
+    CK_CHECK(narrow.connect(socket));
+    narrow.greet();
+    ckm::proto::Attach join;
+    join.session = 0;
+    join.columns = 80;
+    join.rows = 24;
+    join.pixel_width = 80 * 9;
+    join.pixel_height = 24 * 18;
+    join.share = 1;
+    narrow.say(join);
+    ckv::Size joined{0, 0};
+    CK_CHECK(attached_desktop(server, narrow, joined));
+    CK_CHECK(joined.width == 200 && joined.height == 60);
+
+    // Now the second reader resizes. Two readers are attached, so this is
+    // exactly the act WP-40 forbids.
+    ckm::proto::ClientResize resize;
+    resize.columns = 60;
+    resize.rows = 20;
+    resize.pixel_width = 60 * 9;
+    resize.pixel_height = 20 * 18;
+    narrow.say(resize);
+    for (int pass = 0; pass < 8; ++pass) (void)server.step();
+
+    // Asked of a third arrival, because that is the one observation that does
+    // not perturb what it measures — and asked at the SAME size the session
+    // already has, so that a policy which follows a newcomer cannot make this
+    // assertion pass by coincidence.
+    WireClient third;
+    CK_CHECK(third.connect(socket));
+    third.greet();
+    third.attach(200, 60);
+    ckv::Size after{0, 0};
+    CK_CHECK(attached_desktop(server, third, after));
+    CK_CHECK(after.width == 200 && after.height == 60);
+
+    server.terminals().close_all();
+    forget(socket);
 }
 
 

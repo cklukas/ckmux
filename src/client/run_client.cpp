@@ -130,8 +130,20 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // every terminal opened from here on; this first call is only the
     // fallback for whatever opens before the first reply does.
     session.set_host_sixel(terminal.capabilities().sixel_graphics);
-    app.set_capability_changed_handler(
-        [&session, &terminal] { session.set_host_sixel(terminal.capabilities().sixel_graphics); });
+    // Whether the host has answered the capability probe at all yet. The
+    // fallback above is a guess made before the evidence exists, and the FIRST
+    // terminal — the one a reader actually lands in — was being opened against
+    // that guess, so on a Sixel-capable host the terminal every reader uses
+    // advertised no Sixel and every picture drawn into it was dropped. Field
+    // report, 2026-08-20: the spin demo reporting no Sixel on a host that has
+    // it. Terminals opened later were already correct, which is exactly what
+    // made this survive: the bug was invisible to anyone who opened a second
+    // terminal before looking.
+    bool host_caps_answered = false;
+    app.set_capability_changed_handler([&session, &terminal, &host_caps_answered] {
+        session.set_host_sixel(terminal.capabilities().sixel_graphics);
+        host_caps_answered = true;
+    });
     // Where the bytes are reassembled into frames. Declared here rather than
     // beside the loop because a reconnection has to start it over: half a frame
     // from a server that has gone is not the beginning of one from its
@@ -783,9 +795,33 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // alone. Checked once, after the first snapshot, because that is the first
     // moment the answer exists.
     bool asked_for_the_first_terminal = false;
+    // When this client first had a session to open a terminal in. The wait
+    // below is bounded from here rather than from process start, so a slow
+    // server does not spend the reader's budget before the question is even
+    // askable.
+    std::int64_t could_have_opened_since = 0;
     const auto open_one_if_the_session_is_empty = [&session, &asked_for_the_first_terminal,
-                                                   &shell_for_new_terminals]() {
+                                                   &shell_for_new_terminals, &host_caps_answered,
+                                                   &could_have_opened_since, &clock]() {
         if (asked_for_the_first_terminal || !session.attached()) return;
+        // The first terminal waits for the host to say what it can draw.
+        //
+        // `host_sixel` is decided once, when the terminal is created: the
+        // server folds it into the advertisement its child reads out of DA1,
+        // and a program that has already asked never asks again. Opening
+        // before the probe has answered therefore does not merely guess — it
+        // commits the guess for the lifetime of the terminal a reader spends
+        // all their time in.
+        //
+        // Bounded, because a host that never answers must not cost a reader
+        // their terminal. A host that supports the probe replies in microseconds
+        // (it is a round trip to a program already running); a host that does
+        // not, never replies at all, and after the deadline the fallback stands
+        // and behaviour is exactly what it was before this wait existed.
+        const std::int64_t now = clock.now_nanos();
+        if (could_have_opened_since == 0) could_have_opened_since = now;
+        constexpr std::int64_t kCapabilityGraceNanos = 250'000'000;  // 250 ms
+        if (!host_caps_answered && now - could_have_opened_since < kCapabilityGraceNanos) return;
         asked_for_the_first_terminal = true;
         if (!session.terminal_ids().empty()) return;
         proto::NewTerminal ask;

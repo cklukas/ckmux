@@ -838,13 +838,60 @@ void Server::handle(Client& client, const proto::Message& message) {
         // is sized by the client that draws it (`MoveResize`, below). Resizing
         // every terminal to the desktop is what put a shell's prompt above the
         // top of its own window.
-        // And NOT the session's desktop (WP-40). A reader making their own
-        // window bigger must not reflow a session's windows — theirs or
-        // anybody else's — and must not SIGWINCH a single child. The session's
-        // desktop changes when a reader asks for it, never as a side effect of
-        // a screen changing size.
         client.desktop = ckv::Size{resize->columns, resize->rows};
         client.cell_pixels = cell_metric_of(*resize);
+        // And the SESSION's desktop — but only when this reader is the only
+        // one who can be hurt by it moving (WP-40, corrected).
+        //
+        // WP-40's rule was that a reader resizing their own window must not
+        // reflow a session's windows for everybody else, and that is right:
+        // reflowing SIGWINCHes every child, for every reader watching, because
+        // one person dragged a corner. But it was applied to EVERY resize, and
+        // the overwhelmingly common session has exactly one reader. For them
+        // the rule protected nobody and cost them the desktop: the coordinate
+        // space stayed the size the terminal happened to be at first attach,
+        // so making the window smaller cut windows off at the edge with no way
+        // to reach them, and making it bigger left the new space unusable.
+        // Field report, 2026-08-20: "half of ckmux terminal windows get
+        // cut-off".
+        //
+        // So the condition is not "was this a resize" but "is there anybody
+        // else here". A sole reader's screen IS the session's desktop and
+        // follows it. The moment a second reader is attached, `[general]
+        // desktop-size` decides, exactly as it does on attach, and its default
+        // leaves the desktop alone.
+        Session* const home = session_for(client.session);
+        if (home == nullptr) return;  // attached to nothing: nothing to size
+        const ckv::Size arriving = client.desktop;
+        if (arriving.width <= 0 || arriving.height <= 0) return;
+        std::size_t readers = 0;
+        for (const std::unique_ptr<Client>& other : clients_)
+            if (other->attached && other->kind == proto::ClientKind::Ui &&
+                other->session == client.session)
+                ++readers;
+        ckv::Size wanted = home->desktop;
+        if (readers <= 1) {
+            wanted = arriving;
+        } else {
+            switch (options_.settings.desktop_size) {
+                case DesktopSizePolicy::Fixed:
+                    break;
+                case DesktopSizePolicy::FitSmallest:
+                    wanted = ckv::Size{std::min(home->desktop.width, arriving.width),
+                                       std::min(home->desktop.height, arriving.height)};
+                    break;
+                case DesktopSizePolicy::FitLatest:
+                    wanted = arriving;
+                    break;
+            }
+        }
+        if (wanted.width <= 0 || wanted.height <= 0) return;
+        if (wanted.width == home->desktop.width && wanted.height == home->desktop.height) return;
+        home->desktop = wanted;
+        // Everybody watching is told, for the same reason `SetDesktopSize`
+        // tells them: a coordinate space one client believes and another does
+        // not is two different readings of every rect in the session.
+        announce_layout(home->id);
         return;
     }
     if (const auto* fit = std::get_if<proto::SetDesktopSize>(&message)) {
@@ -862,8 +909,10 @@ void Server::handle(Client& client, const proto::Message& message) {
         home->desktop = wanted;
         // Everybody watching is told, not just the reader who asked: a
         // coordinate space one client believes and another does not is two
-        // different readings of every rect in the session.
-        announce_layout();
+        // different readings of every rect in the session. Forced, because a
+        // desktop resize is not a window moving and the edge trigger would
+        // otherwise swallow it whenever every window happened to stay put.
+        announce_layout(home->id);
         return;
     }
     if (const auto* resize = std::get_if<proto::MoveResize>(&message)) {
@@ -1673,7 +1722,7 @@ void Server::announce_terminal_news() {
     }
 }
 
-void Server::announce_layout() {
+void Server::announce_layout(std::uint64_t force_session) {
     for (const Session& session : sessions_) {
         // Nothing to say unless a window actually moved. The gate is per
         // terminal and the message is per session, so one report that moves
@@ -1702,8 +1751,16 @@ void Server::announce_layout() {
         // reader has always had with themselves, and the alternative — merging
         // two readers' drags — is a conflict resolution nobody asked for on a
         // desktop they are both looking at.
-        bool moved = false;
+        // …with one exception, and it is not a window moving at all. When the
+        // DESKTOP resizes, every rect in the session means something different
+        // than it did, and no terminal has necessarily moved — so the edge
+        // above is down and, before `force_session`, the announcement was
+        // skipped and nobody was told the coordinate space had changed. In a
+        // session with no terminals yet it could never fire at all. Both
+        // `SetDesktopSize` and a sole reader's `ClientResize` reach this.
+        bool moved = session.id == force_session && force_session != 0;
         for (const TerminalId id : session.terminals) {
+            if (moved) break;
             const Terminal* const terminal = terminals_.find(id);
             if (terminal == nullptr || terminal->layout_announced()) continue;
             moved = true;
