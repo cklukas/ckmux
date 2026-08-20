@@ -47,6 +47,13 @@ NAMED = {
     "term_capabilities": "the terminal capability matrix",
 }
 AGENTS = "the engineering standard"
+# ckmux cites ckVision's design record as well, and that is not published either.
+UPSTREAM = {
+    "ARCHITECTURE.md": "the architecture",
+    "DECISIONS.md": "the decision log",
+    "ROADMAP.md": "the roadmap",
+    "VISION.md": "the vision",
+}
 
 # A markdown link whose target is an unpublished document, e.g.
 # "[09-testing.md](../plans/09-testing.md)". The whole construct goes, label
@@ -61,7 +68,7 @@ TOKEN = re.compile(
     r"(?P<num>\d{2})(?:-[a-z0-9-]+)?(?:\.md)?"
     r"|(?P<name>README|term_capabilities)(?:\.md)?"
     r")?(?P<line>:\d+)?"
-    r"|(?<![\w])AGENTS\.md")
+    r"|(?<![\w])(?:AGENTS|ARCHITECTURE|DECISIONS|ROADMAP|VISION)\.md")
 
 # `plans/widgets.md` is marked up as a path. The name that replaces it is
 # prose, and prose in code font reads as an identifier that does not exist.
@@ -71,13 +78,13 @@ BACKTICKED = re.compile("`(?:" + TOKEN.pattern + ")`")
 # behavior rather than a pointer.
 TEXT_SUFFIXES = {".cc", ".cmake", ".cpp", ".h", ".hpp", ".md", ".py", ".sh",
                  ".yaml", ".yml"}
-TEXT_NAMES = {"CMakeLists.txt"}
+TEXT_NAMES = {".gitattributes", "CMakeLists.txt"}
 SKIP_PREFIXES = ("fuzz/corpus/",)
 
 # A citation that opens a sentence has to keep opening one, and one that
 # already has an article in front of it must not grow a second.
 SENTENCE_END = re.compile(r"(?:^|[.!?]|//+|/\*|^\s*\*|#)$")
-DETERMINER = re.compile(r"\b(?:an?|An?|the|The|this|This)$")
+DETERMINER = re.compile(r"(?:\b(?:an?|An?|the|The|this|This)|[\w)]'s|[\w)]’s)$")
 
 
 # "plans/09-testing.md", "plans/03", "../plans/README.md", "AGENTS.md" — one
@@ -90,6 +97,9 @@ TARGET = re.compile(
 def phrase_for_target(target: str) -> str:
     if target.endswith("AGENTS.md"):
         return AGENTS
+    for filename, phrase in UPSTREAM.items():
+        if target.endswith(filename):
+            return phrase
     parsed = TARGET.match(target)
     if parsed is None:
         return SPECIFICATION

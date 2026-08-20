@@ -16,7 +16,7 @@ import re
 
 C_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp"}
 HASH_SUFFIXES = {".cmake", ".sh", ".yaml", ".yml"}
-HASH_NAMES = {"CMakeLists.txt"}
+HASH_NAMES = {".gitattributes", "CMakeLists.txt"}
 
 
 # `'a'`, `'\\n'`, `'\\''` — but not the `'` in `10'000`, which is a digit
