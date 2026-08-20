@@ -95,6 +95,18 @@ if [ -d "$overrides_dir" ]; then
     done
 fi
 
+# The comments cite documents this snapshot does not carry. derefer.py replaces
+# each path with the document's name in prose, in the snapshot's blobs only, so
+# the reasoning survives publication and the dangling pointer does not. It works
+# on comments and markdown; a string literal is code and is never touched.
+deref_report=
+if [ -x tools/publish/derefer.py ]; then
+    deref_report=$(python3 tools/publish/derefer.py) || {
+        echo "make-public: derefer.py failed — refusing to publish" >&2
+        exit 1
+    }
+fi
+
 kept=$(git ls-files | wc -l | tr -d ' ')
 total=$(printf '%s\n' "$all_paths" | wc -l | tr -d ' ')
 
@@ -102,6 +114,7 @@ if [ "$dry_run" -eq 1 ]; then
     echo "source:    $(git rev-parse --short "$src_commit") ($source_rev)"
     echo "branch:    $branch (not written — dry run)"
     echo "included:  $kept of $total tracked paths"
+    [ -n "$deref_report" ] && echo "citations: ${deref_report#derefer: }"
     echo
     echo "excluded:"
     printf '%s\n' "$all_paths" | sed 's/^[^\t]*\t//' | sort > "$index.all"
@@ -129,6 +142,7 @@ git update-ref "refs/heads/$branch" "$commit"
 echo "make-public: $branch -> $(git rev-parse --short "$commit")"
 echo "  source:   $(git rev-parse --short "$src_commit") ($source_rev)"
 echo "  included: $kept of $total tracked paths"
+[ -n "$deref_report" ] && echo "  citations: ${deref_report#derefer: }"
 echo "  message:  $message"
 echo
 echo "Review it with:  git show --stat $branch"

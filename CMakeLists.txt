@@ -16,8 +16,10 @@ include(GNUInstallDirs)
 # that cannot compile elsewhere. One honest check, here, instead.
 if(NOT UNIX)
     message(FATAL_ERROR
-        "ckmux builds on POSIX systems only (macOS, Linux). Windows/ConPTY is out "
-        "of scope; see plans/02-architecture.md, 'Portability seams'.")
+        "ckmux builds on POSIX systems only (macOS, Linux). Windows/ConPTY is "
+        "out of scope: the server forks, opens PTYs, polls file descriptors "
+        "and speaks over a unix-domain socket, and src/platform is the seam "
+        "that would have to grow first.")
 endif()
 
 # ckVision comes either from a sibling source checkout or from an installed
