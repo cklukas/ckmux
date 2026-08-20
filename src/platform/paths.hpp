@@ -6,6 +6,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 
 namespace ckm::platform {
 
@@ -64,5 +65,34 @@ std::filesystem::path config_file_path();
 // against wherever the server happened to be started, which is a different
 // directory every time.
 std::filesystem::path home_directory();
+
+// A path a reader wrote, with a leading `~` resolved — the one place that
+// decides what `~` means.
+//
+// Needed because a configured path is something a person typed, and `~` is
+// shell notation the kernel has never heard of. `[printer] save-folder`
+// defaults to `~/Documents`, and with nothing expanding it the first working
+// save landed in `<cwd>/~/Documents/` — a directory literally named `~`,
+// holding a byte-perfect file the reader would never have found.
+//
+// What is expanded, stated rather than left to be inferred from the code:
+//
+//   * `~`         -> the home directory itself.
+//   * `~/rest`    -> home / rest.
+//   * `~other`    -> UNCHANGED. Expanding another user's home from a
+//                    configuration string is a different and more dangerous
+//                    feature, and refusing it is a decision, not an omission.
+//   * anything else, including the empty string -> unchanged.
+//
+// `$HOME` wins over the passwd database here, which is the opposite of
+// `home_directory()`'s precedence and is deliberate: `~` is shell notation and
+// a shell expands it from `$HOME`, so a deliberately overridden `HOME` — a
+// test harness, a sandbox, a service account — must be honoured rather than
+// silently replaced by the account's real home. `home_directory()` is the
+// fallback, so the answer is still never empty and always absolute even when
+// `HOME` is unset or relative; a relative `HOME` is rejected rather than used,
+// because a save resolved against the working directory is the same
+// unfindable-file defect one notch milder.
+std::filesystem::path expand_user_path(std::string_view path);
 
 }  // namespace ckm::platform

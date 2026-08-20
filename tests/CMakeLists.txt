@@ -29,6 +29,7 @@ set(CKMUX_TEST_SOURCES
     test_printer_button.cpp
     test_printer_output.cpp
     test_process_stats.cpp
+    test_paths.cpp
     test_proto.cpp
     test_remote_terminal.cpp
     test_rename_terminal.cpp

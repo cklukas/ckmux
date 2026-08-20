@@ -26,6 +26,7 @@
 
 #include "client/client_app.hpp"
 #include "client/commands.hpp"
+#include "client/stats_format.hpp"
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/term/virtual_display.hpp"
 #include "cvision/testing/cktest.hpp"
@@ -226,6 +227,94 @@ CK_TEST(the_window_list_shows_the_windows_and_not_an_empty_box) {
     }
     // One row per terminal, listed where a reader can read them.
     CK_CHECK(rows_naming_a_terminal >= static_cast<int>(terminals));
+}
+
+CK_TEST(the_print_output_window_shows_the_jobs_and_not_an_empty_box) {
+    // The printer's version of the window-list defect above, and it shipped:
+    // PRINT-1..6 landed 504 lines of dialog with all nine of its
+    // `ClientOptions` seams assigned nowhere in src/, so a reader saw
+    // `[ PRINT . 2 . 0 B ]` on the frame button and "Nothing has been captured
+    // from this terminal." in the window, on one screen, at one moment. The
+    // button was right because its path falls back to the emulator's own
+    // scalars; the list had no fallback and reported nothing.
+    //
+    // `tools/check_seams.py` now guards the wiring. This guards the other
+    // half: that when jobs ARE reported, they reach the screen. Two jobs with
+    // DIFFERENT sizes deliberately -- a build rendering one hardcoded row
+    // cannot pass, and neither can one that renders the same row twice.
+    ClientOptions options = test_options();
+    options.printer_jobs =
+        [](const ckv::term::TerminalSubsession&) -> std::vector<ckm::proto::PrintJobInfo> {
+        ckm::proto::PrintJobInfo first;
+        first.job = 1;
+        first.kind = ckm::proto::PrintJobKind::Controller;
+        first.bytes = 5;   // "FIRST"
+        first.lines = 1;
+        ckm::proto::PrintJobInfo second;
+        second.job = 2;
+        second.kind = ckm::proto::PrintJobKind::Controller;
+        second.bytes = 18;  // "CKMUX-SPOOL-MARKER"
+        second.lines = 1;
+        return {first, second};
+    };
+
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock};
+    ClientApp client{app, std::move(options)};
+    app.step(clock.now_nanos());
+
+    // Resolved through the keymap, which is the single source of truth for
+    // every surface that names a command (see the table test above). There is
+    // no name-to-id lookup on the registry, and hard-coding an id would tie
+    // this to a registration order nobody promised.
+    ckv::ui::CommandId print_output = ckv::ui::kInvalidCommand;
+    for (const KeyBinding& binding : client.keymap().bindings())
+        if (binding.key == ckm::client::commands::kPrintOutput) print_output = binding.command;
+    CK_CHECK(print_output != ckv::ui::kInvalidCommand);
+    CK_CHECK(app.commands().has_handler(print_output));
+    CK_CHECK(app.execute_command(print_output));
+    app.step(clock.now_nanos());
+
+    ckv::widgets::Window* dialog = nullptr;
+    for (ckv::widgets::Window* window : client.desktop().windows())
+        if (window->title().rfind("Terminal", 0) != 0) dialog = window;
+    CK_CHECK(dialog != nullptr);
+    if (dialog == nullptr) return;
+
+    // Decoded, because the question is what reached the screen -- and read
+    // INSIDE the dialog's own rectangle, since that is where the rows are.
+    ckv::term::VirtualDisplay display(Size{100, 30});
+    (void)display.write(terminal.written_bytes());
+    const ckv::Rect area = dialog->bounds();
+    std::string inside;
+    for (int y = area.y + 1; y < area.y + area.height - 1 && y < 30; ++y) {
+        for (int x = area.x + 1; x < area.x + area.width - 1 && x < 100; ++x) {
+            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            if (!cell.is_continuation()) inside += cell.grapheme();
+        }
+        inside += '\n';
+    }
+
+    // The sentence that was the whole defect: it must not appear while two
+    // jobs are held. Paired with the positives below, because on its own an
+    // absence assertion passes as soon as the wording changes.
+    CK_CHECK(inside.find("Nothing has been captured") == std::string::npos);
+
+    // Both jobs, told apart by their sizes rather than merely counted. The
+    // byte counts come from the one shared formatter (plans/06), so this
+    // cannot drift from what the button and the job list show elsewhere.
+    CK_CHECK(inside.find(ckm::client::format_bytes(5)) != std::string::npos);
+    CK_CHECK(inside.find(ckm::client::format_bytes(18)) != std::string::npos);
+
+    // And in the reader's words, not the standard's: `CSI 5 i` is called
+    // "Controller" in ECMA-48 and means nothing to somebody looking at a list
+    // of their own captures.
+    std::size_t rows_naming_a_capture = 0;
+    for (std::size_t at = inside.find("Printed by the program"); at != std::string::npos;
+         at = inside.find("Printed by the program", at + 1))
+        ++rows_naming_a_capture;
+    CK_CHECK(rows_naming_a_capture >= 2);
 }
 
 CK_TEST(terminal_report_shows_the_hosts_evidence_with_the_decoded_count) {

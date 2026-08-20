@@ -47,4 +47,27 @@ std::filesystem::path home_directory() {
     return std::filesystem::path("/");
 }
 
+std::filesystem::path expand_user_path(std::string_view path) {
+    if (path.empty() || path.front() != '~') return std::filesystem::path(path);
+    // `~user` is not this function's business: only a bare `~` or one followed
+    // by a separator names THIS user's home.
+    if (path.size() > 1 && path[1] != '/') return std::filesystem::path(path);
+
+    // `$HOME` first — see the header. A shell expands `~` from the
+    // environment, so an override that was made on purpose is honoured;
+    // `environment_directory` rejects a relative value, which is what stops a
+    // save resolving against whatever directory the client was started in.
+    std::filesystem::path home;
+    if (const char* const from_environment = environment_directory("HOME"))
+        home = std::filesystem::path(from_environment);
+    else
+        home = home_directory();
+
+    if (path.size() == 1) return home;
+    // `substr(2)` skips the separator, so this appends a RELATIVE path:
+    // `operator/` with an absolute right-hand side would discard `home`
+    // entirely and hand back `/Documents`.
+    return home / std::filesystem::path(path.substr(2));
+}
+
 }  // namespace ckm::platform
