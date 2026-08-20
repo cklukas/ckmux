@@ -162,6 +162,29 @@ near-revert of a landed commit by its own author, and a source-tree diff that
 read as somebody deleting a shipped feature — which sent five sessions hunting
 an author who did not exist.
 
+**When you can name the suspect commit, diff against its PARENT.** Ancestry
+below tells you a file is stale; this tells you *which change never arrived*,
+which is the question an alarm actually raises. If a commit `C` is in the log
+and its change is missing from the tree:
+
+```bash
+git diff --name-only C^ C                       # the paths C actually changed
+git show C^:<path> | cmp -s - <path>            # identical ⇒ C never reached the tree
+```
+
+Byte-identity with `C^` on a path `C` touched means non-delivery, not removal.
+Anything else is a real edit and belongs to somebody. **Scope it to the paths
+`C` changed** — a file `C` never touched is trivially identical to `C^`, and
+reading that as non-delivery is the false positive this check otherwise
+avoids.
+
+That is what settled the `FitDesktop` alarm as a non-delivery rather than a
+deletion: nine of twelve files byte-identical to `3d6cb2d^`, so the commit had
+simply never been written to the working tree. Two sessions had already voted
+to revert on the reasoning that it *looked* like an unauthored removal, and
+both would have been right by accident. Prefer this check to any heuristic
+about what a diff resembles.
+
 **Whether anyone is editing a file is answered by ANCESTRY, not by counting
 lines.** "Lines the working copy has that HEAD lacks" looks like the test and
 gives a false positive on a stale tree: a copy pinned to an older commit
@@ -223,7 +246,15 @@ Inherited from ckVision, unchanged:
 - all CTest suites green, and green again under ASan/UBSan;
 - a regression test that fails without the change;
 - plans updated in the same commit when behavior changed — the plans are the
-  spec, so drift is a bug in one of them;
+  spec, so drift is a bug in one of them. **This includes the row**: its
+  state, and the claim on it, land with the work rather than after it. Twice
+  on 2026-08-20 a session finished something correct and left the record
+  wrong — the artefact was right and the row was not — and the two failures
+  cost another session 397 lines and a third an afternoon of routing. A wrong
+  record is not a smaller defect than wrong code; it is the same defect
+  arriving through the only channel other sessions can read. The person who
+  can prevent it is always the one who landed the change, which is why it is
+  the same commit and not a follow-up;
 - commit message: one-line summary, what and why, then verification evidence
   naming the tests and sanitizer configurations actually run, and who ran
   them if that was the tester. "All tests pass" is not evidence.
