@@ -245,7 +245,13 @@ git diff --cached --name-only     # what is ACTUALLY staged, before every commit
 git commit -- <paths>             # commits these paths only, ignoring the index
 ```
 
-`git commit -- <paths>` is the safe form and should be the default here. The
+`git commit -- <paths>` is the safe form and should be the default here — with
+one caveat, because it commits **the working copy** of those paths and on this
+tree a working copy may be stale. Two tools for two situations: **pathspec
+commit when your copy is known-current** (you just wrote it, or you have
+checked it against HEAD), and **build the blob from HEAD and plumb it when it
+is not**, so the commit is provably HEAD-plus-your-change rather than whatever
+the copy happened to hold. The
 audit is the backstop: run it *in the same command chain* as the commit, not
 minutes before, or it is a statement about a moment rather than about what you
 are about to land.
@@ -294,6 +300,19 @@ simply never been written to the working tree. Two sessions had already voted
 to revert on the reasoning that it *looked* like an unauthored removal, and
 both would have been right by accident. Prefer this check to any heuristic
 about what a diff resembles.
+
+**A stale copy does not only delete — it also RESURRECTS, and that is the
+uncomfortable half.** The same non-delivery that erases another session's work
+will, from a copy predating a deletion, put deleted work back. `a633dfc`
+restored an eight-line paragraph that `3858004` had removed, silently and by
+accident, while committing something unrelated — and `3858004` is an ancestor
+of `a633dfc`, so a commit restored content its own history had deleted. Nobody
+intended either direction.
+
+The consequence is what matters: **"it is fine now" can be luck rather than
+correctness.** A file that looks right after a scare is not evidence that the
+scare was handled — it may be evidence that a second stale copy happened to
+land on top. Check what a commit was built FROM, not only what it contains.
 
 **Whether anyone is editing a file is answered by ANCESTRY, not by counting
 lines.** "Lines the working copy has that HEAD lacks" looks like the test and
