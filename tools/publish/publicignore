@@ -1,0 +1,14 @@
+# Paths kept out of the published snapshot (tools/publish/make-public.sh).
+#
+# These stay tracked on `main` — they are version-controlled locally and never
+# pushed. One path per line; a trailing `/` means the whole directory. Lines
+# starting with `#` and blank lines are ignored.
+
+# The working agreement with the agents that develop this repository.
+AGENTS.md
+
+# The specification, roadmap, work packages and acceptance checklists.
+plans/
+
+# This machinery itself.
+tools/publish/

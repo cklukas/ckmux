@@ -50,9 +50,8 @@ however good it is.
 
 ## The practical bar
 
-[AGENTS.md](AGENTS.md) is the working agreement and
-[plans/](plans/README.md) are the specification. In short: every change
-lands with a test that fails without it; the build is zero-warning under
-`-Wall -Wextra -Wpedantic -Wshadow -Werror` and green under ASan/UBSan;
-plans are updated in the same commit when behavior changes; and commit
-messages carry real verification evidence, not "all tests pass".
+Every change lands with a test that fails without it. The build is
+zero-warning under `-Wall -Wextra -Wpedantic -Wshadow -Werror` and green
+under ASan/UBSan. Documentation is updated in the same commit when behavior
+changes. Commit messages carry real verification evidence — what you ran and
+what it showed — not "all tests pass".
