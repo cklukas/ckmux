@@ -560,6 +560,19 @@ struct TerminalState {
     // text means the terminal has never complained.
     DiagnosticKind diagnostic_kind = DiagnosticKind::MalformedSequence;
     std::string diagnostic;
+    // The same counts `TermMeta` carries (WP-41), stated here so a mirror
+    // learns them from a SNAPSHOT as well as from a meta. Without them an
+    // attaching client starts at zero and reads a session's whole history as
+    // news: a terminal that has rung seven times arrives as six unanswered
+    // bells, on every attach, for every long-lived terminal.
+    //
+    // The rule this makes uniform is worth more than the fields: a mirror
+    // learns the current counts whenever the server STATES a terminal,
+    // whichever message does the stating — so "a reader who has just arrived
+    // has answered everything up to now" falls out of the general case rather
+    // than being a special case at attach.
+    std::uint32_t bell_serial = 0;
+    std::uint32_t activity_serial = 0;
 
     friend bool operator==(const TerminalState&, const TerminalState&) = default;
 };

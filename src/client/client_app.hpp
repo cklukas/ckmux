@@ -142,6 +142,12 @@ struct WindowPlacement {
 struct TerminalMarks {
     bool bell = false;
     bool activity = false;
+    // How many times this terminal has rung and written, counted by the server
+    // and never reset (WP-41). The bools above are a LEVEL — a mark is up, and
+    // the server decides when to put it down, which cannot be right for two
+    // readers at once and cannot say "rang AGAIN" even to one. These say both.
+    std::uint32_t bell_serial = 0;
+    std::uint32_t activity_serial = 0;
 
     bool any() const noexcept { return bell || activity; }
 };
@@ -1049,8 +1055,12 @@ private:
         // terminal is simultaneously one somebody is watching and one nobody
         // is. So the answer is remembered here, per client, and the terminal
         // keeps only the fact.
-        bool bell_seen = false;
-        bool activity_seen = false;
+        // The serials this reader has answered by looking. A number rather
+        // than a flag, because "I saw this bell" and "I saw every bell so far"
+        // are the same statement only until it rings again — the case a flag
+        // cannot express and the reason the wire now counts.
+        std::uint32_t bell_answered = 0;
+        std::uint32_t activity_answered = 0;
     };
     std::unordered_map<ckv::widgets::Window*, TerminalTitle> titles_;
     // The button on each window that has something to say about printing, and

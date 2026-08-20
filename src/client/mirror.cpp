@@ -76,6 +76,11 @@ bool TerminalMirror::adopt(const proto::TerminalState& state) {
     custom_title_ = state.custom_title;
     bell_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
     activity_marked_ = (state.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
+    // And the counts, from the snapshot as from a meta — the same rule either
+    // way, which is what stops "a reader who has just arrived" being a special
+    // case (WP-41).
+    bell_serial_ = state.bell_serial;
+    activity_serial_ = state.activity_serial;
     printer_active_ = state.printer_state == proto::PrinterState::Capturing;
     printer_state_ = state.printer_state;
     printer_mode_ = state.printer_mode;

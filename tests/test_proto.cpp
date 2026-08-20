@@ -859,3 +859,53 @@ CK_TEST(an_error_code_this_build_does_not_define_survives_the_wire_intact) {
         CK_CHECK(back->context == future.context);
     }
 }
+
+CK_TEST(the_size_predicted_for_a_terminal_state_is_the_size_actually_written) {
+    // `encoded_size(const TerminalState&)` predicts from a hardcoded `kFixed`
+    // plus the variable parts. Nothing checks that constant against the writer
+    // it is predicting, so a field added to the struct and to `write` without
+    // a matching adjustment leaves the predictor short — and a predictor that
+    // under-reports is what makes a buffer too small and framing go wrong
+    // under exactly the conditions nobody tests.
+    //
+    // That happened when WP-41 added the two serials: `kFixed` stayed at 81,
+    // ran eight bytes short per terminal, and surfaced in the DIFF ENGINE's
+    // snapshot-size case — a suite away from the change, and only because that
+    // case happened to compare a frame against its prediction. This one lives
+    // beside the codec so the next wire field fails where it was added.
+    //
+    // Every field is set to something non-default on purpose: a state left
+    // empty would let the predictor forget any field whose default encodes to
+    // zero bytes and still agree.
+    ckm::proto::Attached message;
+    message.session = 3;
+    ckm::proto::TerminalState state;
+    state.term = 12;
+    state.index = 4;
+    state.title = "a title";
+    state.custom_title = "a reader's name";
+    state.flags = 3;
+    state.columns = 80;
+    state.rows = 24;
+    state.rect = ckm::proto::Rect{1, 2, 30, 10};
+    state.z_order = 2;
+    state.zoomed = 1;
+    state.cursor.row = 3;
+    state.cursor.column = 5;
+    state.clipboard_serial = 9;
+    state.exited = 1;
+    state.exit_status = 7;
+    state.hold = 1;
+    state.diagnostic = "something to say";
+    state.bell_serial = 11;
+    state.activity_serial = 13;
+    message.snapshot.terminals.push_back(std::move(state));
+
+    // The frame the codec actually produces, against what it said it would be.
+    // `Attached` writes the session id (8) after the header and then the
+    // snapshot, which is the same arithmetic test_diff_engine uses — stated
+    // here against a fully populated state rather than a bare one.
+    const std::string frame = ckm::proto::encode(message);
+    CK_CHECK(frame.size() == ckm::proto::kHeaderBytes + 8 +
+                                 ckm::proto::encoded_size(message.snapshot));
+}

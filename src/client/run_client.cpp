@@ -369,6 +369,11 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         if (remote == nullptr) return marks;
         marks.bell = remote->mirror().bell_marked();
         marks.activity = remote->mirror().activity_marked();
+        // And the counts, which are what the client decides on: the level says
+        // a mark is up, the serial says how many times — and only the second
+        // can tell a reader that a terminal they visited has rung since.
+        marks.bell_serial = remote->mirror().bell_serial();
+        marks.activity_serial = remote->mirror().activity_serial();
         return marks;
     };
     // And the host's own bell, when the reader asked for one.

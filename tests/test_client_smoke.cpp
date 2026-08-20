@@ -2042,7 +2042,7 @@ CK_TEST(a_terminal_the_reader_is_not_looking_at_says_so_in_the_footer) {
     // The window the reader is NOT in rings.
     ckv::widgets::Window* const elsewhere =
         windows.front() == f.client.desktop().active_window() ? windows.back() : windows.front();
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true, 1, 1};
     f.poll();
     CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
     CK_CHECK(any_label_contains(f.client.footer_labels(), "! 1"));
@@ -2056,7 +2056,7 @@ CK_TEST(the_window_a_reader_is_in_never_raises_a_flag_about_itself) {
     f.poll();
     ckv::widgets::Window* const only = f.client.desktop().active_window();
     CK_CHECK(subsession_of(only) != nullptr);
-    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true};
+    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true, 1, 1};
     f.poll();
     CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
     CK_CHECK(!any_label_contains(f.client.footer_labels(), "! 1"));
@@ -2075,7 +2075,7 @@ CK_TEST(the_host_is_rung_once_per_bell_and_only_when_asked) {
     CK_CHECK(elsewhere != nullptr);
     if (elsewhere == nullptr) return;
 
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false, 1, 0};
     f.poll();
     CK_CHECK(f.rings == 1);
     f.poll();
@@ -2085,7 +2085,7 @@ CK_TEST(the_host_is_rung_once_per_bell_and_only_when_asked) {
     // Cleared and rung again is a second bell.
     f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{};
     f.poll();
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false, 1, 0};
     f.poll();
     CK_CHECK(f.rings == 2);
 }
@@ -2114,7 +2114,7 @@ CK_TEST(visiting_a_terminal_puts_its_mark_down_for_good) {
     if (first == nullptr || second == nullptr) return;
 
     // It rings while the reader is elsewhere, and is flagged.
-    f.marks[subsession_of(second)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(second)] = ckm::client::TerminalMarks{true, false, 1, 0};
     f.poll();
     CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
 
@@ -2147,11 +2147,11 @@ CK_TEST(activity_arriving_under_a_held_bell_does_not_ring_again) {
     CK_CHECK(elsewhere != nullptr);
     if (elsewhere == nullptr) return;
 
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false, 1, 0};
     f.poll();
     CK_CHECK(f.rings == 1);
     // The bell still stands; the terminal is now also producing output.
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, true, 1, 1};
     f.poll();
     CK_CHECK(f.rings == 1);
 }
@@ -2165,7 +2165,7 @@ CK_TEST(the_window_a_reader_is_in_neither_rings_nor_lights) {
     f.poll();
     ckv::widgets::Window* const only = f.client.desktop().active_window();
     CK_CHECK(subsession_of(only) != nullptr);
-    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true};
+    f.marks[subsession_of(only)] = ckm::client::TerminalMarks{true, true, 1, 1};
     f.poll();
     f.poll();
     // A reader looking straight at the terminal that rang does not need their
@@ -2184,7 +2184,7 @@ CK_TEST(a_reader_who_did_not_ask_for_noise_does_not_get_any) {
         if (subsession_of(w) != nullptr && w != f.client.desktop().active_window()) elsewhere = w;
     CK_CHECK(elsewhere != nullptr);
     if (elsewhere == nullptr) return;
-    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(elsewhere)] = ckm::client::TerminalMarks{true, false, 1, 0};
     f.poll();
     CK_CHECK(f.rings == 0);
     CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
@@ -2210,6 +2210,65 @@ ckv::widgets::Window* other_window(ClientApp& client) {
 
 }  // namespace
 
+CK_TEST(answering_records_the_count_reached_rather_than_merely_that_one_was_seen) {
+    // Found by mutation: recording a fixed "seen" instead of the serial the
+    // reader reached passed every case, because none let the count get past
+    // two before a visit. A terminal that rings twice unwatched and is then
+    // visited has had BOTH answered — a client remembering "one" would show a
+    // mark for the second the instant the reader stepped away, for a bell they
+    // had already seen.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    tick(f);
+    ckv::widgets::Window* const away = other_window(f.client);
+    ckv::widgets::Window* const here = f.client.desktop().active_window();
+    CK_CHECK(away != nullptr && here != nullptr);
+    if (away == nullptr || here == nullptr) return;
+
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 1, 0};
+    tick(f);
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 2, 0};
+    tick(f);
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+
+    f.client.desktop().activate(away);
+    tick(f);
+    f.client.desktop().activate(here);
+    tick(f);
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
+}
+
+CK_TEST(a_terminal_that_rings_again_after_a_visit_says_so_a_second_time) {
+    // The case no LEVEL can express, and the reason the wire counts. A flag
+    // that reading clears cannot tell a second ring from the first it cleared;
+    // a flag that reading does not clear can never go down. A bit gets one of
+    // the two wrong whichever way it is defined. A count gets both.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    tick(f);
+    ckv::widgets::Window* const away = other_window(f.client);
+    ckv::widgets::Window* const here = f.client.desktop().active_window();
+    CK_CHECK(away != nullptr && here != nullptr);
+    if (away == nullptr || here == nullptr) return;
+
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 1, 0};
+    tick(f);
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+
+    f.client.desktop().activate(away);
+    tick(f);
+    f.client.desktop().activate(here);
+    tick(f);
+    CK_CHECK(!any_label_contains(f.client.footer_labels(), "• 1"));
+
+    // Rings a SECOND time. The level is unchanged — it was already up — so
+    // everything here rests on the count having moved.
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 2, 0};
+    tick(f);
+    CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+    CK_CHECK(away->title().find("⍾") != std::string::npos);
+}
+
 CK_TEST(the_bell_glyph_is_one_cell_and_so_is_the_space_that_replaces_it) {
     // The invariant the owner's whitespace clause protects, checked against
     // ckVision's own measurement rather than against how narrow a character
@@ -2227,7 +2286,7 @@ CK_TEST(a_bell_in_the_window_a_reader_is_in_is_said_once_and_then_let_go) {
     tick(f);
     ckv::widgets::Window* const here = f.client.desktop().active_window();
     CK_CHECK(subsession_of(here) != nullptr);
-    f.marks[subsession_of(here)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(here)] = ckm::client::TerminalMarks{true, false, 1, 0};
 
     tick(f);
     CK_CHECK(here->title().find("⍾") != std::string::npos);
@@ -2249,7 +2308,7 @@ CK_TEST(a_bell_in_a_window_the_reader_is_not_in_blinks_until_they_answer_it) {
     ckv::widgets::Window* const away = other_window(f.client);
     CK_CHECK(away != nullptr);
     if (away == nullptr) return;
-    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 1, 0};
 
     // Both phases occur within one cycle — the point of a blink is that it
     // has two states, and a test that only ever caught one would pass on a
@@ -2277,7 +2336,7 @@ CK_TEST(a_blinking_bell_never_moves_the_title_it_sits_in_front_of) {
     ckv::widgets::Window* const away = other_window(f.client);
     CK_CHECK(away != nullptr);
     if (away == nullptr) return;
-    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 1, 0};
 
     tick(f);
     const int width = ckv::text::text_width(away->title());
@@ -2297,7 +2356,7 @@ CK_TEST(visiting_the_window_puts_the_bell_glyph_down_with_the_mark) {
     ckv::widgets::Window* const away = other_window(f.client);
     CK_CHECK(away != nullptr);
     if (away == nullptr) return;
-    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false, 1, 0};
     for (int i = 0; i < 4; ++i) tick(f);
 
     f.client.desktop().activate(away);

@@ -247,7 +247,27 @@ public:
     // second bell from the first one it already dismissed.
     std::uint32_t bell_serial() const noexcept { return bell_serial_; }
     std::uint32_t activity_serial() const noexcept { return activity_serial_; }
-    void count_bell() noexcept { ++bell_serial_; }
+    // A BELL's count is also an announcement; an activity count is not, and
+    // the asymmetry is the point rather than an oversight.
+    //
+    // A reader needs bells at full resolution — "it rang AGAIN" is the whole
+    // reason the serial exists, and a second ring leaves the level already up,
+    // so `mark_bell()` returns early and nothing else would clear
+    // `marks_announced_`. Without this the count increments on the server and
+    // never reaches the wire: produced, and unreachable, in exactly the case
+    // it was added for.
+    //
+    // Activity is different in kind. It is counted on every tick a terminal
+    // writes, so announcing each count would put a `TermMeta` on the wire per
+    // tick for the whole of a build — which is the cost `marks_announced_`
+    // exists to avoid, and it broke three suites when tried. A reader does not
+    // need "wrote 400 times", only "wrote since you last looked", so the level
+    // still decides when to speak and the current count rides along with
+    // whatever message that produces.
+    void count_bell() noexcept {
+        ++bell_serial_;
+        marks_announced_ = false;
+    }
     void count_activity() noexcept { ++activity_serial_; }
 
     bool marks_announced() const noexcept { return marks_announced_; }

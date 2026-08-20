@@ -628,6 +628,8 @@ void write(Writer& w, const TerminalState& s) {
     w.u8(s.hold);
     w.u8(static_cast<std::uint8_t>(s.diagnostic_kind));
     w.str(s.diagnostic);
+    w.u32(s.bell_serial);
+    w.u32(s.activity_serial);
 }
 void read(Reader& r, TerminalState& s) {
     s.term = r.u64();
@@ -662,6 +664,8 @@ void read(Reader& r, TerminalState& s) {
     s.hold = r.u8();
     s.diagnostic_kind = r.enum_of<DiagnosticKind>(r.u8(), 3);
     s.diagnostic = r.str();
+    s.bell_serial = r.u32();
+    s.activity_serial = r.u32();
 }
 
 void write(Writer& w, const Attached& m) {
@@ -684,7 +688,7 @@ void read(Reader& r, Attached& m) {
     // from seventy-nine, and the custom title's own two-byte length took it
     // from eighty-seven. A bound left behind is a hostile count checked against
     // a smaller entry than this codec can actually produce.
-    const std::uint32_t terminals = r.count(89);
+    const std::uint32_t terminals = r.count(97);
     m.snapshot.terminals.reserve(terminals);
     for (std::uint32_t i = 0; i < terminals && r.ok(); ++i) {
         TerminalState state;
@@ -1226,8 +1230,16 @@ std::size_t encoded_size(const TerminalState& state) {
     // 2 z_order + 1 zoomed + 8 tile + 7 cursor + 4 modes + 4 image count +
     // 1 printer mode + 1 scope + 1 state + 4 printer bytes + 4 job count +
     // 8 clipboard serial + 1 exited + 4 exit status + 1 hold +
-    // 1 diagnostic kind + 2 diagnostic length.
-    constexpr std::size_t kFixed = 81;
+    // 1 diagnostic kind + 2 diagnostic length +
+    // 4 bell serial + 4 activity serial.
+    //
+    // The enumeration above is the ONLY way to check this number, so a field
+    // added to the struct and to `write` without a line here leaves the
+    // predictor short and nothing says so at the point of the mistake. That
+    // happened when the two serials went in (WP-41): 81 stayed 81, the
+    // predictor ran 8 bytes short per terminal, and it surfaced in the diff
+    // engine's snapshot-size case rather than anywhere near the change.
+    constexpr std::size_t kFixed = 89;
     // 8 per image id; 8 job + 1 kind + 4 bytes + 4 lines + 8 at per job.
     return kFixed + state.title.size() + state.custom_title.size() + state.diagnostic.size() +
            encoded_size(state.grid) + encoded_size(state.scrollback) + 8 * state.images.size() +

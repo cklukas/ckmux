@@ -2013,6 +2013,13 @@ void Server::send_snapshot(Client& client) {
             state.exit_status = terminal->exit_status().value_or(0);
             state.hold = 1;
         }
+        // The counts, stated with every terminal a snapshot carries (WP-41).
+        // This is the PRODUCER for the two fields: without it they encode,
+        // decode and round-trip perfectly while always being zero — which is
+        // the shape `ef8de87` found in `Attach.share`, and the reason a
+        // round-trip test is not evidence that a field is reachable.
+        state.bell_serial = terminal->bell_serial();
+        state.activity_serial = terminal->activity_serial();
         snapshot.terminals.push_back(std::move(state));
     }
     // The eight bytes are `Attached::session`, which the snapshot's own measure

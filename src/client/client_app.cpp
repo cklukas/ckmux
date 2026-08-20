@@ -1889,8 +1889,9 @@ void ClientApp::refresh_terminal_titles() {
             // again. The server does not retract one today — its flag is
             // sticky until respawn — but this is written against the fact,
             // so it needs no change when the wire learns to say "rang again".
-            if (!marks.bell) entry->second.bell_seen = false;
-            if (!marks.activity) entry->second.activity_seen = false;
+            // Nothing to reset: a serial only goes up, so "answered" is a
+            // number this reader has reached rather than a flag something else
+            // has to lower. That is the whole gain over the level.
             // Looking at it IS the answer, and it is THIS reader's answer:
             // the server's flag says "this terminal has rung at some point",
             // which is not what a footer flag means. Without this a visited
@@ -1898,11 +1899,15 @@ void ClientApp::refresh_terminal_titles() {
             // becomes an ornament they learn to ignore — the same as not
             // having one.
             if (!elsewhere) {
-                if (marks.bell) entry->second.bell_seen = true;
-                if (marks.activity) entry->second.activity_seen = true;
+                // Looking answers everything it has said so far — and only so
+                // far. A ring after this moment carries a higher serial and is
+                // a new thing to be told about.
+                entry->second.bell_answered = marks.bell_serial;
+                entry->second.activity_answered = marks.activity_serial;
             }
-            const bool wants = elsewhere && marks.bell && !entry->second.bell_seen;
-            const bool busy = elsewhere && marks.activity && !entry->second.activity_seen;
+            const bool wants = elsewhere && marks.bell_serial > entry->second.bell_answered;
+            const bool busy =
+                elsewhere && marks.activity_serial > entry->second.activity_answered;
             if (wants != entry->second.lit || busy != entry->second.noted_activity) {
                 // The rising edge is the bell, and only the rising edge: this
                 // poll runs several times a second, and a reader whose host
@@ -1952,7 +1957,7 @@ void ClientApp::refresh_terminal_titles() {
                     // 50 polls at 100 ms. Steady, not blinking: a reader
                     // looking straight at it does not need to be waved at.
                     if (ticks <= kBellFocusedPolls) cell = std::string(kBellGlyph);
-                } else if (!entry->second.bell_seen) {
+                } else if (marks.bell_serial > entry->second.bell_answered) {
                     // 5 polls on, 5 off — one second a cycle. The off phase is
                     // a SPACE and not an empty string, or the title shifts a
                     // column twice a second for as long as the bell stands.

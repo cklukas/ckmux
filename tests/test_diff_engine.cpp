@@ -625,13 +625,18 @@ CK_TEST(the_size_a_snapshot_will_take_is_known_before_it_is_written) {
     bare.term = 12;
     attached.snapshot.terminals.push_back(std::move(bare));
 
-    // 81 fixed bytes plus the two counts that say the grid and the history are
+    // 89 fixed bytes plus the two counts that say the grid and the history are
     // empty. It was 71 + 8 before WP-30 put an eight-byte tile share on every
-    // terminal state, and 79 + 8 before the custom title's own two-byte length
-    // joined it; the decoder's own per-entry minimum moves by the same amount
-    // each time, and the two are checked against each other by this number
-    // being written down twice on purpose.
-    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 89U);
+    // terminal state, 79 + 8 before the custom title's own two-byte length
+    // joined it, and 81 + 8 before WP-41 added the bell and activity serials;
+    // the decoder's own per-entry minimum moves by the same amount each time,
+    // and the two are checked against each other by this number being written
+    // down twice on purpose.
+    //
+    // Which is what caught WP-41: the struct and the writer grew by eight
+    // bytes and `kFixed` did not, so the predictor ran short and the failure
+    // surfaced here rather than anywhere near the change.
+    CK_CHECK(ckm::proto::encoded_size(attached.snapshot.terminals[1]) == 97U);
     const std::string frame = ckm::proto::encode(attached);
     CK_CHECK(!frame.empty());
     CK_CHECK(frame.size() ==

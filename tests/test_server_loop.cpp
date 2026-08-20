@@ -1756,3 +1756,106 @@ CK_TEST(a_readers_focus_is_their_own_and_the_session_only_says_where_to_start) {
         CK_CHECK(second_time->snapshot.focused_term != three.id());
     }
 }
+
+CK_TEST(a_snapshot_states_what_a_terminal_has_counted_so_an_arriving_reader_starts_even) {
+    // WP-41. The two `TerminalState` serials need a PRODUCER, not a
+    // round-trip: `ef8de87` found `Attach.share` declared, encoded, decoded,
+    // server-handled and produced by nothing, and a codec catalogue would have
+    // passed on the day it shipped unreachable. So this asserts a NON-ZERO
+    // count arriving through an actual snapshot from an actual server.
+    //
+    // What it buys a reader: a client attaching to a session whose terminal
+    // has already rung learns that count as ANSWERED, rather than reading the
+    // session's whole history as news — which for a long-lived terminal is a
+    // mark that is up on arrival and every arrival after.
+    const std::filesystem::path socket = private_socket("snap-serials");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    // A child that rings, so the count is genuinely non-zero before anybody
+    // attaches — the arriving reader is exactly who this is for.
+    ckm::server::Terminal& terminal =
+        server.open_terminal(0, spec_running("printf '\\a'; sleep 3600"));
+    const ckm::server::TerminalId id = terminal.id();
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    // Let the bell reach the emulator and be counted. Bounded: a real child is
+    // involved, so the only honest wait is a wait, and the bound fails the
+    // test rather than hanging it.
+    for (int i = 0; i < 200 && terminal.bell_serial() == 0; ++i) {
+        clock.advance(20'000'000);
+        (void)server.step();
+        ::usleep(2000);
+    }
+    const std::uint32_t counted = terminal.bell_serial();
+    CK_CHECK(counted > 0);
+
+    // Attach again: the snapshot is re-stated, and it must carry the count.
+    ckm::proto::Attach again;
+    again.columns = 40;
+    again.rows = 8;
+    client.say(again);
+    ckm::proto::Attached handed;
+    CK_CHECK(await_message(server, clock, client, handed));
+
+    const ckm::proto::TerminalState* stated = nullptr;
+    for (const ckm::proto::TerminalState& one : handed.snapshot.terminals)
+        if (one.term == id) stated = &one;
+    CK_CHECK(stated != nullptr);
+    if (stated != nullptr) {
+        CK_CHECK(stated->bell_serial == counted);
+        CK_CHECK(stated->bell_serial > 0);   // not a default arriving by luck
+    }
+}
+
+CK_TEST(a_second_bell_is_announced_and_not_merely_counted) {
+    // The defect found by asking how the serial TRAVELS rather than whether it
+    // exists. `mark_bell()` returns early when the level is already up, so a
+    // second ring left `marks_announced_` true and produced no `TermMeta` at
+    // all: the count incremented on the server and never reached the wire —
+    // produced, and unreachable, in precisely the case the serial was added
+    // for. `count_bell()` now says the terminal has something new to say.
+    //
+    // Activity deliberately does NOT do this. It is counted on every tick a
+    // terminal writes, so announcing each count is a message per tick for the
+    // whole of a build; three suites said so when it was tried. A reader needs
+    // "rang again" at full resolution and "wrote since you looked" at none.
+    const std::filesystem::path socket = private_socket("second-bell");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+
+    // Two rings with a gap, in a terminal nobody is focused on — which is the
+    // only case where the level stays up between them.
+    ckm::server::Terminal& terminal = server.open_terminal(
+        0, spec_running("printf '\\a'; sleep 0.3; printf '\\a'; sleep 3600"));
+    (void)terminal;
+
+    // Bounded: real child, real bells. What is asserted is that a meta arrives
+    // carrying a count of two — not that two metas arrive, because how the
+    // server batches its ticks is its own business.
+    std::uint32_t highest = 0;
+    for (int i = 0; i < 400 && highest < 2; ++i) {
+        clock.advance(20'000'000);
+        (void)server.step();
+        ckm::proto::Message any;
+        while (client.take(any)) {
+            if (const auto* meta = std::get_if<ckm::proto::TermMeta>(&any))
+                highest = std::max(highest, meta->bell_serial);
+        }
+        ::usleep(2000);
+    }
+    // One would mean the first ring travelled and the second did not, which is
+    // exactly the shape this test exists to catch.
+    CK_CHECK(highest >= 2);
+}
