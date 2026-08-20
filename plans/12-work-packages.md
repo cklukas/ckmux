@@ -85,7 +85,7 @@ take first.
 | 9 | **U0-d** — OSC title policy for the ckmux profile | ckVision | 0.5 d | **Done** (2026-08-17) | — |
 | 10 | **WP-5** — `RemoteTerminalSubsession` and the client mirror | ckmux | 4–5 d | **Done** (2026-08-17) | WP-2 ✓, WP-4b ✓, U0-a ✓ |
 | 11 | **WP-6** — Attach, detach, reattach, and self-healing | ckmux | 3–4 d | **Done** (2026-08-17) | WP-5 ✓ |
-| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-17) | WP-6 ✓, U0-c ✓, U0-d ✓ |
+| 12 | **WP-7** — M2 acceptance: the core-promise test and the flood gate | ckmux | 2–3 d | **Done** (2026-08-20; gated by the test-coordinator session at ckmux `0e55465` × ckVision `e070775` — 37/37, ctest exit 0. The row sat at `gate pending` for three days over a flood-gate figure recorded without its build type; see plans/09) | WP-6 ✓, U0-c ✓, U0-d ✓ |
 | 13 | **WP-12** — Config v1: the remaining keys and `bind` | ckmux | 3–4 d | **Done** (2026-08-17) | — |
 | 14 | **WP-8** — Multi-session server state | ckmux | 4–6 d | **Done** (2026-08-18) | WP-7 ✓ |
 | 15 | **WP-9** — Session picker and the takeover flow | ckmux | 3–4 d | **Done** (2026-08-18) | WP-8 ✓ |

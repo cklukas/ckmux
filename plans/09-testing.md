@@ -133,7 +133,33 @@ real child in a real PTY: the core promise (spawn a counter, attach, kill the
 client, wait, reattach — `count 3` before, `count 11` after 500 ms unwatched),
 the rehydrated frame compared cell for cell and style for style against the same
 terminal a moment later, and the flood gate (`Ping` round trip while a child runs
-`yes`: 32 ms worst, 24 ms mean). Every defect WP-7 found was found by running it
+`yes`: **~22 ms mean optimised, ~490 ms mean Debug** — see the note below). **The flood-gate figure, corrected 2026-08-20, and why it mattered.** This
+paragraph originally recorded *32 ms worst, 24 ms mean* and **named no build
+type**. It is an optimised-build number. In the configuration this project
+documents and every gate actually runs — `-DCMAKE_BUILD_TYPE=Debug` — the same
+test measures **~550 ms worst, ~490 ms mean**, and it did so at `046d738` too:
+the commit that recorded the figure measures the same as HEAD when both are
+built Debug. **There is no regression.** Five sessions spent the better part of
+two days on one, because an unlabelled number was compared against Debug runs.
+
+Two things follow that the number itself hides. The Debug margin against the
+assertion (`worst_ms < 1000.0`) is **1.28x, not the 30x a reader infers from
+32** — that is the real headroom, and one regression of ordinary size would
+exhaust it. And the cost is located: in Debug, `TerminalEmulator::scroll_up_region`
+move-assigns every `ckv::Cell` of every scrolled row, each carrying a
+`std::string grapheme_`, so a row of `yes` output is ~80 un-inlined libc++
+string moves. ckVision's L-48 fixed this shape for the emulator's history and
+`2d3de20` fixed it for the mirror's; the visible region's scroll never got the
+same treatment.
+
+**And the original figure is not reconstructible.** `046d738` does not build
+against any ckVision commit that existed when it was written — it uses
+`ckv::widgets::ButtonRole`, which landed in ckVision at `211a123`, three and a
+half hours later. It was measured against an uncommitted working tree. The
+number above was taken against `211a123`, the earliest ckVision that compiles
+with it, and is a reconstruction rather than the original.
+
+Every defect WP-7 found was found by running it
 rather than by reading it — including the one that mattered most, that with no
 configuration file at all *no terminal could ever start*, because every other
 test had named a shell explicitly.
