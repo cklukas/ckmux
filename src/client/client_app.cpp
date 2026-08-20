@@ -3488,7 +3488,11 @@ void ClientApp::apply_stats_toggles() {
     // the answer changes. A serverless client has nobody to tell and samples
     // for itself below, at the same one-second cadence.
     if (options_.watch_stats) options_.watch_stats(toggles.any());
-    if (toggles.any() && stats_timer_ == 0) {
+    // The local sampler asks the platform before arming: a timer ticking
+    // every second to take dead samples is exactly the waste the predicate
+    // exists to refuse. The wire subscription above is deliberately not
+    // gated — the server answers for its own platform, not for this one.
+    if (platform::process_stats_supported() && toggles.any() && stats_timer_ == 0) {
         stats_timer_ =
             app_.start_timer(1'000'000'000, /*repeating=*/true, [this] { sample_local_stats(); });
         // "Within one sample period" means now for the first one: a reader

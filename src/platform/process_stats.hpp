@@ -27,16 +27,18 @@
 //     longer counted: it left the tree, and it is no longer this terminal's
 //     cost. The walk reads the parent relation as it is, not as it was.
 //
-// Platforms: macOS is implemented (libproc; the server's children are the
-// same uid, so no entitlement is involved). The Linux fill (`/proc`,
-// `smaps_rollup` for PSS) belongs to WP-22 with the rest of the port;
-// Windows rides the parking lot's ConPTY entry. On a platform without a
-// fill, `process_stats_supported()` says so, snapshots are empty, and
-// samples are dead — callers show nothing rather than zeros pretending to
-// be measurements.
+// Platforms: macOS (libproc; the server's children are the same uid, so no
+// entitlement is involved) and Linux (`/proc` stat lines for the table and
+// the counters, `smaps_rollup` for PSS — the one expensive read, and absent
+// on pre-4.14 kernels or unreadable for a zombie, in which case `has_real`
+// is false and RSS still answers). Windows rides the parking lot's ConPTY
+// entry. On a platform without a fill, `process_stats_supported()` says so,
+// snapshots are empty, and samples are dead — callers show nothing rather
+// than zeros pretending to be measurements.
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace ckm::platform {
@@ -106,5 +108,38 @@ TreeSample sample_tree(const ProcessTable& table, int root);
 // False on a platform whose fill has not landed. Callers show nothing rather
 // than a zero pretending to be a measurement.
 bool process_stats_supported() noexcept;
+
+// --- Linux `/proc` text, parsed anywhere ---------------------------------
+//
+// The two file formats below are stable kernel ABI (proc(5)); only the
+// READS are platform work. Splitting parse from read keeps this half of the
+// Linux fill compiled and tested on every platform with fixture text — the
+// same reasoning that keeps the clock out of the seam.
+
+// What this seam needs from one `/proc/<pid>/stat` line, in the units the
+// file speaks: times in clock ticks, resident set in pages. The Linux
+// sampler converts with sysconf answers, which are runtime measurements and
+// have no place in a parser.
+struct ProcStatFields {
+    int pid = -1;
+    int ppid = -1;
+    std::uint64_t utime_ticks = 0;
+    std::uint64_t stime_ticks = 0;
+    std::uint64_t rss_pages = 0;
+    bool valid = false;
+};
+
+// `valid == false` on anything malformed. The trap this parser exists to
+// step over: comm (field 2) is an UNESCAPED process name that may contain
+// spaces and parentheses, so the fields are anchored on the LAST `)` —
+// splitting on whitespace alone misreads every process named like
+// `(sd-pam)` or `tmux: server`.
+ProcStatFields parse_proc_stat(std::string_view text);
+
+// The `Pss:` total from `/proc/<pid>/smaps_rollup` text, in bytes, or -1
+// when absent. Matched as a whole token at line start, because the file
+// also carries `Pss_Anon:`/`Pss_File:`/`Pss_Shmem:` and — the sharper trap —
+// `SwapPss:`, which a substring search finds when `Pss:` itself is missing.
+std::int64_t parse_smaps_rollup_pss(std::string_view text);
 
 }  // namespace ckm::platform

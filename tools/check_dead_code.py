@@ -82,10 +82,14 @@ DELIBERATELY_UNCALLED = {
         "routing the parser through it, or by deleting it.",
     "key_context_names":
         "test-only table accessor, same shape as action_names.",
-    "process_stats_supported":
-        "test-only capability predicate, defined twice behind platform "
-        "guards. Nothing in src/ asks before sampling. Retire when the stats "
-        "path consults it -- which is arguably the bug this records.",
+    "parse_proc_stat":
+        "the parse half of the Linux /proc fill (WP-22): compiled on every "
+        "platform so the suite can feed it fixture text, called only from "
+        "the __linux__ arm of process_stats.cpp -- a call a Mach-O link "
+        "cannot contain. Retire when this checker grows its --gc-sections "
+        "Linux form (see check_root's skip): there it must be reached.",
+    "parse_smaps_rollup_pss":
+        "same shape and same retirement as parse_proc_stat.",
     "encode_grid":
         "NO callers at all, in src/ or tests/. One line over "
         "`proto::to_runs`. Same disposition as describe.",

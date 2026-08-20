@@ -6,6 +6,10 @@
 // bare forks, no exec and no PTY, because the thing under test is the
 // measurement, not a terminal. A child here either spins, allocates, or
 // pauses, and is killed by the test that made it.
+//
+// The Linux `/proc` parsers (WP-22's half of the seam) are tested here too,
+// on fixture text stated by hand — they compile on every platform for
+// exactly that reason, so this suite covers them without a `/proc`.
 #include "platform/process_stats.hpp"
 
 #include <signal.h>
@@ -231,4 +235,70 @@ CK_TEST(one_pass_over_the_real_table_is_cheap_enough_for_a_once_a_second_tick) {
     // Generous on purpose: the number above is the measurement, this bound
     // only refuses a pass that could not ride a one-second tick.
     CK_CHECK(micros < 500'000);
+}
+
+CK_TEST(the_stat_parser_reads_a_line_the_way_proc_5_says_to) {
+    const ckm::platform::ProcStatFields fields = ckm::platform::parse_proc_stat(
+        "4242 (spin worker) R 4200 4242 4200 34816 4242 4194304 100 0 0 0 "
+        "750 250 0 0 20 0 3 0 8888888 104857600 2560\n");
+    CK_CHECK(fields.valid);
+    CK_CHECK(fields.pid == 4242);
+    CK_CHECK(fields.ppid == 4200);
+    CK_CHECK(fields.utime_ticks == 750U);
+    CK_CHECK(fields.stime_ticks == 250U);
+    CK_CHECK(fields.rss_pages == 2560U);
+}
+
+CK_TEST(a_comm_containing_spaces_and_parens_cannot_forge_the_fields) {
+    // The comm below is `evil) R 9999 9999 9999` — a process is free to name
+    // itself a fake tail. Anchored on the FIRST `)` the parser would read
+    // ppid 9999 out of a process name; anchored on the last, it reads the
+    // kernel's fields.
+    const ckm::platform::ProcStatFields fields = ckm::platform::parse_proc_stat(
+        "88 (evil) R 9999 9999 9999) S 1 88 88 0 88 4194304 0 0 0 0 "
+        "10 20 0 0 20 0 1 0 5555 1048576 128\n");
+    CK_CHECK(fields.valid);
+    CK_CHECK(fields.pid == 88);
+    CK_CHECK(fields.ppid == 1);
+    CK_CHECK(fields.utime_ticks == 10U);
+    CK_CHECK(fields.stime_ticks == 20U);
+    CK_CHECK(fields.rss_pages == 128U);
+}
+
+CK_TEST(stat_text_that_is_not_a_stat_line_reports_invalid_not_garbage) {
+    CK_CHECK(!ckm::platform::parse_proc_stat("").valid);
+    CK_CHECK(!ckm::platform::parse_proc_stat("not a stat line at all").valid);
+    // A truncated read: parens fine, tail too short to reach rss.
+    CK_CHECK(!ckm::platform::parse_proc_stat("123 (sh) S 1 123 123 0 123\n").valid);
+    // A negative where the seam needs a count.
+    CK_CHECK(!ckm::platform::parse_proc_stat(
+                  "77 (sh) R 1 77 77 0 77 4194304 0 0 0 0 "
+                  "10 20 0 0 20 0 1 0 5555 1048576 -5\n")
+                  .valid);
+}
+
+CK_TEST(the_pss_line_is_matched_as_a_token_not_a_substring) {
+    // The real file, in the real order: `Pss:` present among four siblings
+    // that merely start or end with it.
+    const std::int64_t pss = ckm::platform::parse_smaps_rollup_pss(
+        "00400000-7ffffffff000 ---p 00000000 00:00 0            [rollup]\n"
+        "Rss:                5120 kB\n"
+        "Pss:                2048 kB\n"
+        "Pss_Anon:           1024 kB\n"
+        "Pss_File:           1024 kB\n"
+        "Pss_Shmem:             0 kB\n"
+        "Swap:                  0 kB\n"
+        "SwapPss:              64 kB\n");
+    CK_CHECK(pss == 2048 * 1024);
+
+    // The same file without its `Pss:` line. `SwapPss:` CONTAINS the token
+    // and `Pss_Anon:` starts with it — a substring or prefix matcher returns
+    // one of their values here instead of admitting the answer is absent.
+    const std::int64_t absent = ckm::platform::parse_smaps_rollup_pss(
+        "Rss:                5120 kB\n"
+        "Pss_Anon:           1024 kB\n"
+        "SwapPss:              64 kB\n");
+    CK_CHECK(absent == -1);
+
+    CK_CHECK(ckm::platform::parse_smaps_rollup_pss("") == -1);
 }

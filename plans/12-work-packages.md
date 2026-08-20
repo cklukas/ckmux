@@ -122,9 +122,9 @@ take first.
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** — capture and server are Done (2026-08-20, ckmux `6c88466`, ckVision `6648d90`); the CLIENT ROUTE is not wired, so **a reader cannot open, view or save a captured job**. `run_client.cpp` assigns 29 hooks and none of the seven printer ones, so the Print output dialog renders its empty state while the frame button counts jobs correctly off an emulator fallback. Found by ckmux-be building WP-21 §5; verified by the tester. | WP-6 ✓, U1-c ✓, U1-d ✓ |
 | 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Done** (2026-08-20; gated by the test-coordinator session at ckmux `02f7c97` × ckVision `df99316`, 35/35, ctest exit 0) | WP-16 ✓ |
 | 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | In progress (ckmux-03, uds:/tmp/cc-socks/31309.sock) | WP-18 ✓, WP-19 ✓, WP-20 ✓, PRINT-1…6 ✓ (WP-16 ✓, WP-17 ✓, U1-a ✓) |
-| 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
+| 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Done** (2026-08-20, decided by the OWNER in their own channel: **MIT** for both repos, with DCO + patent-grant + relicense-grant contribution terms; recorded in ckVision D-OPEN-1, `LICENSE`/`CONTRIBUTING.md` at both roots, SPDX headers swept by `tools/add_spdx.py`) | — |
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
-| 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | Blocked | WP-21 |
+| 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | **In progress** (ckmux-53) — routed ahead of WP-21 by the tester when CI's red list arrived: the shadow sweep and the `-Wshadow-all` guard are in ckVision `6fdbbf9`, the link dedup in ckmux `d3f89d2`; the process-stats `/proc` + `smaps_rollup` fill (the scope WP-37 handed over) is implemented with its parsers compiled and tested on every platform, awaiting the tester's gate | WP-21 |
 | 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
 | 44 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
 | 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
@@ -142,7 +142,6 @@ take first.
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d1d71e2` × ckVision `e070775` — 36/36 Debug, 36/36 ASan+UBSan, ctest exit 0; the `pty` label confirmed by measurement, and case 6 standing as ckVision `a1a5433`'s downstream acceptance) | U7-a ✓, WP-40 ✓ |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`; the wire edge `02f7c97`, the `--share` flag that reaches it in the CLI landing) — the marks a reader is owed wait on WP-41's client half | WP-40, WP-41, WP-42, WP-43 |
 | 58 | **WP-45** — One name, one session | ckmux | 0.5 d | **Done** (2026-08-20, owner ruling) | — |
-
 | 59 | **WP-46** — `kill-terminal`, and the refusal that told the truth | ckmux | 1 d | **Done** (2026-08-20) | — |
 | 60 | **WP-47** — A test that leaks a server has not finished | ckmux | 0.5 d | **Done** (2026-08-20) | — |
 
@@ -1479,7 +1478,20 @@ the container CI lane becoming blocking. **WP-23** `ckmux-256color` shipped and
 the default flipped. **WP-24** man page and user guide with a generated key
 appendix. **WP-25** packaging — `make install` at minimum. **WP-26** the
 license, resolved jointly with ckVision's D-OPEN-1; it blocks publishing, not
-development. **WP-27** the v1 acceptance audit against
+development. *Done, 2026-08-20, decided by the owner: **MIT** for both
+repositories — chosen over Apache-2.0 for universal compatibility (GPLv2-only
+included) and the BSD base-system door (tmux is in OpenBSD base because it is
+ISC; Apache-2.0 code is not imported there), and over GPL because a copyleft
+library would bind every adopter and erode the owner's own commercial use
+with each accepted patch. What Apache-2.0 would have said in writing is
+recovered in `CONTRIBUTING.md`: DCO sign-off, an explicit patent grant from
+contributors, and a relicense grant to the owner (the clause that keeps a
+future commercial dual-license frictionless). `LICENSE` at each root is the
+authoritative text (standard MIT, not MIT-0); every code file keeps its
+copyright line verbatim and gains `SPDX-License-Identifier: MIT`, swept
+in-place by `tools/add_spdx.py` under the fleet's pause-adapt-reread
+protocol. ckVision's D-OPEN-1 records the same decision from the library's
+side.* **WP-27** the v1 acceptance audit against
 [01-vision.md](01-vision.md)'s success criteria.
 
 ### Added after the M3 queue was drawn

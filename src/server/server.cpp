@@ -2737,6 +2737,11 @@ constexpr std::int64_t kStatsIntervalNanos = 1'000'000'000;
 }  // namespace
 
 bool Server::anyone_watching_stats() const noexcept {
+    // The capability half of nobody-watching-nobody-sampling: a platform
+    // that cannot measure has nothing to schedule, however many clients ask.
+    // Without this, a subscribed client on such a platform buys a wakeup per
+    // second spent snapshotting an empty table.
+    if (!platform::process_stats_supported()) return false;
     for (const std::unique_ptr<Client>& client : clients_)
         if (client->greeted && client->attached && client->watch_stats && !client->closing)
             return true;
