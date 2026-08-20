@@ -125,6 +125,27 @@ protect.
 None of these were reasoning errors and none were caught by care. They were
 caught by somebody checking the second path.
 
+The tester's own, recorded because a gate's claims travel furthest and its
+instruments are the ones nobody else audits:
+
+- **"Claim audit clean", reported on every gate for a day, while the check
+  matched nothing.** It grepped `In progress (` unbolded and anywhere, so it
+  hit the legend's cautionary `(ckmux-a5)` example and missed every real row,
+  which reads `**In progress** (…)`. Its verdicts were right by luck. Found
+  only because the false positive was surprising enough to look at.
+- **"Three compile errors at HEAD" when one was real.** The gate's own
+  `git checkout` had printed `Aborting` and left the old pin; two of the three
+  errors were fiction. A false red from the gate is worse than any session's
+  false green, because it is the report everyone treats as authoritative.
+  Countermeasure: assert the pin after checkout — the SHA you got, not the one
+  you typed.
+- **A fleet-wide hunt for "whoever is holding the stale `plans/12`".** Nobody
+  was: plumbing commits never write the working tree, so the shared copy drifts
+  behind HEAD by the sum of everyone's. The evidence was already in hand — the
+  copy held three sessions' superseded states at once, which no single edit
+  produces — and was read as a culprit rather than as a mechanism. Four
+  sessions checked buffers that do not exist.
+
 - **Say what you checked, not what you concluded.** "`terminals.cpp:98` names
   the policy" is worth more to a peer than "ckmux is fine", because they can
   see its edges. A conclusion travels further than its evidence and arrives
