@@ -104,7 +104,7 @@ quietly added to a divergence list later:
   `ESC #` enters a dedicated `Hash` parse state, `ESC # 8` runs the alignment
   pattern, and every other `ESC # <n>` is consumed and **raises a
   `TerminalDiagnostic::UnsupportedSequence`** rather than being silently
-  dropped (`terminal_emulator.cpp:808`). The chapter is not claimed; the
+  dropped (`terminal_emulator.cpp`, the `ParseState::Hash` case — line 809 today). The chapter is not claimed; the
   diagnostic is.
 - **Ch. 7, VT52 mode.** Not implemented and not wanted — again confirmed by
   reading rather than assuming: no `VT52` and no `DECANM` in the emulator.
@@ -249,8 +249,42 @@ the terminal usable — **plus** the row's own specific condition.
 | `lazygit` | Truecolor, mouse, nested panes | Panels render; mouse selects. | Layout arithmetic under a resize. |
 | `ssh` + remote tmux | The whole stack over a link with latency | A remote tmux session drives correctly through ckmux. | Distinguishes an emulation bug from a local-only timing assumption. |
 | **`tmux` inside ckmux** | Everything, adversarially | §4 | §4 |
-| `img2sixel` / `chafa` / `lsix` | DA1 + XTSMGRAPHICS probes before drawing | On primaries the raster appears; **under Terminal.app nothing is drawn and nothing is garbled**, and the probe answer is what made that happen. | The §1 fallback rule and ch. 6, together. |
+| `img2sixel` / `chafa` / `lsix` | Sixel output under a host that may or may not accept it | On primaries the raster appears; **under Terminal.app nothing is drawn and nothing is garbled** — see §3.1, because the reason is not what this row originally said. | The §1 fallback rule. |
 | `yes` / `cat bigfile` | Flood | The WP-20 budget gates stay green; the client stays interactive. | Fairness in `drain(byte_budget)`. Already gated — this is the app-level confirmation. |
+
+### 3.1 The Sixel row's premise was wrong, and correcting it strengthens §1
+
+plans/04 describes `img2sixel`/`chafa`/`lsix` as programs that "probe DA1 and
+XTSMGRAPHICS before drawing", and this document repeated it. **Measured on
+2026-08-20, `img2sixel 1.10.5` sends no DA1 probe at all.** Run under a PTY it
+emits Sixel immediately — 29 bytes, opening `ESC P q`, with no query of any
+kind first — and it does so identically under `TERM=xterm-256color`, `xterm`,
+`dumb` and `vt100`, so nothing about the environment gates it.
+
+*Scope of that claim, stated because it is narrow*: `img2sixel 1.10.5`, built
+here without libcurl/libpng/libjpeg. `chafa` and `lsix` are **not installed**
+and are **unmeasured** — they may well probe. What is settled is that at least
+one prober on this row does not.
+
+**Why this makes §1 stronger rather than weaker.** The row as originally
+written made ckmux's good behaviour depend on the child's politeness: the
+program asks, ckmux answers honestly, the program declines to draw. **A child
+that draws unconditionally is not an edge case — it is the first one measured.**
+So the fallback contract cannot rest on the probe, and §1's rule stands on its
+own terms: under a host that cannot render a picture, **ckmux** must ensure
+nothing is drawn and nothing is garbled, whether or not the child ever asked.
+That is ckmux's own capability plumbing (WP-16, the host's capability arriving
+on `Attach`) doing the work, not the child's manners.
+
+**What the rig must therefore assert**, and it is a harder test than the
+original: point the row at a program that draws **without asking**, because
+that is the case where ckmux is the only thing standing between a
+non-graphical host and a screenful of Sixel bytes rendered as text.
+
+**Chapter 6 is unaffected and still claimed.** A DA1 that advertises a
+capability the host lacks is still a lie ckmux tells a child, and children that
+*do* probe still exist. The correction is to §1's *mechanism*, not to §2.2's
+claim.
 
 ## 4. `tmux` inside ckmux
 
@@ -316,6 +350,13 @@ first.** Three of §4's five clauses needed this.
 **Two facts an implementer hits in the first hour, neither of which was in
 this document until somebody hit them.**
 
+> **SUPERSEDED — see §9.2.** The paragraph below recorded the behaviour the
+> owner's bug 1 has since fixed: with a single reader a host resize now
+> *does* propagate, because the sole reader's screen is the desktop. Read
+> §9.2 for the requirement that replaces it. Left in place rather than
+> deleted because the measurement was real and the reasoning shows how a
+> correct observation became a wrong requirement.
+
 **The resize clause means a ckmux *window* resize, not a host screen resize.**
 Growing the host terminal from 30 to 40 rows grows ckmux's screen and leaves
 the inner tmux's status line where it was — and that is **correct**, not a
@@ -340,7 +381,7 @@ asserts afterwards is a statement about the wrong multiplexer.
 note in `tests/CMakeLists.txt`. That absence is not evidence that no harness
 exists, and reading it that way costs a second instrument.
 
-The PTY is ckVision's: `posix_terminal_subsession.cpp:168`. The ckmux side
+The PTY is ckVision's: the `forkpty` call in `posix_terminal_subsession.cpp` (line 169 today). The ckmux side
 launches through it, so what §4 extends is **`tests/test_menu_commands.cpp`** —
 `binary_path()`, a `TerminalLaunchSpec::program(...)` with `CKMUX_SOCKET` in
 the environment, then `drain()` and read the emulator. §2.4 has the capture
@@ -508,7 +549,100 @@ argued as `won't-fix` is re-argued at each milestone — a permanent entry is a
 claim about ckmux's design, and a design claim that nobody has restated in six
 months is one nobody currently holds.
 
-## 9. What is not in this, and is not hiding
+## 9. Every clause audited for a static environment (2026-08-20)
+
+The owner found two defects by *using* ckmux, and one of them was **required**
+by a passing test: `a_reader_resizing_their_own_window_changes_nothing_about_
+the_session` asserted, under all three policies, that a resize changes nothing
+— with a single reader attached, for whom WP-40's rule protects nobody and
+destroys their screen. The suite did not miss the bug. **It demanded it.**
+
+That is a sharper question than the one this document has been asking. Every
+clause here has been checked for whether it *measures* anything. None had been
+checked for whether it *requires the right thing* — and a mutation-tested,
+non-vacuous, load-bearing assertion of a wrong requirement is indistinguishable
+from a good one by every instrument in this repository.
+
+The three rules that follow from it, which every clause below is graded
+against:
+
+1. An acceptance rig must include at least one case where **the environment
+   changes under the running app** — host resized, capability answering late,
+   a terminal disappearing — not merely different input into a fixed one.
+2. A **"must not change X"** assertion must be made with the actor present
+   that makes the prohibition matter, and its **opposite** asserted when that
+   actor is absent.
+3. Anything **decided once, at creation** must be tested against the evidence
+   arriving **late**.
+
+### 9.1 The audit
+
+| Clause | Environment | What it never sees |
+|---|---|---|
+| §1, three hosts | **Static** | Each run is one host at one size with one capability set for its whole life. The host never changes under the app. |
+| §2.2, chapters 1, 2, 3, 8, 11 | **Static** | vttest is driven at a fixed `24x80` given on its own command line. Geometry cannot change mid-chapter. |
+| §2.2, chapter 6 (reports) | **Static** | It asserts DA1/DSR answers *arrive*. It never asks what happens when one arrives **late** — which is bug 2 exactly. |
+| §3, the three general conditions | **Presence only** | Detach-and-reattach varies whether a reader is *there*; it never varies the **size** they come back at, and never changes anything while they are. |
+| §3, `htop` 60-second drift | **Static** | Time passes; nothing else does. |
+| §3, `lazygit` | **Static** | Its own "what a failure indicates" column reads *"layout arithmetic under a resize"* — **and no clause in the row resizes anything.** The row names a failure it cannot produce. |
+| §3, Sixel row | **Static** | Capability is fixed before the run. §3.1 established that at least one prober never asks; nothing tests a host whose answer arrives after the first terminal exists. |
+| §4.2, panes, windows, copy mode | **Static** | Input varies; the terminal around it does not. |
+| §4.2, resize | **In-app only** | Driven by `^B z`, a ckmux window action. See §9.2 — this clause is now **wrong**, not merely narrow. |
+| §4.2, detach/reattach | **Presence only** | Geometry is held constant across the detach, which is the one thing bug 1 was about. |
+| §5, printing | **Static** | Policy is resolved before the child prints; nothing tests a policy that changes while a job is open. |
+
+**Result: no clause in this document changes the environment under a running
+application, and none tests evidence arriving late.** Detach-and-reattach is
+the only variation of any kind, and it varies presence rather than
+environment.
+
+### 9.2 §4.2.1 is wrong and is corrected here, not merely widened
+
+This is the part that must not be buried. §4.2.1 says that growing the host
+terminal leaves the inner tmux's status line where it was, and that **this is
+correct rather than a defect**. It was written from a real measurement, and it
+recorded the behaviour bug 1 has now fixed.
+
+With a **single reader** — the ordinary case, and the case that test runs in —
+the desktop now follows the host, so a host resize *does* reach the inner
+tmux. §4.2.1's "correct" is the pre-fix behaviour, and had the rig graded
+against it after the fix, it would have reported a **regression against the
+repair**.
+
+Corrected requirement, replacing it:
+
+- **One reader attached:** a host resize propagates. The desktop follows the
+  screen, the ckmux window follows the desktop, and the inner tmux reflows —
+  status line on the last row of the *new* geometry, spanning it.
+- **Two readers attached:** `[general] desktop-size` decides, exactly as on
+  attach, and WP-40's rule stands unchanged — one reader must not reflow
+  another's arrangement by dragging a corner.
+- **Both halves are required.** Asserting only the first re-creates WP-40's
+  defect; asserting only the second is the test that demanded bug 1. This is
+  rule 2 above, and §4 is the clause that proves why it is stated as a pair.
+
+### 9.3 The backlog this produces
+
+Ordered by the evidence, not by convenience. The first three are cases where a
+defect of the shape already found would go unseen today:
+
+1. **A host resize under every running reference app** (§3) — the general
+   conditions gain a fourth: *resized mid-run, the app reflows and stays
+   usable*. `lazygit` first, since its own failure column already names it.
+2. **A late DA1 answer** (§2.2 ch. 6, §1, §3's Sixel row) — a host that
+   answers the capability probe *after* the first terminal is opened. Bug 2
+   was invisible because later terminals were right.
+3. **Reattach at a different size** (§3, §4.2) — the presence variation
+   already exists; the geometry variation does not.
+4. **A policy that changes while a job is open** (§5).
+5. **A terminal that disappears under a running client** — named for
+   completeness; no clause here goes near it.
+
+**None of these is a new clause added for thoroughness.** Each is a case where
+this document currently *permits* a defect of a shape that has already
+happened twice in one afternoon.
+
+## 10. What is not in this, and is not hiding
 
 - **`ckmux-256color` (WP-23).** The matrix runs against the current default
   terminfo. Flipping the default is its own row and it is blocked on this one.

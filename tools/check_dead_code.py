@@ -50,6 +50,7 @@ Exits non-zero on any unexplained dead function.
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -126,6 +127,116 @@ def free_function_names(root: Path) -> dict:
     return names
 
 
+def optimization_level(build: Path):
+    """The `-O` setting this build actually compiles with, and where it was read.
+
+    Read from the build's own compile flags rather than from
+    `CMAKE_BUILD_TYPE`, because the two can disagree: a reader may pass `-O2`
+    in `CMAKE_CXX_FLAGS` under any build type, and the build type is a label
+    while the flag is the fact.
+
+    Answers (flag, source) with flag None when nothing above `-O0` is found.
+    """
+    wanted = re.compile(r"(?<![\w-])-O(?:[1-3]|s|z|fast|g)\b")
+
+    commands = build / "compile_commands.json"
+    if commands.is_file():
+        try:
+            entries = json.loads(commands.read_text(encoding="utf-8"))
+        except ValueError:
+            entries = []
+        for entry in entries:
+            text = entry.get("command") or " ".join(entry.get("arguments", []))
+            found = wanted.search(text or "")
+            if found:
+                return found.group(0), "compile_commands.json"
+        if entries:
+            return None, "compile_commands.json"
+
+    for flags in sorted(build.glob("CMakeFiles/ckmux*.dir/flags.make")):
+        found = wanted.search(flags.read_text(encoding="utf-8"))
+        if found:
+            return found.group(0), str(flags.relative_to(build))
+    if list(build.glob("CMakeFiles/ckmux*.dir/flags.make")):
+        return None, "flags.make"
+
+    cache = build / "CMakeCache.txt"
+    if cache.is_file():
+        found = wanted.search(cache.read_text(encoding="utf-8"))
+        if found:
+            return found.group(0), "CMakeCache.txt"
+    return None, "no flags found"
+
+
+def stale_objects(root: Path, build: Path):
+    """The objects this link would use, if any predate the sources.
+
+    The one failure mode this checker has that is not a refusal: objects built
+    at an older commit still answer, and they answer about a tree that no
+    longer exists. A caller added since the last build is not in the object
+    file, so the function it calls looks unreached and the checker reports a
+    function that is in fact live.
+
+    It is not hypothetical. A peer saw eleven "dead" functions on their
+    machine while three independent full builds of the same source reported
+    seven, and their eleven were all RECENT arrivals -- exactly the shape an
+    object file a few hours old produces.
+
+    A docstring is not the fix. The checker already refuses when an object is
+    missing, on the principle that a tool which cannot tell "nothing calls
+    this" from "the caller was not compiled" must not answer; an object older
+    than its callers is the same question and gets the same refusal. Compared
+    by mtime rather than by CMake's dependency graph because the question is
+    only "could this object have seen that source", and mtime answers it
+    without depending on the generator.
+    """
+    # The objects the CURRENT link actually uses, taken from the archives
+    # rather than by scanning the build directory. A reconfigure leaves
+    # ORPHANED objects behind -- `config.cpp.o` sits under `ckmux_client.dir`
+    # while belonging only to `ckmux_common.a` today -- and an orphan is
+    # arbitrarily old, so scanning the directory refuses on every build.
+    # Measured: that false refusal fired on a tree that was correctly built.
+    objects = []
+    for target in ("ckmux_client", "ckmux_common", "ckmux_platform",
+                   "ckmux_server", "ckmux"):
+        directory = build / "CMakeFiles" / (target + ".dir")
+        if not directory.is_dir():
+            continue
+        if target == "ckmux":
+            objects.extend(directory.rglob("*.o"))  # the executable's own TU
+            continue
+        archive = build / f"lib{target}.a"
+        if not archive.is_file():
+            continue
+        listed = subprocess.run(["ar", "-t", str(archive)],
+                                capture_output=True, text=True)
+        if listed.returncode != 0:
+            continue
+        # Matched per TARGET, not by basename across all archives: the same
+        # basename can be a live member of one archive and an orphan under
+        # another target's directory, which is exactly how `config.cpp.o`
+        # slipped through and refused a correctly built tree.
+        names = {line.strip() for line in listed.stdout.splitlines() if line.strip()}
+        objects.extend(o for o in directory.rglob("*.o") if o.name in names)
+    if not objects:
+        return None, None, None
+    # Each object against ITS OWN source, not against the newest source in the
+    # tree. The strict form refuses after any ordinary incremental build: one
+    # file edited and rebuilt makes that source newer than every object the
+    # build correctly left alone, and a gate that cries stale on a good build
+    # is one people pass `--force` to.
+    for obj in sorted(objects):
+        parts = obj.relative_to(build / "CMakeFiles").parts[1:]
+        source = root.joinpath(*parts)
+        if source.name.endswith(".o"):
+            source = source.with_suffix("")
+        if not source.is_file():
+            continue
+        if source.stat().st_mtime > obj.stat().st_mtime:
+            return source, obj, len(objects)
+    return None, None, len(objects)
+
+
 def dead_stripped_symbols(root: Path, build: Path) -> list:
     """Relink the production binary with -dead_strip and read the map.
 
@@ -190,11 +301,49 @@ def check_root(root: Path, build: Path) -> int:
         print("dead-code-check: skipped (needs a Mach-O linker; see WP-22)")
         return 0
 
+    optimized, where = optimization_level(build)
+    if optimized:
+        # The one thing this checker cannot see through. At `-O1` and above a
+        # function called only from within its own translation unit is inlined
+        # into its caller, the out-of-line copy is left unreferenced,
+        # `-force_load` drags that orphan into the probe link and `-dead_strip`
+        # removes it -- and "the linker removed it" then means "inlined away"
+        # rather than "never called". Measured: one tree at 08bd856 built two
+        # ways reported 7 dead in Debug and 18 in Release, and the extra 11
+        # every one had real callers.
+        #
+        # Note for anyone tempted by a narrower fix: those 11 are NOT `inline`
+        # functions in headers. They are ordinary functions declared in a
+        # header and defined in a .cpp whose only callers live in that same
+        # .cpp. No source-level filter distinguishes them from genuinely dead
+        # code, which is why this refuses instead of excluding.
+        #
+        # Exit 0, not 1: a check that cannot run is not a failure, and
+        # README.md documents a Release build as the way to run the suite.
+        print(f"dead-code-check: skipped -- this build compiles with "
+              f"{optimized} (from {where}), and an inlined function is "
+              f"indistinguishable from an uncalled one once the out-of-line "
+              f"copy is unreferenced. Run it against a -O0 build.")
+        return 0
+
     names = free_function_names(root)
     if not names:
         print("dead-code-check: no free functions found -- has the header "
               "layout changed?", file=sys.stderr)
         return 1
+    newer_source, older_object, object_count = stale_objects(root, build)
+    if object_count is None:
+        print("dead-code-check: no ckmux objects under "
+              f"{build}/CMakeFiles -- build ckmux first", file=sys.stderr)
+        return 1
+    if newer_source is not None:
+        print("dead-code-check: REFUSING to answer -- the build is stale.\n"
+              f"  newer source: {newer_source.relative_to(root)}\n"
+              f"  older object: {older_object.relative_to(build)}\n"
+              "  An object built before its callers cannot show them, so a live "
+              "function reads as dead. Rebuild and re-run.", file=sys.stderr)
+        return 1
+
     dead_symbols = dead_stripped_symbols(root, build)
     if dead_symbols is None:
         return 1
@@ -232,6 +381,16 @@ def self_test(root: Path, build: Path) -> int:
     try:
         if sys.platform != "darwin":
             print("dead-code-check self-test: skipped (not Mach-O)")
+            return 0
+        # The self-test asserts that removing the exemptions produces
+        # findings, which a SKIPPED run cannot do. It therefore has to skip
+        # wherever the check skips, or it fails precisely where the checker is
+        # behaving correctly -- which is how a self-test ends up being the
+        # thing that reddens the documented Release path.
+        optimized, where = optimization_level(build)
+        if optimized:
+            print(f"dead-code-check self-test: skipped (build compiles with "
+                  f"{optimized}, from {where})")
             return 0
         # Every known-dead function must be seen when it is NOT excused.
         DELIBERATELY_UNCALLED = {}
