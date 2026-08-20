@@ -518,3 +518,61 @@ behavior only from published standards (ECMA-48, xterm ctlseqs, the kitty
 protocol specs, Unicode UAX #11/#29, terminfo(5), POSIX), from ckVision's own
 documentation, and from documented black-box observation of terminals. Their
 manuals are fine; their source is not.
+
+## What a green suite cannot tell you (2026-08-20)
+
+The owner found two defects by using ckmux for five minutes. Forty-eight suites
+could not see either, and one of them was REQUIRED by a test.
+
+Resizing the host terminal left the session's desktop at its first-attach size,
+so windows sat past the edge, unreachable. And the first terminal opened —
+the one every reader lands in — advertised no Sixel on a Sixel-capable host,
+because the capability probe answers asynchronously and the terminal was
+created before the reply arrived.
+
+`test_session_desktop.cpp` had a case asserting, under all three policies, that
+a reader's resize changes nothing about the session — **with one reader
+attached**. The rule it encoded (WP-40: do not reflow somebody else's
+arrangement) is sound. Applied to a session with nobody else in it, it
+protected nobody and destroyed the only reader's screen.
+
+**We have been asking "does this assertion measure anything?" and answering it
+well** — mutation tests, negative assertions with positive partners,
+instruments that can see their own answer. **None of that can ask whether the
+requirement is right.** A mutation-tested, non-vacuous, load-bearing assertion
+of a WRONG requirement is indistinguishable from a good one by every instrument
+in this repository. The only thing that caught this was somebody using the
+application, and that is not a process failure to be engineered away — it is
+the one check that is not a derivative of our own model.
+
+Three rules, and they are gradeable:
+
+1. **Every acceptance rig must contain at least one case where the ENVIRONMENT
+   changes under the running application** — the host resized, a capability
+   answering late, a terminal going away — not merely different input into a
+   static environment. Audited afterwards: not one clause in `plans/14` varied
+   anything but input and a reader's presence.
+
+2. **A "must not change X" assertion must be made with the actor present that
+   makes the prohibition matter, and its opposite asserted when that actor is
+   absent.** Both halves or neither. Asserting only the prohibition is the test
+   that demanded the resize bug; asserting only its opposite would re-create
+   WP-40's.
+
+3. **Anything decided once, at creation, must be tested against the evidence
+   arriving LATE.** `host_sixel` is fixed when a terminal opens and the probe is
+   asynchronous; nothing tested the order.
+
+Two corollaries paid for the same day:
+
+- **A mutation that does not compile reports as the strongest possible pass**,
+  because the stale binary answers. Check the build exit before reading test
+  output. There is no reading order in which "all passed" is evidence about
+  code that never built.
+
+- **A checker cannot see a message that is built but never sent.**
+  `announce_layout()` was edge-triggered on a terminal having moved, so
+  `SetDesktopSize` — whose entire purpose is to move the coordinate space —
+  could go unannounced. The seam was wired, the function was reached, the
+  message was constructed. Neither the seam checker nor the dead-code checker
+  looks at whether it left.
