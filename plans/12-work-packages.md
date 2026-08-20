@@ -138,7 +138,7 @@ take first.
 | 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Done** (2026-08-20, ckmux `35b94f7` + `3d6cb2d`) | WP-28 ✓ |
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
-| 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`) | — |
+| 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **In progress** (ckmux-53, `uds:/tmp/cc-socks/91796.sock`) — the half that consumes U7-a waits for row 55; the client-learns-the-session-desktop half starts now on WP-40's landed wire (`35b94f7`), the WP-29 two-halves precedent | U7-a, WP-40 |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`) — marks half waits on WP-41 | WP-40, WP-41, WP-42, WP-43 |
 
@@ -1924,6 +1924,24 @@ library item and not ckmux's. *Done when*: a desktop of 200×60 shown through
 pointed at rather than on the one under the unpanned coordinate, a window
 moved off the visible region is still reachable, and a viewport equal to the
 extent behaves exactly as a `Desktop` does today.
+
+*U7-a landed* at `df99316` and took one defect in consumption, fixed in
+`a1a5433`. It is worth recording why the Done-when above did not catch it.
+Every acceptance item, and every test written to them, panned TOWARDS
+something: draws the right region, hit-tests the window pointed at, keeps a
+window off the visible region reachable. None of them panned AWAY and then
+painted — and a focused window left behind still reports a cursor, in absolute
+screen cells, which go negative. The presenter said so literally
+(`ESC[-3;-27H`) and ckVision's own VirtualDisplay refused the frame.
+
+The lesson generalises past this row: **a Done-when phrased entirely in terms
+of the thing the feature brings into view will not ask what happens to what it
+takes out of view.** For any package that moves a viewport, the acceptance list
+needs the departing case as well as the arriving one. The compositor already
+knew this for images — `compute_visible_rasters` clips every slice to the frame
+and its comment describes exactly this hazard — which is the second lesson: a
+hazard one part of a system has learned about is not thereby known to the
+parts that have not been told.
 
 **WP-43 — A client smaller than the session desktop pans** *(ckmux)*. Consume
 U7-a: a client whose screen is smaller than the session desktop shows part of
