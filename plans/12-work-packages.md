@@ -1846,19 +1846,38 @@ than geometry that is merely too small.
 
 **WP-41 — What belongs to a reader rather than to a session** *(ckmux)*. Four
 pieces of client state currently live on the session, each correct until a
-second client exists. `Session::focused` is set on every `Input`, so two
-readers typing steal each other's marker. WP-19's `TerminalMarks` are set by
-the server and cleared once it has told **a** client — with two attached, the
-second never sees the mark it was owed; the FACT stays server-side ("rang at
-T", "wrote at T") and the MARK becomes each client's own. WP-35's chrome
-collapse is a reader's decision about their own screen. And `host_sixel` is
-folded in per client at attach, so a child's advertised capabilities would
-change under it because somebody else connected — it is fixed when the
-TERMINAL is opened, and a client without Sixel draws `TerminalView`'s text
-fallback. *Done when*: two attached clients can focus different terminals at
+second client exists. **Focus landed 2026-08-20 (`eeb439b`)**: `Session::focused`
+was written by every `Input` and read by every snapshot and layout delta, so
+two readers typing would steal each other's marker. It is now
+`Session::last_focused` — where a reader STARTS, which is what
+`Snapshot::focused_term` has always meant on the wire — with each client
+holding its own `focused`, and a `LayoutDelta` carrying the receiving
+watcher's, never the session's.
+
+**The marks are half done and half blocked.** `2621fab` moved the ANSWER to
+the client: a reader who has looked has answered, and each window remembers
+that this client saw its mark. What cannot be done yet is removing the
+server's per-session suppression, because `clear_marks()` on the focused
+terminal is the only thing that ever puts a mark DOWN — the flags are sticky
+until respawn — so dropping it leaves every terminal that has ever printed
+permanently marked. Three suites said so when it was tried. **`TermMeta` needs
+to carry an edge** (a serial beside the flags, the way `TerminalStatus::bell_serial`
+already counts locally and for the same stated reason) before the fact can be
+recorded unconditionally.
+
+**`host_sixel` is not a defect, checked rather than believed.** The row said a
+child's advertised capabilities "would change under it because somebody else
+connected". They cannot: `launch.profile.sixel` is set once at
+`PosixTerminalSubsession::launch` (terminals.cpp:89) and nothing in the server
+mutates a profile afterwards. The real per-client question is narrower — a
+client that cannot draw Sixel is still SENT the image ops, and the fallback is
+`TerminalView`'s.
+
+WP-35's chrome collapse remains, and is a reader's decision about their own
+screen. *Done when*: two attached clients can focus different terminals at
 once, each sees the marks it is owed and clears only its own, one collapses
 its chrome without the other's moving, and no child's capabilities change
-because of an attach.
+because of an attach — the last of which already holds.
 
 **WP-42 — A terminal takes one paste at a time** *(ckmux)*. WP-18's credit
 queue is per connection and the server writes each chunk as it arrives, so two
