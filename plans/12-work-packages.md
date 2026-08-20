@@ -119,7 +119,7 @@ take first.
 | 34 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
 | 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Done** (2026-08-20, ckmux `f4cab08`, gated) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Done** (2026-08-20) | WP-6 ✓, U0-c ✓ |
-| 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Done** (2026-08-20, ckmux `6c88466`, ckVision `6648d90`) | WP-6 ✓, U1-c ✓, U1-d ✓ |
+| 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** — capture and server are Done (2026-08-20, ckmux `6c88466`, ckVision `6648d90`); the CLIENT ROUTE is not wired, so **a reader cannot open, view or save a captured job**. `run_client.cpp` assigns 29 hooks and none of the seven printer ones, so the Print output dialog renders its empty state while the frame button counts jobs correctly off an emulator fallback. Found by ckmux-be building WP-21 §5; verified by the tester. | WP-6 ✓, U1-c ✓, U1-d ✓ |
 | 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Done** (2026-08-20; gated by the test-coordinator session at ckmux `02f7c97` × ckVision `df99316`, 35/35, ctest exit 0) | WP-16 ✓ |
 | 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | In progress (ckmux-03, uds:/tmp/cc-socks/31309.sock) | WP-18 ✓, WP-19 ✓, WP-20 ✓, PRINT-1…6 ✓ (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
