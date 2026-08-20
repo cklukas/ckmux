@@ -117,7 +117,7 @@ take first.
 | 32 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
 | 33 | **WP-17** — Copy mode, completed | ckmux | 4–6 d | **Done** (2026-08-17) | — |
 | 34 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
-| 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-6 ✓ |
+| 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Done** (2026-08-20, ckmux `f4cab08`, gated) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-6 ✓, U0-c ✓ |
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** (ckmux-03, `uds:/tmp/cc-socks/31309.sock`) | WP-6 ✓, U1-c ✓, U1-d ✓ |
 | 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **In progress** (ckmux-63, uds:/tmp/cc-socks/27414.sock) | WP-16 ✓ |
@@ -1388,11 +1388,59 @@ add, place and remove all have a producer in `diff_engine.cpp` and a handler in
 picture will actually be drawn on, and a mirror's rasters carry a scene
 identity of their own because a mirror is never adopted by the `Application`.
 
-The rest of M4 is `Ready` rather than waiting: **WP-18** the paste
-credit flow, **WP-19** bell and activity monitors, and **PRINT-1…6** the
+The rest of M4 is `Ready` rather than waiting: **WP-19** bell and activity
+monitors, and **PRINT-1…6** the
 virtual printer, whose six pieces are
 already itemized in [10-roadmap.md](10-roadmap.md) and behave per
 [04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md).
+**WP-18 — Paste credit flow** *(ckmux)*. *Done* (2026-08-20). Gated by the
+test-coordinator session at ckmux `f4cab08` × ckVision `a8fda6a` — 31/31
+Debug, and 31/31 ASan+UBSan at `f41a0b0`, the parent, since the label commit
+changes no compiled code. The sanitized lane is the one that answers this
+package: the queue outlives the chunks in it and is dropped from two lifecycle
+paths, which is where a use-after-free would live.
+
+`PasteChunk` and `PasteAck` had been on this wire since WP-1 with neither a
+producer nor a handler, so a paste went out as one unpaced `Input` — as much
+text as the reader's clipboard held, in one frame, filling the connection's
+queue and then the terminal's faster than the child could drain either. The
+client now cuts a paste into 64 KiB chunks and keeps two on the wire; the
+server acks each **as it writes that chunk to the PTY**, and the ack releases
+the next. Keystrokes stay unpaced, because they are human-rate and always
+were.
+
+Three decisions the implementation turned on, each a place it could have been
+silently wrong. **Sequence numbers are per connection, not per terminal**:
+`PasteAck` carries a seq and nothing else, so two windows pasting at once
+would otherwise ack each other's chunks and spend the credit on the wrong
+queue. **The server acks a chunk it could not deliver** — the credit is about
+the CLIENT'S queue rather than the terminal's existence, and a reader who
+pastes into a window whose program has just ended would otherwise wait for
+ever on an ack that is never coming, holding that paste and every later one
+behind it. **A paste does not survive the reader losing the session**: the
+server routes a chunk by terminal id and asks nothing about who is attached,
+exactly as it does for `Input`, so a takeover mid-paste would type the rest of
+one reader's clipboard into a window that now belongs to another. The queue is
+dropped on `windows_forgotten()` and on `connection_lost()`.
+
+Ten cases, including that the text arrives whole and in order however the
+chunking fell, that an ack for nothing cannot wrap the credit counter round
+and release the next paste all at once, and a real server round trip proving
+the ack-anyway rule. Local terminals are untouched: the write is to a pipe
+this process owns, and the kernel's buffer is the flow control.
+
+*Also recorded, because the correction is more useful than the package.* The
+new suite was labelled `pty` on the reasoning that a paste ends up at a PTY.
+It does — in production; the suite never gets there, and the forkpty
+interposer measured 0 children against 25 and 79 for two control suites in the
+same binary. **The label described the feature rather than the test**, which
+is the same root as the substring face of the positional family: an assertion
+about the thing you meant instead of the thing in front of you. It also needed
+those two controls to mean anything — an instrument nobody has watched fire
+cannot tell "no children" from "not interposing", the same way an unread
+`pump_until` could not tell "the wait hung" from "the wait was never the
+problem".
+
 **WP-20** the performance budget gates under floods, freed by WP-16. *Done
 when*: `tests/test_budgets.cpp` (label `benchmark;pty`) gates a scroll at
 `~O(rows)` with a `ScrollOp` proving why, one changed cell at one cell's cost,

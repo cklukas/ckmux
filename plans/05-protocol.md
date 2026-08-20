@@ -111,7 +111,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `KillSession` | `session u64, force u8, grace_seconds u16` | **live** | ask every child first (`request_termination()`); kill the survivors at the deadline only if `force` |
 | `KillServer` | — | **live** | `ckmux kill-server`, over its own connect path so running it twice does not start a server in order to kill one |
 | `Input` | `term u64, blob` | **live** | already-encoded child bytes — keys/mouse/focus are encoded **client-side** by ckVision's `TerminalView` against mirrored mode state ([04](04-terminal-emulation.md)); the server just writes to the PTY (queued) |
-| `PasteChunk` | `term u64, seq u32, final u8, blob` | *encode-only* | ≤ 64 KiB chunks, credit-paced — WP-18 |
+| `PasteChunk` | `term u64, seq u32, final u8, blob` | **live** | ≤ 64 KiB chunks, credit-paced (WP-18). The client cuts a paste up front — so the clipboard is captured at the moment the reader asked, not read as it drains — and keeps `kPasteCredit` chunks unacked; the server writes each to the PTY and acks it. Sequence numbers are per CONNECTION, because `PasteAck` carries a seq and nothing else: two windows pasting at once would otherwise ack each other's chunks |
 | `WatchStats` | `on u8` | **live** | whether THIS connection wants per-terminal process stats (WP-38). Per connection and deliberately not session state: the subscription is a fact about a reader's View menu, it dies with the socket, and a server nobody subscribed to does no sampling work at all — no per-second wakeup, no process-table read, proven by a pass counter a test watches stay at zero. No per-metric selection: the three numbers travel together, a few dozen bytes a second, and which of them is SHOWN is the client's business |
 | `SetPrinterPolicy` | `scope u8 (terminal\|session\|global), target u64, mode u8 (ask\|capture\|off), ask_cache u32, spool_limit u32` | *encode-only* | WP-PRINT ([04](04-terminal-emulation.md)); the server owns the emulator, so it owns the policy. `global` also asks the server to persist it ([08](08-configuration.md)) |
 | `PrintJobFetch` | `term u64, job u64` | *encode-only* | payload is pulled only when the user previews or saves |
@@ -140,7 +140,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `PrintJobData` | `term u64, job u64, seq u32, final u8, blob` | *encode-only* | answer to `PrintJobFetch`, chunked ≤ 256 KiB |
 | `TermStats` | `term u64, cpu_permille u32, rss_bytes u64, real_bytes u64, flags u8 (has_real, alive)` | **live** | one terminal's process-tree cost, about once a second, only to connections that asked (`WatchStats`) — WP-38. `cpu_permille` is percent of one core in tenths, the `top` convention, derived by the server from two consecutive cumulative samples (0 on the first, which has no interval to differ over); `rss_bytes` is the tree's resident sum, honest about overcounting shared pages, and `real_bytes` is the platform's own answer to what it actually costs (macOS `phys_footprint`; PSS when WP-22 fills Linux in), meaningful only under `has_real`. A final message with `alive` clear is sent ONCE for a terminal whose child is gone, so the watcher clears the readout rather than freezing it. Never in the snapshot and never stored: a subscriber has current numbers within a sample period, and a number restored from state would be a second old and wrong |
 | `SessionsChanged` | — | *encode-only* | picker refresh hint, superseded before it was ever sent: every change answers with a fresh `SessionList`, which carries the answer instead of asking for another round trip |
-| `PasteAck` | `seq u32` | *encode-only* | the credit half of `PasteChunk` (below); it was described under flow control and missing from this table — WP-18 |
+| `PasteAck` | `seq u32` | **live** | the credit half of `PasteChunk` (below) — WP-18. Sent as the chunk is WRITTEN to the PTY, which is the whole of the pacing: an ack on receipt would pace against the server's own socket buffer and let a paste through at once. Sent even when the terminal has gone, because the credit is about the client's queue rather than the terminal's existence, and a client waiting on an ack that is never coming holds the rest of that paste and every later one behind it |
 | `Pong` | `nonce u64` | *tests only* | accepted and dropped by the client; see `Ping` |
 | `Error` | `code u16, context str, human str` | **live** | non-fatal errors (e.g. name collision). Codes are `proto::ErrorCode`: `NotImplemented` (1) — understood, and this build does not do it yet — then `NoSuchTerminal`, `NoSuchSession`, `NameTaken`, and `LimitReached` (5) — named something real and the answer is still no, which is a different sentence and a different remedy from "no such" (WP-13's `[general] max-terminals`). A request the server cannot honour is always **answered**: a client waiting for a reply that never comes is indistinguishable, to a reader, from a server that has hung (WP-2). `ServerSession` claims it and `ClientApp` puts it in front of the reader who asked, code and context included, because those two are what a bug report is written from (R8) |
 
@@ -403,8 +403,12 @@ left it ([04](04-terminal-emulation.md) WP-PRINT).
   frames: **356 MiB built before, 3.6 MiB after**.
 - **Client → server (paste)**: `PasteChunk` is credit-based: server replies
   `PasteAck { seq }` as each chunk is written to the PTY; client keeps ≤ 2
-  chunks in flight. Keystrokes/mouse are unpaced (human-rate). *Designed, and
-  neither message has a producer or a handler yet — WP-18.*
+  chunks in flight. Keystrokes/mouse are unpaced (human-rate). *Live since
+  WP-18 (2026-08-20).* The client drops a paste in progress when it stops
+  watching the session — a takeover routes nothing differently, since the
+  server dispatches a chunk by terminal id and asks no questions about who is
+  attached, so finishing would type the rest of one reader's clipboard into a
+  window that now belongs to another.
 - No keepalives: Unix sockets deliver HUP reliably; `Ping` exists for tests.
 
 ## CLI mapping (same protocol, `client_kind = cli`)
