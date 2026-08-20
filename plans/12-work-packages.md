@@ -43,7 +43,7 @@ which is the one vocabulary shared across both repos.
 | State | Meaning |
 |---|---|
 | `Ready` | Every prerequisite is satisfied. Selectable. |
-| `In progress` | Being worked on now, and **by whom**: the row names the session holding it, e.g. `In progress (ckmux-63)`. **At most one row per session** — the rule was written when one agent worked this queue and read as "at most one row at all", which with several sessions live is unsatisfiable and was therefore not being written down at all. A row nobody has marked reads `Ready` to every other session, which is precisely how two of them start the same package; claim the row before the first edit, and clear it when the package lands. A row left `In progress` by a session that is no longer active reverts to `Ready` — left standing it blocks the queue instead of merely misreporting it. |
+| `In progress` | Being worked on now, and **by whom**: the row names the session holding it, e.g. `In progress (ckmux-63, uds:/tmp/cc-socks/27414.sock)` — the **socket** as well as the name, because names drift and sockets do not: a claim whose name stopped resolving was read as abandoned within hours of this rule landing, and it was live. **At most one row per session** — the rule was written when one agent worked this queue and read as "at most one row at all", which with several sessions live is unsatisfiable and was therefore not being written down at all. A row nobody has marked reads `Ready` to every other session, which is precisely how two of them start the same package; claim the row before the first edit, and clear it when the package lands. A row that looks abandoned is **asked about, not taken**: message the claimant at the socket in the row and wait; take the row only if nothing comes back. Absence from a session listing is not evidence — `In progress (ckmux-a5)` resolved to nobody while its holder was mid-implementation with uncommitted work under a new name, and an earlier version of this rule ("a session no longer active reverts to `Ready`") would have authorised a third session to start on top of it. A parked row costs a wait; a row taken from a live claimant costs their afternoon and a merge nobody can untangle. |
 | `Blocked` | A prerequisite is not met. The prerequisite column always names it. |
 | `Implementation complete — gate pending` | The package's own criteria hold literally, but a milestone-level gate ([09-testing.md](09-testing.md)) has not been run or has not passed. Satisfies a dependent row's prerequisite; is **not** selected as the next package. |
 | `Done` | The criteria hold literally, the gates are recorded, and no known contradiction remains. |
@@ -120,7 +120,7 @@ take first.
 | 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Ready** | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Ready** (wire half landed as R8's side effect — `TermMeta` carries both flags; nothing in the UI reads them yet) | WP-6 ✓, U0-c ✓ |
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Ready** | WP-6 ✓, U1-c ✓, U1-d ✓ |
-| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Ready** | WP-16 ✓ |
+| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **In progress** (ckmux-63, uds:/tmp/cc-socks/27414.sock) | WP-16 ✓ |
 | 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
@@ -1393,7 +1393,14 @@ credit flow, **WP-19** bell and activity monitors, and **PRINT-1…6** the
 virtual printer, whose six pieces are
 already itemized in [10-roadmap.md](10-roadmap.md) and behave per
 [04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md).
-**WP-20** the performance budget gates under floods, freed by WP-16.
+**WP-20** the performance budget gates under floods, freed by WP-16. *Done
+when*: `tests/test_budgets.cpp` (label `benchmark;pty`) gates a scroll at
+`~O(rows)` with a `ScrollOp` proving why, one changed cell at one cell's cost,
+an attach snapshot for ten terminals with deep history inside both payload
+caps, zero picture payload built for a session nobody watches, and an idle
+terminal saying nothing at all — each printing its figure, and the two budgets
+that are NOT gated named as gaps rather than left silent
+([09](09-testing.md) §7).
 **WP-21** M4 acceptance:
 the matrix passes on WezTerm, iTerm2 and Terminal.app; `tmux` runs correctly
 *inside* ckmux; a program printing in a ckmux terminal produces a saved file
