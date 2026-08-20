@@ -365,4 +365,193 @@ CK_TEST(a_nonsensical_fit_is_refused_rather_than_applied) {
     forget(socket);
 }
 
+
+// --- Two readers at once (WP-44) -------------------------------------------
+//
+// The opt-in, and what the second client is owed at the moment it arrives: a
+// snapshot of its own, and no `Detached` for the reader already there. Without
+// the flag nothing changes — takeover is the contract and stays the default.
+
+namespace {
+
+// Attaches with the share opt-in, and answers whether this client got its own
+// `Attached` — which is what "a snapshot each" means on the wire.
+bool attach_sharing(ckm::server::Server& server, WireClient& client, std::uint16_t columns,
+                    std::uint16_t rows) {
+    ckm::proto::Attach request;
+    request.session = 0;
+    request.columns = columns;
+    request.rows = rows;
+    request.share = 1;
+    client.say(request);
+    ckv::Size ignored{0, 0};
+    return attached_desktop(server, client, ignored);
+}
+
+}  // namespace
+
+CK_TEST(two_clients_may_share_one_session_when_both_ask) {
+    const std::filesystem::path socket = private_socket("share");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient first;
+    CK_CHECK(first.connect(socket));
+    first.greet();
+    CK_CHECK(attach_sharing(server, first, 120, 40));
+
+    // The first reader must not be told anything: nobody took their session.
+    bool first_detached = false;
+    WireClient second;
+    CK_CHECK(second.connect(socket));
+    second.greet();
+    CK_CHECK(attach_sharing(server, second, 120, 40));
+
+    for (int pass = 0; pass < 8; ++pass) {
+        (void)server.step();
+        Message message;
+        while (first.take(message))
+            if (std::holds_alternative<ckm::proto::Detached>(message)) first_detached = true;
+    }
+    CK_CHECK(!first_detached);
+
+    // And the session says how many readers it has, which is the one fact
+    // about simultaneity a reader ever sees.
+    first.say(ckm::proto::ListSessions{});
+    std::uint8_t attached = 0;
+    for (int pass = 0; pass < 8; ++pass) {
+        (void)server.step();
+        Message message;
+        while (first.take(message)) {
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr || list->sessions.empty()) continue;
+            attached = list->sessions.front().attached;
+        }
+    }
+    CK_CHECK(attached == 2);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_client_that_does_not_ask_still_takes_the_session) {
+    // The default path, unchanged and load-bearing: a reader whose laptop slept
+    // cannot be kept out by the client nominally holding their session, and
+    // that is a product requirement rather than a v1 simplification.
+    const std::filesystem::path socket = private_socket("still-takes");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient held;
+    CK_CHECK(held.connect(socket));
+    held.greet();
+    CK_CHECK(attach_sharing(server, held, 120, 40));
+
+    WireClient taker;
+    CK_CHECK(taker.connect(socket));
+    taker.greet();
+    taker.attach(120, 40);  // no share flag
+    ckv::Size ignored{0, 0};
+    CK_CHECK(attached_desktop(server, taker, ignored));
+
+    bool told = false;
+    ckm::proto::DetachReason why = ckm::proto::DetachReason::User;
+    for (int pass = 0; pass < 8; ++pass) {
+        (void)server.step();
+        Message message;
+        while (held.take(message)) {
+            const auto* detached = std::get_if<ckm::proto::Detached>(&message);
+            if (detached == nullptr) continue;
+            told = true;
+            why = detached->reason;
+        }
+    }
+    CK_CHECK(told);
+    CK_CHECK(why == ckm::proto::DetachReason::Takeover);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(one_reader_leaving_leaves_the_other_watching) {
+    const std::filesystem::path socket = private_socket("one-leaves");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient staying;
+    CK_CHECK(staying.connect(socket));
+    staying.greet();
+    CK_CHECK(attach_sharing(server, staying, 120, 40));
+    {
+        WireClient leaving;
+        CK_CHECK(leaving.connect(socket));
+        leaving.greet();
+        CK_CHECK(attach_sharing(server, leaving, 120, 40));
+    }  // its socket closes
+    for (int pass = 0; pass < 8; ++pass) (void)server.step();
+
+    // The session is still watched, and still says so.
+    staying.say(ckm::proto::ListSessions{});
+    std::uint8_t attached = 0;
+    for (int pass = 0; pass < 8; ++pass) {
+        (void)server.step();
+        Message message;
+        while (staying.take(message)) {
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr || list->sessions.empty()) continue;
+            attached = list->sessions.front().attached;
+        }
+    }
+    CK_CHECK(attached == 1);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(both_readers_hear_about_a_terminal_that_opens) {
+    // The fan-out itself: `client_attached_to` returned the FIRST watcher and
+    // was called at twelve broadcast sites, every one of which would have left
+    // the second reader looking at a screen that stopped changing.
+    const std::filesystem::path socket = private_socket("both-hear");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient first;
+    WireClient second;
+    CK_CHECK(first.connect(socket));
+    first.greet();
+    CK_CHECK(attach_sharing(server, first, 120, 40));
+    CK_CHECK(second.connect(socket));
+    second.greet();
+    CK_CHECK(attach_sharing(server, second, 120, 40));
+
+    ckm::proto::NewTerminal ask;
+    ask.command = "/bin/sh";
+    first.say(ask);
+
+    bool first_heard = false;
+    bool second_heard = false;
+    for (int pass = 0; pass < 20; ++pass) {
+        (void)server.step();
+        Message message;
+        while (first.take(message))
+            if (std::holds_alternative<ckm::proto::TermOpened>(message)) first_heard = true;
+        while (second.take(message))
+            if (std::holds_alternative<ckm::proto::TermOpened>(message)) second_heard = true;
+    }
+    CK_CHECK(first_heard);
+    CK_CHECK(second_heard);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
 #endif  // !defined(_WIN32)

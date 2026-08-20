@@ -722,6 +722,17 @@ struct Attach {
     // XTWINOPS 14/16 replies. Zero is honest ignorance, not a size.
     std::uint16_t pixel_width = 0;
     std::uint16_t pixel_height = 0;
+    // Whether this client is willing to SHARE the session rather than take it
+    // (WP-44). Zero — the default, and what every build before this sends —
+    // is the specified contract: attaching takes the session from whoever
+    // holds it, immediately and without asking (plans/03). One asks to join
+    // the readers already there instead.
+    //
+    // An opt-in rather than a policy, because the two answers are wanted by
+    // the same reader at different moments: taking a session back from a
+    // laptop that slept is the ordinary case, and pairing with a colleague on
+    // one is not something a server should have to guess.
+    std::uint8_t share = 0;
     // Whether the client's OUTER terminal reported Sixel graphics. The
     // server folds it into the advertisement a child of this client's
     // terminals is given (plans/04: "ckmux decides sixel per host

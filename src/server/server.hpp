@@ -320,7 +320,21 @@ private:
     void send_session_list(Client& client);
     // Whoever is attached to this session, or nullptr. At most one (plans/03:
     // the latest client wins), which is why this can answer with one pointer.
+    // The first client attached to a session, or nullptr. Kept for the one
+    // question that is genuinely singular — "is anybody watching?" — and NOT
+    // for broadcasts: with simultaneous attach (WP-44) a session may have
+    // several readers, and a broadcast that reached the first of them would
+    // leave the others looking at a screen that stopped changing.
     Client* client_attached_to(SessionId id);
+    // Every client attached to a session, in connection order. The shape every
+    // broadcast site uses, so that "one reader" is nowhere assumed by
+    // construction.
+    template <typename Fn>
+    void for_each_attached(SessionId id, Fn&& fn) {
+        for (const std::unique_ptr<Client>& client : clients_)
+            if (client->attached && !client->closing && client->session == id) fn(*client);
+    }
+    std::size_t attached_count(SessionId id);
     // The connection with this id, or nullptr once it has gone. Used by the
     // paste slot below, which remembers a client across the time its chunk
     // spends waiting for another reader to finish.

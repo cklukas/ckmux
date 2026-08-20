@@ -923,7 +923,7 @@ void Server::handle(Client& client, const proto::Message& message) {
         opened.rows = static_cast<std::uint16_t>(spec.rows);
         // Only to the client watching THAT session: a terminal in somebody
         // else's session is none of this one's business.
-        if (Client* const watcher = client_attached_to(session->id)) send(*watcher, opened);
+        for_each_attached(session->id, [&](Client& watcher) { send(watcher, opened); });
         return;
     }
     if (const auto* request = std::get_if<proto::RespawnTerminal>(&message)) {
@@ -966,7 +966,7 @@ void Server::handle(Client& client, const proto::Message& message) {
             opened.session = home->id;
             opened.columns = static_cast<std::uint16_t>(terminal->columns());
             opened.rows = static_cast<std::uint16_t>(terminal->rows());
-            if (Client* const watcher = client_attached_to(home->id)) send(*watcher, opened);
+            for_each_attached(home->id, [&](Client& watcher) { send(watcher, opened); });
         }
         return;
     }
@@ -1063,6 +1063,12 @@ Session* Server::session_for(SessionId id) {
 
 Session* Server::session_of(const Client& client) {
     return client.attached ? session_for(client.session) : nullptr;
+}
+
+std::size_t Server::attached_count(SessionId id) {
+    std::size_t watching = 0;
+    for_each_attached(id, [&watching](Client&) { ++watching; });
+    return watching;
 }
 
 Server::Client* Server::client_attached_to(SessionId id) {
@@ -1314,7 +1320,7 @@ void Server::notice_exits() {
         closed.exit_status = status.value_or(0);
         closed.hold = 1;
         if (Session* const home = session_holding(id))
-            if (Client* const watcher = client_attached_to(home->id)) send(*watcher, closed);
+            for_each_attached(home->id, [&](Client& watcher) { send(watcher, closed); });
     }
 }
 
@@ -1493,12 +1499,27 @@ void Server::announce_layout() {
         // uses, and for the same reason: a client that reports an arrangement
         // on every frame of a drag must not cost a message per frame.
         //
-        // It is also what stops the echo from becoming a loop. The client that
-        // reported this layout is the client this states it back to (there is
-        // at most one watcher per session — plans/03's takeover), and a mirror
-        // applies what it is told; if applying it produced another report, an
-        // unconditional producer would answer that one too, forever. An
-        // unchanged layout changes nothing, so the exchange stops after one.
+        // It is also what stops the echo from becoming a loop, and the
+        // argument changed with WP-44 — it used to rest on there being at
+        // most one watcher per session (plans/03's takeover), which is no
+        // longer true when readers share one.
+        //
+        // What holds instead, and it is stronger: the gate above is an EDGE.
+        // A layout is announced only when a terminal's own `layout_announced`
+        // flag says something moved since the last statement, so a client
+        // applying what it was told produces no new edge here even if it
+        // reports afterwards — an unchanged arrangement is not a move. The
+        // client half is belt to that brace: `ClientApp` reports on a
+        // gesture's END, not on every settle, so being told where a window is
+        // does not look like a reader putting it there.
+        //
+        // With two readers this stops being only an echo question and becomes
+        // "whose arrangement wins", which is decided here rather than left to
+        // discovery: **the reporting client's arrangement is authoritative and
+        // the other is told.** Last report wins, which is the same rule one
+        // reader has always had with themselves, and the alternative — merging
+        // two readers' drags — is a conflict resolution nobody asked for on a
+        // desktop they are both looking at.
         bool moved = false;
         for (const TerminalId id : session.terminals) {
             const Terminal* const terminal = terminals_.find(id);
@@ -1568,7 +1589,7 @@ void Server::remove_terminal(TerminalId id, bool exited) {
     if (home == nullptr) return;
     home->terminals.erase(std::remove(home->terminals.begin(), home->terminals.end(), id),
                           home->terminals.end());
-    if (Client* const watcher = client_attached_to(home->id)) send(*watcher, closed);
+    for_each_attached(home->id, [&](Client& watcher) { send(watcher, closed); });
     // Every client's picker counts terminals, and the count just changed.
     for (const std::unique_ptr<Client>& watcher : clients_)
         if (watcher->greeted) send_session_list(*watcher);
@@ -1695,11 +1716,11 @@ void Server::move_terminal(Client& client, const proto::MoveTerminal& request) {
     proto::TermClosed left;
     left.term = request.term;
     left.exited = 0;
-    if (Client* const watcher = client_attached_to(source->id)) send(*watcher, left);
+    for_each_attached(source->id, [&](Client& watcher) { send(watcher, left); });
     // The target's watcher learns from a fresh snapshot. A terminal it has
     // never seen has no delta baseline — the same problem as a client that
     // fell behind, healed the same way.
-    if (Client* const watcher = client_attached_to(target->id)) watcher->dirty_snapshot = true;
+    for_each_attached(target->id, [](Client& watcher) { watcher.dirty_snapshot = true; });
     for (const std::unique_ptr<Client>& watcher : clients_)
         if (watcher->greeted) send_session_list(*watcher);
     std::fprintf(stderr, "ckmux server: terminal %llu moved from session %llu to session %llu\n",
@@ -1744,7 +1765,10 @@ void Server::send_session_list(Client& client) {
         // Attached means somebody ELSE is watching it, from this client's point
         // of view — but the flag is about the session, so it says whether any
         // client holds it. The client that holds it knows which one it is.
-        info.attached = client_attached_to(session.id) != nullptr ? 1 : 0;
+        // A COUNT now, not a flag: plans/03 has always said 0..n, and with
+        // simultaneous attach (WP-44) the picker can say how many readers a
+        // session has rather than merely that it is busy.
+        info.attached = static_cast<std::uint8_t>(std::min<std::size_t>(attached_count(session.id), 255)); 
         list.sessions.push_back(std::move(info));
     }
     send(client, list);
@@ -1804,10 +1828,18 @@ void Server::attach(Client& client, const proto::Attach& request) {
     // A reader whose laptop slept cannot be kept out by the client that is
     // nominally still holding their session — which is why the previous holder
     // is told rather than asked.
-    if (Client* previous = client_attached_to(session->id);
-        previous != nullptr && previous != &client) {
-        detach(*previous, proto::DetachReason::Takeover,
-               "taken over by another client on this machine");
+    //
+    // …unless this client asked to SHARE it (WP-44). The flag is the whole of
+    // the opt-in: without it the contract is exactly what it was, and a reader
+    // whose laptop slept still cannot be kept out by the client nominally
+    // holding their session. With it, the readers already there stay, and this
+    // one joins them.
+    if (request.share == 0) {
+        if (Client* previous = client_attached_to(session->id);
+            previous != nullptr && previous != &client) {
+            detach(*previous, proto::DetachReason::Takeover,
+                   "taken over by another client on this machine");
+        }
     }
     // Said out loud, because "which client is watching which session" is the
     // first question anybody debugging a multiplexer asks, and a server log
@@ -2384,7 +2416,7 @@ void Server::flush_tick() {
         if (differ == nullptr || !differ->needs_snapshot()) continue;
         const Session* const home = session_holding(id);
         if (home == nullptr) continue;
-        if (Client* const watcher = client_attached_to(home->id)) watcher->dirty_snapshot = true;
+        for_each_attached(home->id, [](Client& watcher) { watcher.dirty_snapshot = true; });
     }
 
     if (tick.deltas.empty() && tick.images.empty()) return;
