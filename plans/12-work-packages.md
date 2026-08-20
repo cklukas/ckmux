@@ -139,7 +139,7 @@ take first.
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
-| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Implementation complete — gate pending** (2026-08-20, ckmux-53; central pair gate requested at ckVision `a1a5433`) | U7-a ✓, WP-40 ✓ |
+| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d1d71e2` × ckVision `e070775` — 36/36 Debug, 36/36 ASan+UBSan, ctest exit 0; the `pty` label confirmed by measurement, and case 6 standing as ckVision `a1a5433`'s downstream acceptance) | U7-a ✓, WP-40 ✓ |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`; the wire edge `02f7c97`, the `--share` flag that reaches it in the CLI landing) — the marks a reader is owed wait on WP-41's client half | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
