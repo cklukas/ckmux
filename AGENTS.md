@@ -326,6 +326,29 @@ reversion of `plans/12` into itself, reverting another session's claim on row
 staged one file and believed that was what they were committing. The tree at
 the time held eight staged files belonging to two other sessions.
 
+**Under a split landing, hand over the MINIMAL DIFF, never a reconstructed
+file.** The tester-role section splits building from committing across two
+sessions, which quietly removes a rule this section already states: take HEAD's
+copy immediately before `commit-tree`, because "built from HEAD" is a property
+of the moment rather than of the method. A worker who hands over and waits
+cannot do that — there is always a gap, and the gap is however long the
+handover sits in the tester's queue.
+
+A **whole-file** handover embeds a snapshot of everyone else's work, so every
+commit anyone lands invalidates it, and it fails by SILENT REVERSION: the file
+compiles perfectly and quietly drops whatever landed while it waited. A
+**patch** touches only the lines it replaces and applies to any HEAD that has
+not touched them; the interleaving a whole file avoids is a far smaller risk
+than the reversion it creates.
+
+Measured, 2026-08-20: a whole-file `run_client.cpp` handover written six
+minutes before another package landed dropped that package's wiring. `BUILD_EXIT=0`
+— an unwired `std::function` is invisible to the compiler — and `seam_check`
+was the only thing that caught it. The same work re-sent as a two-hunk patch
+applied cleanly and preserved the neighbour's wiring. Six minutes is not the
+point: the whole-file form makes ANY gap fatal, and the patch form makes any
+gap harmless.
+
 **Plumbing does not write the working tree, and this is the expensive one.**
 The moment such a commit lands, the shared copy is behind HEAD by exactly
 your change, and every further plumbing commit by any session widens the gap.
