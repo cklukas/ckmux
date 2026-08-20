@@ -735,6 +735,15 @@ void read(Reader& r, SetLayout& m) { read_layout_entries(r, m.entries); }
 void write(Writer& w, const WatchStats& m) { w.u8(m.on); }
 void read(Reader& r, WatchStats& m) { m.on = r.u8(); }
 
+void write(Writer& w, const SetDesktopSize& m) {
+    w.u16(m.columns);
+    w.u16(m.rows);
+}
+void read(Reader& r, SetDesktopSize& m) {
+    m.columns = r.u16();
+    m.rows = r.u16();
+}
+
 void write(Writer& w, const LayoutDelta& m) {
     w.u64(m.session);
     write_layout_entries(w, m.entries);

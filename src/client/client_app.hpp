@@ -313,6 +313,11 @@ struct ClientOptions {
     // PTY re-encodes it.
     std::function<bool(const ckv::term::TerminalSubsession& terminal, std::string bytes)>
         paste_credited;
+    // Asks the server to make the SESSION's desktop this size (WP-40) — the
+    // one path by which a reader changes the coordinate space their windows,
+    // and anybody else's, are arranged in. Unset without a server: a local
+    // ckmux has one desktop and it is the screen.
+    std::function<void(ckv::Size desktop)> fit_session_desktop;
     // What a terminal has done that a reader who is not looking at it would
     // want to know: it rang the bell, or it produced output (WP-19,
     // plans/06:330). Asked for rather than derived, exactly as `exit_status`
@@ -811,6 +816,12 @@ private:
     // The complete listing, on the page rather than for the surface in front
     // of the reader — Help ▸ All Keybindings… (WP-14).
     void show_all_keys();
+    // `Window ▸ Fit Desktop to This Screen` (WP-40): tells the server this
+    // reader's screen is the size the session's desktop should be. Every
+    // window in the session is then re-laid against it and every child is
+    // resized — for both readers, which is why it is asked for rather than
+    // done whenever a terminal changes size.
+    void fit_desktop_to_screen();
     // The name the New Session prompt offers, from the sessions last seen.
     std::string suggested_session_name() const;
     std::vector<SessionRow> last_sessions_;

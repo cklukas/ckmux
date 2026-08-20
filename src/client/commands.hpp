@@ -64,6 +64,11 @@ inline constexpr std::string_view kMoveResize = "ckmux.window.move-resize";
 // itself, which is what makes the same widget usable by an application whose
 // chrome is something else entirely.
 inline constexpr std::string_view kToggleStatusBar = "ckmux.window.status-bar";
+// Fitting the SESSION's desktop to this reader's screen (WP-40). Named for
+// what it changes rather than for what it looks at: `ckmux.session.*` because
+// the desktop belongs to the session and every client watching it is affected,
+// not `ckmux.window.*` where a reader's own chrome lives.
+inline constexpr std::string_view kFitDesktop = "ckmux.session.fit-desktop";
 // The View menu's three readouts (WP-39): checkable items that put what the
 // processes under each terminal cost on every terminal window's frame footer.
 // Three commands because they are three independent checkboxes, persisted as

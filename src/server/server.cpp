@@ -757,6 +757,25 @@ void Server::handle(Client& client, const proto::Message& message) {
         client.cell_pixels = cell_metric_of(*resize);
         return;
     }
+    if (const auto* fit = std::get_if<proto::SetDesktopSize>(&message)) {
+        // A reader ASKING for the session's desktop to become this size
+        // (WP-40) — as against `ClientResize` above, which reports a fact
+        // about one screen and must move nothing. This is the only path by
+        // which a client changes the coordinate space its neighbour's windows
+        // are arranged in, and it exists because that must be an act somebody
+        // took rather than a consequence of dragging a window corner.
+        Session* const home = session_for(client.session);
+        if (home == nullptr) return;  // attached to nothing: nothing to size
+        const ckv::Size wanted{static_cast<int>(fit->columns), static_cast<int>(fit->rows)};
+        if (wanted.width <= 0 || wanted.height <= 0) return;
+        if (wanted.width == home->desktop.width && wanted.height == home->desktop.height) return;
+        home->desktop = wanted;
+        // Everybody watching is told, not just the reader who asked: a
+        // coordinate space one client believes and another does not is two
+        // different readings of every rect in the session.
+        announce_layout();
+        return;
+    }
     if (const auto* resize = std::get_if<proto::MoveResize>(&message)) {
         Terminal* terminal = terminals_.find(resize->term);
         if (terminal == nullptr) {

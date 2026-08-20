@@ -77,6 +77,11 @@ enum class Action : unsigned char {
     // instead — and a command as well as the bar's own ▼, because the bar
     // is not always on screen and the way back must not be either.
     ToggleStatusBar,
+    // Making the SESSION's desktop this screen's size (WP-40). A reader's own
+    // window changing size never does this — the session's coordinate space is
+    // shared with whoever else is watching, and reflowing it SIGWINCHes every
+    // child in the session, so it is asked for rather than inferred.
+    FitDesktop,
     // The View menu's three readouts (WP-39): what the processes under each
     // terminal cost, written onto every terminal window's frame footer. Three
     // actions because they are three independent checkboxes, each persisted

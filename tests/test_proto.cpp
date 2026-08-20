@@ -173,6 +173,9 @@ std::vector<Message> every_message() {
     messages.emplace_back(Input{11, std::string("\x1b[A\x00 bytes", 10)});
     messages.emplace_back(PasteChunk{11, 3, 1, "pasted text"});
     messages.emplace_back(PasteAck{3});
+    // The act, not the fact: `ClientResize` says how big one reader's screen
+    // is, this asks for the SESSION's desktop to become a size (WP-40).
+    messages.emplace_back(SetDesktopSize{90, 30});
     messages.emplace_back(WatchStats{1});
     // Every field distinct and nonzero, so a codec that writes one twice or
     // drops one fails here; permille above 1000, because more than one core

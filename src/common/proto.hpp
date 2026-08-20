@@ -200,6 +200,7 @@ enum class MessageType : std::uint16_t {
     PasteAck = 0x020D,
     SetLayout = 0x020E,
     WatchStats = 0x020F,
+    SetDesktopSize = 0x0210,
 
     // --- 0x03xx state sync ---
     LayoutDelta = 0x0301,
@@ -900,6 +901,23 @@ struct PasteAck {
     friend bool operator==(const PasteAck&, const PasteAck&) = default;
 };
 
+// A reader asking for the SESSION's desktop to become this size (WP-40).
+//
+// Deliberately not `ClientResize`, and deliberately not a flag on `Attach`.
+// `ClientResize` says how big one reader's own screen is and must never move
+// anybody's windows — that is the whole point of plans/03's world/view split.
+// This says something else entirely: change the coordinate space every window
+// in this session is arranged in, reflow them, and SIGWINCH every child. It is
+// an act, not a fact, so it gets a message of its own and a reader has to ask
+// for it — from `Window ▸ Fit desktop to this screen`, or `ckmux attach
+// --adopt-size` at the moment they arrive.
+struct SetDesktopSize {
+    static constexpr MessageType kType = MessageType::SetDesktopSize;
+    std::uint16_t columns = 0;
+    std::uint16_t rows = 0;
+    friend bool operator==(const SetDesktopSize&, const SetDesktopSize&) = default;
+};
+
 struct SessionList {
     static constexpr MessageType kType = MessageType::SessionList;
     std::vector<SessionInfo> sessions;
@@ -1177,6 +1195,7 @@ using Message =
     std::variant<Hello, HelloAck, Refuse, Ping, Pong, ListSessions, NewSession, Attach, Detach,
                  ClientResize, RenameSession, KillSession, KillServer, SessionList, SessionsChanged,
                  Attached, Detached, NewTerminal, CloseTerminal, KillTerminal, RespawnTerminal,
+                 SetDesktopSize,
                  MoveTerminal, MoveResize, Raise, FocusTerm, ZoomTerm, SetLayout, RenameTerminal,
                  Input, PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta,
                  GridDelta, ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,

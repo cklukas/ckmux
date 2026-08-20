@@ -287,4 +287,82 @@ CK_TEST(a_reader_resizing_their_own_window_changes_nothing_about_the_session) {
     }
 }
 
+
+// --- The one path that DOES change it (WP-40) ------------------------------
+
+CK_TEST(a_reader_who_asks_gets_the_desktop_resized_for_everybody) {
+    // `SetDesktopSize` is the act, as against `ClientResize`'s fact. It is the
+    // only message that changes the coordinate space a session's windows are
+    // arranged in, and it exists so that doing so is something a reader chose
+    // rather than something their window manager did to them.
+    const std::filesystem::path socket = private_socket("fit");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient reader;
+    CK_CHECK(reader.connect(socket));
+    reader.greet();
+    reader.attach(200, 60);
+    ckv::Size desktop{0, 0};
+    CK_CHECK(attached_desktop(server, reader, desktop));
+    CK_CHECK(desktop.width == 200 && desktop.height == 60);
+
+    ckm::proto::SetDesktopSize fit;
+    fit.columns = 90;
+    fit.rows = 30;
+    reader.say(fit);
+    for (int pass = 0; pass < 8; ++pass) (void)server.step();
+
+    // Asked for, so it moved — and the next client to arrive is told the new
+    // space rather than the old one, under the `fixed` policy that otherwise
+    // leaves it alone.
+    WireClient later;
+    CK_CHECK(later.connect(socket));
+    later.greet();
+    later.attach(200, 60);
+    ckv::Size after{0, 0};
+    CK_CHECK(attached_desktop(server, later, after));
+    CK_CHECK(after.width == 90 && after.height == 30);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_nonsensical_fit_is_refused_rather_than_applied) {
+    // Zero columns is not a desktop. A server that took it would leave every
+    // window in the session clamped into nothing, and the reader who asked
+    // would have no way to say it back.
+    const std::filesystem::path socket = private_socket("zero");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient reader;
+    CK_CHECK(reader.connect(socket));
+    reader.greet();
+    reader.attach(120, 40);
+    ckv::Size desktop{0, 0};
+    CK_CHECK(attached_desktop(server, reader, desktop));
+
+    ckm::proto::SetDesktopSize fit;
+    fit.columns = 0;
+    fit.rows = 0;
+    reader.say(fit);
+    for (int pass = 0; pass < 8; ++pass) (void)server.step();
+
+    WireClient later;
+    CK_CHECK(later.connect(socket));
+    later.greet();
+    later.attach(200, 60);
+    ckv::Size after{0, 0};
+    CK_CHECK(attached_desktop(server, later, after));
+    CK_CHECK(after.width == 120 && after.height == 40);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
 #endif  // !defined(_WIN32)

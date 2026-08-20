@@ -340,6 +340,13 @@ void ClientApp::register_commands() {
             declare(binding.key, binding.title, "View", [this] {
                 toggle_stats_readout(&Settings::show_memory_real, "show-memory-real");
             });
+        } else if (binding.key == commands::kFitDesktop) {
+            // Available only where there is a session to reshape: a client
+            // with no server has one desktop and it is already this screen.
+            const u::CommandId fit =
+                declare(binding.key, binding.title, "Session", [this] { fit_desktop_to_screen(); });
+            registry.set_enabled_predicate(
+                fit, [this] { return static_cast<bool>(options_.fit_session_desktop); });
         } else if (binding.key == commands::kToggleStatusBar) {
             // The keyboard's and the menu's way to the same state the bar's ▼
             // reports (WP-35). It has to exist separately from that toggle
@@ -579,7 +586,7 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
          item(u::std_command_keys::kZoom), item(u::std_command_keys::kMinimize), separator,
          item(u::std_command_keys::kTileHorizontally), item(u::std_command_keys::kTileVertically),
          item(u::std_command_keys::kTileGrid), item(u::std_command_keys::kCascade), separator,
-         item(commands::kToggleStatusBar)}};
+         item(commands::kToggleStatusBar), item(commands::kFitDesktop)}};
     // plans/06-ui-design.md: settings dialogs collect under a top-level
     // Settings menu rather than hiding one per feature area — and the colour
     // theme is a setting, which is why there is no View menu holding three
@@ -2878,6 +2885,17 @@ void ClientApp::set_theme(u::Theme theme) {
 }
 
 void ClientApp::show_key_reference() { app_.execute_command(app_.commands().standard().help); }
+
+void ClientApp::fit_desktop_to_screen() {
+    if (desktop_ == nullptr || !options_.fit_session_desktop) return;
+    // The whole screen, not `content_area()`: the session's desktop INCLUDES
+    // the rows this client spends on its own chrome, because another reader's
+    // chrome may be a different height — a collapsed status bar (WP-35) must
+    // not make the shared world one row shorter for everybody.
+    options_.fit_session_desktop(ckv::Size{desktop_->bounds().width, desktop_->bounds().height});
+    notify("Session desktop is now " + std::to_string(desktop_->bounds().width) + "×" +
+           std::to_string(desktop_->bounds().height));
+}
 
 void ClientApp::show_all_keys() {
     // Straight to the topic rather than through the standard help command,

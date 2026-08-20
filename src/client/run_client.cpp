@@ -367,6 +367,15 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     };
     // And the host's own bell, when the reader asked for one.
     options.client.ring_host_bell = [&terminal] { terminal.bell(); };
+    // The one message that changes a session's coordinate space (WP-40). Sent
+    // only when a reader asks for it; `ClientResize`, which goes out whenever
+    // this client's own window changes size, deliberately does not.
+    options.client.fit_session_desktop = [&session](ckv::Size desktop) {
+        proto::SetDesktopSize fit;
+        fit.columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
+        fit.rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
+        session.request(fit);
+    };
     // `Enter restart` on a held window: the same command, in the same window,
     // which is the server's to do because the server owns the child. Set only
     // here — a client with no server leaves it unset, and the footer stops
