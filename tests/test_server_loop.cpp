@@ -1664,3 +1664,95 @@ CK_TEST(a_session_at_its_terminal_limit_is_told_so_rather_than_growing) {
     CK_CHECK(!listed.sessions.empty());
     if (!listed.sessions.empty()) CK_CHECK(listed.sessions.front().terminals == 2U);
 }
+
+CK_TEST(a_readers_focus_is_their_own_and_the_session_only_says_where_to_start) {
+    // WP-41. `Session::focused` was written by every `Input` and read by every
+    // snapshot and layout delta, which is one answer for a question that has
+    // one per reader: with two clients attached, two readers being "in" one
+    // terminal is nonsense, and a `LayoutDelta` carrying somebody else's focus
+    // moves this reader's cursor because that one clicked.
+    //
+    // The split is seed-versus-current. The session keeps `last_focused` —
+    // where a reader STARTS, which is what `Snapshot::focused_term` has always
+    // meant on the wire: what a newcomer is told, once. Each client keeps its
+    // own current focus. Simultaneous attach is WP-44's, so what is provable
+    // today is that the two readings are now DIFFERENT things, which is the
+    // part that has to be right before a second client exists.
+    const std::filesystem::path socket = private_socket("focus-own");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.kill_empty_session = false;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+
+    WireClient first;
+    CK_CHECK(first.connect(socket));
+    CK_CHECK(greet_and_attach(server, first));
+
+    ckm::server::Terminal& one = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& two = server.open_terminal(0, spec_running("sleep 3600"));
+    CK_CHECK(one.id() != two.id());
+
+    // This reader goes to the first terminal by typing into it, which is the
+    // only statement of focus the protocol carries.
+    ckm::proto::Input keys;
+    keys.term = one.id();
+    keys.bytes = "x";
+    first.say(keys);
+    (void)pump_expecting_silence(server, first, 3);
+
+    // A second reader arrives. Takeover is still the rule (WP-44 changes
+    // that), so what this shows is the SEED: they are told where the last
+    // reader was, rather than nothing.
+    WireClient second;
+    CK_CHECK(second.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = "a test";
+    second.say(hello);
+    ckm::proto::Message greeting;
+    CK_CHECK(pump(server, second, greeting));
+    ckm::proto::Attach attach;
+    attach.columns = 40;
+    attach.rows = 8;
+    second.say(attach);
+    ckm::proto::Message attached;
+    CK_CHECK(pump(server, second, attached));
+    const auto* const handed = std::get_if<ckm::proto::Attached>(&attached);
+    CK_CHECK(handed != nullptr);
+    if (handed != nullptr) {
+        // Where the last reader was, not zero and not the newest terminal.
+        CK_CHECK(handed->snapshot.focused_term == one.id());
+    }
+
+    // And once THIS reader states a focus of their own, they are given theirs
+    // rather than the session's seed — which has to be shown on a case where
+    // the two DIFFER, or the assertion proves nothing. `Input` moves both at
+    // once, so it cannot separate them; opening a terminal moves the seed and
+    // leaves the reader where they are.
+    //
+    // Found by mutation: an earlier version focused `two` and re-attached,
+    // and a snapshot that ignored the client entirely and always seeded passed
+    // it, because after that `Input` the seed was `two` as well.
+    ckm::proto::Input theirs;
+    theirs.term = two.id();
+    theirs.bytes = "y";
+    second.say(theirs);
+    (void)pump_expecting_silence(server, second, 3);
+
+    // A third terminal, opened while the reader sits in the second. The seed
+    // follows the new terminal; the reader does not.
+    ckm::server::Terminal& three = server.open_terminal(0, spec_running("sleep 3600"));
+    CK_CHECK(three.id() != two.id());
+
+    second.say(attach);
+    ckm::proto::Message again;
+    CK_CHECK(pump(server, second, again));
+    const auto* const second_time = std::get_if<ckm::proto::Attached>(&again);
+    CK_CHECK(second_time != nullptr);
+    if (second_time != nullptr) {
+        // Theirs, not the seed — and the two are now provably different.
+        CK_CHECK(second_time->snapshot.focused_term == two.id());
+        CK_CHECK(second_time->snapshot.focused_term != three.id());
+    }
+}

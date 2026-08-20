@@ -57,7 +57,14 @@ struct Session {
     SessionId id = 0;
     std::string name;
     std::vector<TerminalId> terminals;
-    std::uint64_t focused = 0;
+    // Where a reader STARTS, not where any reader is. Written by whichever
+    // client last focused something, read only when a client attaches with no
+    // focus of its own — which is exactly what `Snapshot::focused_term` has
+    // always meant on the wire: what a newcomer is told, once. Until a second
+    // client existed the two readings were indistinguishable and the name was
+    // the lie; focus itself is per client, below, because two readers being in
+    // one terminal is nonsense (WP-41).
+    std::uint64_t last_focused = 0;
     // The session's VIRTUAL DESKTOP: the coordinate space every window rect in
     // this session is expressed in (plans/03, WP-40). Not any client's screen
     // — a client that differs from it has a viewing problem, and reflowing the
@@ -202,6 +209,11 @@ private:
         // (WP-16). Consulted when this client opens a terminal, because the
         // child's advertisement should say what the reader can actually see.
         bool host_sixel = false;
+        // Which terminal THIS reader is in. Per client and never broadcast: a
+        // `LayoutDelta` carrying somebody else's focus would move this
+        // reader's cursor because another one clicked, which is the marks
+        // defect one field over (WP-41).
+        std::uint64_t focused = 0;
         // The client's queue went over its high-water mark, so deltas stopped
         // being queued for it. What clears it is not the missing deltas — those
         // are gone — but a fresh snapshot once the queue has drained: repairing

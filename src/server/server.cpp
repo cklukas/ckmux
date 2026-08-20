@@ -965,7 +965,9 @@ void Server::handle(Client& client, const proto::Message& message) {
             // arrive as `Input`. Kept because two things read it: the snapshot
             // a reattaching client is given (`focused_term`), and the activity
             // mark, which means "output in a terminal the reader is not in".
-            if (Session* const home = session_holding(input->term)) home->focused = input->term;
+            client.focused = input->term;
+            if (Session* const home = session_holding(input->term))
+                home->last_focused = input->term;
         }
         return;
     }
@@ -1074,7 +1076,7 @@ Terminal& Server::open_terminal(SessionId session_id, const TerminalSpec& spec) 
     if (session == nullptr && session_id == 0 && !sessions_.empty()) session = &sessions_.front();
     Session& home = session != nullptr ? *session : create_session({});
     home.terminals.push_back(terminal.id());
-    home.focused = terminal.id();
+    home.last_focused = terminal.id();
     return terminal;
 }
 
@@ -1314,7 +1316,16 @@ void Server::announce_terminal_news() {
         // whole difference between a mark and an event, and a session with no
         // client is precisely when a reader most wants to be told afterwards
         // that something happened.
-        if (home->focused == id) {
+        // NOTE (WP-41): this suppression is per SESSION and belongs per client,
+        // but it cannot simply be removed. `clear_marks()` here is the only
+        // thing that ever puts a mark down — the flags are otherwise sticky
+        // until respawn — so dropping it leaves every terminal that has ever
+        // printed permanently marked, which is not a signal at all. The wire
+        // has to carry an EDGE ("rang again") before the fact can be recorded
+        // unconditionally and each reader left to answer for itself. Left as
+        // it stands, with the client-side memory of `2621fab` covering the
+        // single-reader case, until `TermMeta` gains a serial.
+        if (home->last_focused == id) {
             // The reader is in this terminal, so there is nothing they have
             // missed. Cleared before the marks below are set, so output in the
             // focused terminal never marks itself.
@@ -1486,7 +1497,13 @@ void Server::announce_layout() {
 
         proto::LayoutDelta layout;
         layout.session = session.id;
-        layout.focused_term = session.focused;
+        // THIS watcher's focus, never the session's. A delta carrying another
+        // reader's focus would move this one's cursor because somebody else
+        // clicked — the marks defect, one field over. Unlike the desktop just
+        // below, which every client must be told identically or a rect means
+        // two different things, focus must NOT be shared: two readers in one
+        // terminal is nonsense (WP-41).
+        layout.focused_term = watcher->focused;
         // The desktop this client declared, the same number the snapshot
         // states, because a fraction of a desktop means nothing without the
         // desktop it is a fraction of.
@@ -1827,7 +1844,13 @@ void Server::send_snapshot(Client& client) {
     snapshot.desktop_columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
     snapshot.desktop_rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
     const Session* const session = session_for(client.session);
-    snapshot.focused_term = session != nullptr ? session->focused : 0;
+    // Where this reader is — or, for one that has just arrived with no answer
+    // of its own, where the last reader was. That second reading is what
+    // `focused_term` has always meant on the wire: what a newcomer is told,
+    // once. A returning reader landing where they left off is behaviour a
+    // single client already relies on, and it survives here.
+    snapshot.focused_term =
+        client.focused != 0 ? client.focused : (session != nullptr ? session->last_focused : 0);
     const std::vector<TerminalId> held =
         session != nullptr ? session->terminals : std::vector<TerminalId>{};
 
@@ -2149,7 +2172,8 @@ void Server::write_paste_chunk(Terminal& terminal, Client& client, const proto::
     // makes: a reader who pastes has chosen where the text goes, and the
     // activity mark must not then call it output in a terminal they are not
     // in.
-    if (Session* const home = session_holding(chunk.term)) home->focused = chunk.term;
+    client.focused = chunk.term;
+    if (Session* const home = session_holding(chunk.term)) home->last_focused = chunk.term;
     const bool finished = chunk.final_chunk != 0;
     paste_slots_[chunk.term].owner = finished ? 0 : client.id;
     proto::PasteAck ack;
