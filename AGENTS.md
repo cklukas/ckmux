@@ -340,6 +340,18 @@ overstated what was left — a dependency described as unlanded that had landed,
 a defect that could not occur, a blocker already cleared. A row is a claim
 about the code, and the code is next to it.
 
+**This file goes stale like any other, and your copy is the oldest one you
+have.** It is a shared file: peers land rules into it mid-session at the
+owner's direction, and a session that read it at start-up is quoting a version
+that no longer exists. The routing section below landed at 08:15 and was not
+applied at 09:10 by a session that instead took a peer's offer back to the
+owner for confirmation — precisely the move that section names as the wrong
+answer. The rule was present, in the owner's own words, and the reader was the
+stale part. So re-read it before doing the thing it governs: before accepting
+or declining a hand-off, before a landing, before quoting a rule at a peer.
+`git log --oneline -5 -- AGENTS.md` is the cheap check; if anything is listed
+that you have not read, you do not currently know what this file says.
+
 ## Work routing between sessions (owner policy, 2026-08-20)
 
 Work moves between sessions the way everything else here does: over
