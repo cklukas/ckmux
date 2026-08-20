@@ -799,6 +799,32 @@ void Server::handle(Client& client, const proto::Message& message) {
         }
         return;
     }
+    if (const auto* chunk = std::get_if<proto::PasteChunk>(&message)) {
+        // A paste, one credited chunk at a time (WP-18). The bytes are as
+        // opaque here as `Input`'s and for the same reason: the client encoded
+        // them against mirrored mode state — bracketed-paste markers included
+        // — and a server that re-encoded would be a third opinion about the
+        // child's dialect.
+        if (Terminal* terminal = terminals_.find(chunk->term)) {
+            terminal->send_input(chunk->bytes);
+            // Pasting into a terminal is being in it, the same statement
+            // `Input` makes: a reader who pastes has chosen where the text
+            // goes, and the activity mark must not then call it output in a
+            // terminal they are not in.
+            if (Session* const home = session_holding(chunk->term)) home->focused = chunk->term;
+        }
+        // Acked whether or not the terminal was there. The credit is about the
+        // CLIENT'S queue, not about this terminal's existence: a client that
+        // pastes into a window whose program has just ended would otherwise
+        // wait for ever on an ack that is never coming, holding the rest of
+        // the paste — and every later paste behind it — in a queue nothing
+        // drains. An ack for a terminal that has gone costs one small frame
+        // and says only "this chunk is dealt with", which is true.
+        proto::PasteAck ack;
+        ack.seq = chunk->seq;
+        send(client, ack);
+        return;
+    }
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
         // Asked, watched, and only then removed — the terminal keeps being
         // served while its program decides, so a goodbye it prints lands on

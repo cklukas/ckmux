@@ -2487,8 +2487,22 @@ void ClientApp::paste_into_terminal() {
     if (internal_clipboard_.empty()) return;
     w::TerminalView* const view = terminal_view_of(active_terminal());
     if (view == nullptr) return;
-    view->session().send_input(
-        paste_bytes(internal_clipboard_, view->session().snapshot().bracketed_paste_enabled));
+    std::string bytes =
+        paste_bytes(internal_clipboard_, view->session().snapshot().bracketed_paste_enabled);
+    // Credit-paced where there is a wire to pace (WP-18), and straight into
+    // the PTY where there is not. A local terminal needs none of this: the
+    // write is to a pipe this process owns, and the kernel's own buffer is
+    // the flow control.
+    // Asked of the handle THIS client made, not of the view's: a
+    // `TerminalView` answers with `core::TerminalSubsession`, the base every
+    // terminal is, while a wire id belongs to the `term::` subsession ckmux
+    // holds — and the two are related by inheritance, so the base cannot
+    // stand in for the derived one.
+    ckv::term::TerminalSubsession* const terminal = terminal_shown_by(active_terminal());
+    if (terminal != nullptr && options_.paste_credited &&
+        options_.paste_credited(*terminal, bytes))
+        return;
+    view->session().send_input(std::move(bytes));
 }
 
 void ClientApp::show_settings() {

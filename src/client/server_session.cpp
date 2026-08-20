@@ -108,6 +108,47 @@ RemoteTerminalSubsession& ServerSession::ensure_terminal(std::uint64_t id) {
     return reference;
 }
 
+void ServerSession::paste(std::uint64_t term, std::string bytes) {
+    if (bytes.empty()) return;
+    // Cut first, send later. The whole paste is turned into chunks up front so
+    // that the reader's clipboard is captured at the moment they asked for it:
+    // a paste that read its source as it drained would be a different paste if
+    // the clipboard changed halfway through.
+    for (std::size_t at = 0; at < bytes.size(); at += kPasteChunkBytes) {
+        const std::size_t take = std::min(kPasteChunkBytes, bytes.size() - at);
+        PasteWaiting waiting;
+        waiting.term = term;
+        waiting.seq = next_paste_seq_++;
+        waiting.last = at + take >= bytes.size();
+        waiting.bytes = bytes.substr(at, take);
+        paste_queue_.push_back(std::move(waiting));
+    }
+    pump_paste();
+}
+
+void ServerSession::pump_paste() {
+    while (paste_in_flight_ < kPasteCredit && !paste_queue_.empty()) {
+        PasteWaiting waiting = std::move(paste_queue_.front());
+        paste_queue_.pop_front();
+        proto::PasteChunk chunk;
+        chunk.term = waiting.term;
+        chunk.seq = waiting.seq;
+        chunk.final_chunk = waiting.last ? 1 : 0;
+        chunk.bytes = std::move(waiting.bytes);
+        request(chunk);
+        ++paste_in_flight_;
+    }
+}
+
+void ServerSession::abandon_paste() {
+    paste_queue_.clear();
+    // The credit goes back too. Whatever was on the wire is either already
+    // written or will be dropped with the connection; either way no ack for it
+    // will ever reach this object, and a credit left spent would silently
+    // shorten every later paste by that much.
+    paste_in_flight_ = 0;
+}
+
 void ServerSession::connection_lost() {
     attached_ = false;
     session_ = 0;
@@ -121,9 +162,17 @@ void ServerSession::connection_lost() {
     // was reported to a server that no longer exists, and the next one has
     // never been told anything.
     layout_sent_.clear();
+    abandon_paste();
 }
 
 void ServerSession::windows_forgotten() {
+    // A paste in progress goes with them (WP-18). The rest of a reader's
+    // clipboard is aimed at one terminal in the session they were watching,
+    // and this is the moment they stopped watching it — detached, or taken
+    // over. The server routes a chunk by terminal id and asks nothing about
+    // who is attached, so finishing the paste would type into a window that
+    // now belongs to whoever took the session.
+    abandon_paste();
     // The windows went; the attachment and its mirrors did not. Said out loud
     // rather than inferred, because the two states that look identical from
     // here — a client healing mid-session and a client that has just taken its
@@ -246,6 +295,19 @@ bool ServerSession::handle(const proto::Message& message) {
         // describes windows it does not have.
         if (layout->session == session_ && on_layout)
             on_layout(layout->entries, LayoutStatement::Delta);
+        return true;
+    }
+    if (const auto* ack = std::get_if<proto::PasteAck>(&message)) {
+        // One chunk is written to the child, so one more may go (WP-18). The
+        // seq is not checked against what was sent: the credit is a count, and
+        // the server acks each chunk exactly once in the order it wrote them,
+        // so an ack that named a chunk this client never sent would be a
+        // protocol error — and protocol errors here drop the connection rather
+        // than being repaired (plans/05, invariant 2), which is a decision
+        // taken above this object.
+        (void)ack;
+        if (paste_in_flight_ > 0) --paste_in_flight_;
+        pump_paste();
         return true;
     }
     if (const auto* detached = std::get_if<proto::Detached>(&message)) {

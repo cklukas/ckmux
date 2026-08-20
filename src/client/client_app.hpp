@@ -285,6 +285,20 @@ struct ClientOptions {
     // no server has nobody to ask — so an unset callback is what takes the
     // hint off the footer rather than offering a key that does nothing.
     std::function<void(const ckv::term::TerminalSubsession& terminal)> request_respawn;
+    // Sends a paste into a REMOTE terminal, credit-paced (WP-18): the client
+    // hands over the whole text and the session cuts it into chunks, keeping
+    // only a couple on the wire at a time so a clipboard cannot outrun what
+    // the child can drain. Returns false for a terminal this seam does not
+    // own — a local one, or a mirror whose session has gone — and the caller
+    // then writes the bytes straight into the subsession, which is right for
+    // a PTY this process owns and is the only path a serverless ckmux has.
+    //
+    // The bytes arrive already encoded, bracketed-paste markers and all: what
+    // a paste LOOKS like to a child is the terminal's business (plans/04) and
+    // is decided against mirrored mode state, so nothing on the way to the
+    // PTY re-encodes it.
+    std::function<bool(const ckv::term::TerminalSubsession& terminal, std::string bytes)>
+        paste_credited;
     // Moves one terminal to another session, so its program keeps running
     // somewhere this desktop is not showing. `to_new_session` outranks
     // `destination`: the reader asked for a fresh one.

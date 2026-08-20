@@ -20,6 +20,7 @@
 // all, and so the same object works over a real connection or a recorded one.
 #pragma once
 
+#include <deque>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -151,6 +152,40 @@ public:
         if (send_) send_(message);
     }
 
+    // --- Paste, credit-paced (WP-18) ----------------------------------
+    //
+    // A reader's keystrokes are human-rate and go straight out as `Input`. A
+    // paste is not: it is as much text as their clipboard holds, arriving at
+    // once, and sent that way it fills the connection's queue and then the
+    // terminal's faster than the child can drain either. So a paste is cut
+    // into chunks, and only `kPasteCredit` of them are on the wire at a time;
+    // the next goes when the server acks one, which it does as it writes that
+    // chunk to the PTY.
+    //
+    // The pacing is what the CHILD can take, not what the socket can take.
+    // That is why the ack comes from the write rather than from the decode: a
+    // server that acked on receipt would pace against its own socket buffer
+    // and let the whole paste through at once, which is the thing this exists
+    // to stop.
+    //
+    // Sequence numbers are per CONNECTION, not per terminal, because
+    // `PasteAck` carries a seq and nothing else — two terminals pasting at
+    // once would otherwise ack each other's chunks. Ordering within one
+    // terminal is the queue's, not the numbering's.
+    void paste(std::uint64_t term, std::string bytes);
+
+    // How many chunks may be unacked at once, and how much text is in one.
+    // Two is the credit plans/05 states: one being written while the next is
+    // already on the wire, so the child never waits for a round trip, and no
+    // more than that so a reader's paste cannot outrun it.
+    static constexpr std::size_t kPasteCredit = 2;
+    static constexpr std::size_t kPasteChunkBytes = 64U * 1024U;
+
+    // What is still waiting to go, for a test and for a client that wants to
+    // know whether a paste has finished landing.
+    std::size_t pending_paste_chunks() const noexcept { return paste_queue_.size(); }
+    std::size_t paste_chunks_in_flight() const noexcept { return paste_in_flight_; }
+
     // One message from the server. Returns false for a message this client does
     // not understand, which the caller logs rather than acts on.
     bool handle(const proto::Message& message);
@@ -221,6 +256,16 @@ public:
 
 private:
     RemoteTerminalSubsession& ensure_terminal(std::uint64_t id);
+    // Sends whatever the credit allows. Called when a paste is queued and
+    // again on every ack; it is the only place a `PasteChunk` goes out.
+    void pump_paste();
+    // Everything queued for a server, or a session, this client no longer
+    // has. A paste is text aimed at ONE terminal a reader was looking at:
+    // finishing it after a takeover would type the rest of their clipboard
+    // into a window that now belongs to somebody else, because the server
+    // routes a chunk by terminal id and asks no questions about who is
+    // attached — exactly as it does for `Input`.
+    void abandon_paste();
     // Asks for every terminal whole, at most once until the answer arrives.
     // The heal path and the delta-for-an-unknown-terminal path share it so
     // that "how many times has this client had to ask?" counts requests that
@@ -231,6 +276,17 @@ private:
     // chunks fill it in order, End completes it into `completed_images_`,
     // where the Place that follows collects it. Ids are global to the
     // connection, so the store is here rather than in any one mirror.
+    // One chunk of a paste that has not been sent yet.
+    struct PasteWaiting {
+        std::uint64_t term = 0;
+        std::uint32_t seq = 0;
+        bool last = false;
+        std::string bytes;
+    };
+    std::deque<PasteWaiting> paste_queue_;
+    std::size_t paste_in_flight_ = 0;
+    std::uint32_t next_paste_seq_ = 1;
+
     struct PendingImage {
         std::uint16_t width = 0;
         std::uint16_t height = 0;

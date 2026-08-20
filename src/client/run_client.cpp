@@ -339,6 +339,18 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         const RemoteTerminalSubsession* const remote = session.terminal(*id);
         return remote == nullptr ? std::nullopt : remote->mirror().exit_status();
     };
+    // A paste goes out credit-paced (WP-18) — the session owns the queue,
+    // because `PasteAck` carries a seq and nothing else, so the numbering has
+    // to be per connection rather than per terminal. False for anything that
+    // is not one of this session's mirrors, and the client then writes into
+    // the subsession directly, which is what a serverless ckmux always does.
+    options.client.paste_credited = [&session](const ckv::term::TerminalSubsession& terminal,
+                                               std::string bytes) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return false;
+        session.paste(*id, std::move(bytes));
+        return true;
+    };
     // `Enter restart` on a held window: the same command, in the same window,
     // which is the server's to do because the server owns the child. Set only
     // here — a client with no server leaves it unset, and the footer stops
