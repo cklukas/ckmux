@@ -123,13 +123,20 @@ struct Reader {
     // question for a dialog is what happens when the screen is SMALL — the
     // case no arithmetic test can ask, because an assertion over known cell
     // heights has already decided the content's size before asking it.
-    bool start(const std::filesystem::path& socket, ckv::Size cells = ckv::Size{110, 32}) {
+    // `extra_environment` is how a test says something to the client that only
+    // its environment can carry — `CKMUX_CONFIG` above all, which is the one
+    // way to give a client its own configuration without writing into the
+    // shared HOME every other e2e suite is also using.
+    bool start(const std::filesystem::path& socket, ckv::Size cells = ckv::Size{110, 32},
+               const std::vector<std::pair<std::string, std::string>>& extra_environment = {}) {
         ckv::term::TerminalLaunchSpec spec =
             ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
         spec.working_directory = "/tmp";
         spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"},
                             {"SHELL", "/bin/sh"},       {"HOME", "/tmp"},
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
+        for (const std::pair<std::string, std::string>& entry : extra_environment)
+            spec.environment.push_back({entry.first, entry.second});
         spec.profile = ckv::term::embedded_xterm_sixel_profile();
         spec.profile.cells = cells;
         spec.profile.cell_pixels = ckv::Size{9, 18};

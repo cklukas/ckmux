@@ -27,6 +27,7 @@ set(CKMUX_TEST_SOURCES
     test_notifications.cpp
     test_paste_credit.cpp
     test_prefix.cpp
+    test_print_acceptance.cpp
     test_printer_button.cpp
     test_printer_output.cpp
     test_process_stats.cpp
@@ -103,6 +104,10 @@ set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
 # WP-21 §4, the M4 acceptance: `tmux` inside a ckmux terminal. Forks the real
 # client through ckVision's PTY and runs a real tmux inside it, so it is `pty`
 # and `e2e` both, and it needs the oracle on the machine (§4.1).
+# WP-21 §5, the printing acceptance: the real client, a real child printing,
+# and the process observed from outside for the two negatives (§5 requires
+# the negatives be established by watching the run, not by reading source).
+set(CKMUX_LABELS_test_print_acceptance "pty;e2e")
 set(CKMUX_LABELS_test_m4_tmux "pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
