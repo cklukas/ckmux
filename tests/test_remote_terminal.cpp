@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-5: a terminal in another process, driven by the M1 user interface.
 //

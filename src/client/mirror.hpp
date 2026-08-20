@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The client's mirror of one terminal (WP-5).
 //

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The server's side of the wire (plans/09 §6): bytes arrive from a client in
 // whatever pieces a socket read produced, and nothing about them is trusted.

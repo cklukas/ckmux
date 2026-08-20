@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // What a reader is told without being asked anything (WP-14).
 //

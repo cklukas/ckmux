@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-38 at the wire (plans/12): `WatchStats` in, `TermStats` out, and the two
 // properties the package stands on — stats flow only to a client that asked,

@@ -479,7 +479,12 @@ access outside injected interfaces — determinism is testable or it is not
 real. No threads (v1). Trunk-only: commit to `main`, no feature branches.
 
 Every file opens with `Copyright (c) 2026 C. Klukas. All rights reserved.`
-No SPDX identifier until the license question resolves.
+followed by `SPDX-License-Identifier: MIT` — WP-26/D-OPEN-1 was resolved by
+the owner on 2026-08-20: **MIT** for both repositories (standard MIT, not
+MIT-0; `LICENSE` at the root is the authoritative text), with contribution
+terms in `CONTRIBUTING.md` (DCO sign-off, explicit patent grant, relicense
+grant to the owner). The copyright line stays verbatim; the SPDX line
+beneath it is the license statement, swept by `tools/add_spdx.py`.
 
 ## Provenance (binding, no exceptions)
 

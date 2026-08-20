@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Every key and every menu entry ckmux offers must do one of two things: work,
 // or say plainly that it does not. There is no third state, and this suite

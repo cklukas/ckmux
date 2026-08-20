@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-4b: the diff algebra on the live path. Real PTYs, real children, and a
 // mirror built only out of the deltas the server produced — because the claim

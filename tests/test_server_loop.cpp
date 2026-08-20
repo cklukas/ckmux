@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-2's loop, in-process and on a `ManualClock`. The lifecycle cases run a real
 // process (test_server_lifecycle.cpp); these are the ones about WHEN the loop

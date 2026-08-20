@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // A session's desktop is the session's (WP-40, plans/03 "Two clients at once").
 //

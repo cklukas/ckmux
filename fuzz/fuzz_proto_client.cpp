@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The client's side of the wire (plans/09 §6). The client decodes the server→
 // client half of the catalogue and then does something with it that the server

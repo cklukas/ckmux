@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The ckmux keymap registry: one table that drives every surface which
 // mentions a key (plans/06-ui-design.md "Keymap registry"). Runtime dispatch,

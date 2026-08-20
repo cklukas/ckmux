@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The prefix capture surface and its which-key popup
 // (plans/06-ui-design.md "The prefix & which-key popup").

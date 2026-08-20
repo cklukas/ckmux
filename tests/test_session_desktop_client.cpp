@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-43 on the client: the session's desktop is the WORLD, this client's
 // screen is a VIEW over it, and the pan between them is this client's alone.

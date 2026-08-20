@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The process-stats seam (plans/12-work-packages.md, WP-37): the tree walk on
 // tables these tests state by hand, and the sampling on children they fork —

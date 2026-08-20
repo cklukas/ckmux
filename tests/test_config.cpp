@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The configuration file (plans/08-configuration.md). Two of that plan's
 // promises are what these tests are really about: an empty or absent config

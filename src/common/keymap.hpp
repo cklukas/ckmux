@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The vocabulary a key binding is written in: what an action is called, what
 // a context is called, and how a chord is spelled (plans/08-configuration.md).

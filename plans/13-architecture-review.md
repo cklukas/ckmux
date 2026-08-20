@@ -241,8 +241,10 @@ fix lives in R4, consumed here). **M-S5** `send_snapshot` clears
 
 Platform (R4): **M-F1** no CLOEXEC (see M-S4). **M-F2** clipboard helper
 inherits the TUI's stdout/stderr — diagnostics land on the drawn frame
-(`clipboard.cpp:49`). **M-F3** `write_to_command` blocks the single-threaded
-client with no timeout (`clipboard.cpp:70`). **M-F4** no fork/exec site resets
+(`clipboard.cpp:49` in the review's tree at `530b0f3`; fixed since, so no
+current line matches). **M-F3** `write_to_command` blocks the single-threaded
+client with no timeout (`clipboard.cpp:70`, same review-time tree). **M-F4**
+no fork/exec site resets
 signal dispositions — children inherit SIGPIPE ignored (`process.cpp:58`).
 **M-F5** `accept_one` collapses EAGAIN and hard errors (`socket.cpp:270`;
 expose the distinction for R2). **m-plat**: `connect()` EINTR; socket dir

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The configuration file (plans/09 §6, plans/08). The file is the reader's,
 // which means it is arbitrary bytes: half-written, pasted from a blog, saved

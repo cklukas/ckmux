@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The frame button that says a program in this window is printing (PRINT-3,
 // plans/06 "Captured print output").

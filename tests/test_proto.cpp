@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The wire protocol (plans/05-protocol.md, WP-1). No socket, no server, no
 // clock: a codec is a pure function over values, and the whole point of

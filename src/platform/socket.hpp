@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The Unix socket the server listens on and clients connect to
 // (plans/02-architecture.md, WP-2). One place owns the path, the permissions,

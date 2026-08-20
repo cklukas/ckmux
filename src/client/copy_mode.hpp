@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Copy mode: reading a terminal's history, selecting out of it, and searching
 // it (plans/06-ui-design.md "Copy mode & clipboard", WP-17).

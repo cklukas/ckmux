@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 #include "platform/process_stats.hpp"
 
 #include <unordered_map>

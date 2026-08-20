@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-4a: the grid diff algebra. Pure values in, ops out, ops applied to a
 // mirror, and the mirror compared against what the server holds — which is the

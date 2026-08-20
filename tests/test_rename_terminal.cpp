@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Naming a terminal: the reader's own caption, and what happens to the
 // program's underneath it (plans/06 "Window captions follow the program").

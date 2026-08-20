@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Enforce ckmux module discipline (AGENTS.md "Layout", plans/02-architecture.md).
 
 Ported from ckVision's tools/check_layers.py and adapted to ckmux's four

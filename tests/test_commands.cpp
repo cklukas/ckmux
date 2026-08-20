@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The keymap table is ckmux's single source of truth for every surface that
 // mentions a key (plans/06-ui-design.md). These are the invariants that make

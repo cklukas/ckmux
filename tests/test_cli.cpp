@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The CLI's front door, against the real binary. `--help` and `--version` are
 // what a reader types before trusting a program with their terminals, and the

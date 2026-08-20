@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Putting a terminal away, and getting a row of the screen back (WP-34,
 // WP-35) — the two halves of one reader's report: "the window bar does not

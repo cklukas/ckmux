@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // End-to-end coverage for the ckmux client, driven headlessly exactly the way
 // main.cpp drives it: real Application, real render pipeline, real menu and

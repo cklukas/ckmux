@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The CLI subcommands (WP-11): `ls`, `new`, `kill-session` and `check-config`,
 // over the same socket protocol the UI client speaks, with

@@ -1,4 +1,5 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 #
 # Central strict build settings for ckmux. Deliberately identical in shape to
 # ckVision's own CkVisionSettings.cmake: one place defines the flag set, and

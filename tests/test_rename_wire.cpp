@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-36 over the wire: the name a reader gives a terminal, kept by the server
 // as session state and stated back to every client watching it.

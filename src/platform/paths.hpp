@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Where ckmux's files live. One place decides, so the answer cannot differ
 // between the code that reads a file and the dialog that writes it back.

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-2, on the wire and against a real process. Every case here starts an
 // actual `ckmux --server` on a private `CKMUX_SOCKET` and talks the actual

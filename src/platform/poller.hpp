@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The fd-wait seam (plans/02-architecture.md). `poll()` is enough for the
 // target scale — tens of descriptors — and it lives behind these few lines so

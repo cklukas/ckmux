@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The detached server: one socket, one thread, one `poll()` (WP-2,
 // plans/02-architecture.md).

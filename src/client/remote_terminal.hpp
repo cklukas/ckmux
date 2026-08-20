@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // A terminal that lives in another process, presented as one of ckVision's
 // (WP-5, plans/07 seam 2).

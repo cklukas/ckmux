@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // WP-6: attaching, detaching, being taken over, and being healed after falling
 // behind. Everything here runs against a real `Server` over a real Unix socket,

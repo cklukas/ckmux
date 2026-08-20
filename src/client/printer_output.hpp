@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // What a captured print job becomes on its way out of ckmux (PRINT-6): the
 // two save formats, and the name a file gets when the reader is not asked for

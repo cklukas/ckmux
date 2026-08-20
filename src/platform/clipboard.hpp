@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Handing copied text to a helper program — `pbcopy`, `xclip`, or whatever a
 // reader named in `[terminal] clipboard` (plans/08-configuration.md).

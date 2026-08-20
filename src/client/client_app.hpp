@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The ckmux client: menu bar, desktop of terminal windows, and the permanent
 // context-sensitive footer (plans/06-ui-design.md).

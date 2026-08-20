@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // A reader's ckmux, in a real terminal, with its screen decoded — the rig the
 // end-to-end suites drive.

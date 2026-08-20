@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // What the processes under a terminal cost (plans/12-work-packages.md, WP-37).
 //

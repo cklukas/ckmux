@@ -1,4 +1,5 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 #
 # libFuzzer targets are opt-in: an ordinary build and a release build must not
 # need a compiler runtime that supplies libFuzzer. The corpus lane enables this

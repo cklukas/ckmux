@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The programs ckmux starts: the shell a terminal runs, and the helper a copy
 // is handed to.

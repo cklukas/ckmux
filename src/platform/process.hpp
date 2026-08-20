@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Becoming a detached server, starting one, and what a started program
 // inherits (plans/02-architecture.md).

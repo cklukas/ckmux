@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Getting a client connected: connect, or start a server and connect
 // (plans/02-architecture.md, WP-2).

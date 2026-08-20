@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The frame readout's words (WP-39), pinned where they are cheapest to argue:
 // 1024 vs 1000, where "999 KB" becomes "1.0 MB", how 375‰ rounds, and which

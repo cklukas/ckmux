@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The frame readout's words (plans/12 WP-39): pure functions from numbers to
 // the line a terminal window's frame footer shows, kept out of ClientApp so

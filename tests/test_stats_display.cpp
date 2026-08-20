@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The View readouts on screen (WP-39): toggling one puts the line on EVERY
 // terminal window's frame footer at once and writes the config file; a client

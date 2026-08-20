@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // Copy mode (plans/06-ui-design.md, WP-17). Two layers, deliberately: the
 // text algebra — what a selection of a given shape yields, and where a search

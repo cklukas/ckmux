@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The terminals a ckmux server owns (plans/02-architecture.md, WP-3).
 //

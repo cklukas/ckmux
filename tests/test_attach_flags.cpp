@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The two flags `ckmux attach` grew after WP-40 and WP-44 had landed their
 // wires: `--adopt-size` and `--share`.

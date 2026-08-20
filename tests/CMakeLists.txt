@@ -1,4 +1,5 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 #
 # One cktest executable, registered per suite so a failure names the file it
 # came from and each suite gets its own process and bounded timeout — the same

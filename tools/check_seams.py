@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 """Every seam ckmux declares must be wired, or say plainly that it is not.
 
 The sibling rule to tools/check_layers.py, and the one the project has now

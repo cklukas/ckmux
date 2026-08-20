@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The two flags every descriptor ckmux opens has to carry. One place, because
 // every part of the platform layer opens descriptors and neither flag is what

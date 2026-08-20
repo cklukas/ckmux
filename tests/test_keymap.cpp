@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The vocabulary a binding is written in (plans/08-configuration.md), and the
 // one property that makes a keymap trustworthy: a chord dispatches under

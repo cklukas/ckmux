@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The grid diff algebra (WP-4a): two grid states in, a `GridDelta`'s ops out,
 // and the same ops applied to a mirror to put it back. Pure functions over

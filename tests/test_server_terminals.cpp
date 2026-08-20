@@ -1,4 +1,5 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
 //
 // The terminals a server owns (WP-3). These are PTY-level tests on purpose:
 // the claims are about real children — what status they exited with, what
