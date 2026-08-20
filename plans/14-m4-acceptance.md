@@ -182,6 +182,57 @@ is clear. A divergence here is a genuine ckmux defect far more often than a
 difference of opinion — which is exactly why the temptation to open its source
 is strongest at the moment it is least permitted.
 
+### 4.1 The tmux version is pinned, exactly as vttest's is
+
+§2.1's rule is not about vttest, it is about oracles: *"tmux agrees with us"*
+is not reproducible without saying which tmux. The rig records `tmux -V` in
+every §4 report, and a report without it is not evidence. **The machine of
+record currently has `tmux 3.6b`** (checked 2026-08-20).
+
+Status-line layout, copy-mode key tables and default key bindings all move
+between tmux releases. A §4 failure after an upgrade is not automatically a
+ckmux regression, and without the recorded version there is no way to tell the
+two apart — which is the situation in which somebody starts reading the oracle
+to find out.
+
+### 4.2 How each clause is asserted
+
+Every clause below is faked by a lazier assertion, and the lazy version is
+always the one that is easier to write. The rule for all of them: **a positive
+that names screen content only `tmux` could have produced, at a position only
+the correct behaviour could have put it.** Substring-anywhere matches are
+insufficient throughout — they pass against a neighbouring label, and they
+pass against a screen on which the feature under test never drew at all.
+
+| Clause | Asserted by | The lazy version that must not be used |
+|---|---|---|
+| **Creates and splits panes** | The pane **divider** is present at the expected column (vertical split) or row (horizontal), found via `find_cell()`, with distinct content addressed into each pane — write a different marker into each and locate both, on opposite sides of the divider. | "The screen changed." A redraw of any kind passes that. |
+| **Switches windows** | A marker written in window 1 is **absent** while window 2 is shown, and present again after switching back. The absence is only meaningful with the two presences either side of it. | Asserting the window-index in the status line. That is tmux drawing its own idea of state, and it will say `2` whether or not the switch reached the screen. |
+| **Resizes with its status line intact** | After a ckmux-side resize, the status line occupies the **last row** of the new geometry and spans it — read `rows().back()` against the new width — and a pane's content reflows to the new column count. | A substring match for a status-line fragment anywhere on screen. Passes against a status line stranded at the old row after a failed reflow, which is precisely the defect. |
+| **Enters and leaves copy mode** | Copy mode's own indicator appears **and** a key that only means something in copy mode has a visible effect (scroll back to content no longer on the live screen); on leaving, the live screen is restored. | The indicator alone. It is drawn by tmux on entry and says nothing about whether the mode functions. |
+| **Survives detach-and-reattach with panes where they were** | **Pane geometry is captured before the detach and compared after** — the divider's row/column and each pane's marker position, `find_cell()` for both. Equality is the assertion. | "tmux is still running", or the session name appearing after reattach. Both are true of a session whose layout was destroyed and redrawn wrongly. |
+
+**Note the shape of the window-switching case**, because it generalises: a bare
+absence assertion passes vacuously the moment the marker text changes for an
+unrelated reason. Absence is only evidence when it sits between two presences
+of the same marker, produced by the same mechanism.
+
+### 4.3 The rig already exists, and it is not found by grepping for `forkpty`
+
+**ckmux itself never calls `forkpty` or `openpty`** — a search across `tests/`,
+`src/` and `tools/` returns only a comment in `src/server/terminals.hpp` and a
+note in `tests/CMakeLists.txt`. That absence is not evidence that no harness
+exists, and reading it that way costs a second instrument.
+
+The PTY is ckVision's: `posix_terminal_subsession.cpp:168`. The ckmux side
+launches through it, so what §4 extends is **`tests/test_menu_commands.cpp`** —
+`binary_path()`, a `TerminalLaunchSpec::program(...)` with `CKMUX_SOCKET` in
+the environment, then `drain()` and read the emulator. §2.4 has the capture
+rules and they apply here unchanged, including the one that matters most for
+the table above: **column-exact assertions go through `find_cell()`, never
+`screen()` or `rows()`**, because a string index skips continuation cells and a
+divider's column is exactly the kind of claim that off-by-one destroys.
+
 ## 5. The printing acceptance
 
 The row's own words: *a program printing in a ckmux terminal produces a saved
@@ -234,7 +285,94 @@ whose justification is that the harness is hard to write for that case.
 an entry is the author of a failing implementation proposing that it not
 count.
 
-## 7. What is not in this, and is not hiding
+## 7. The matrix table, which is generated and not written
+
+M4's *Done when* requires that **the matrix table in the release notes shows
+pass for every reference app**. There are no release notes yet — they arrive
+with WP-24/WP-25 in M5 — so what this section specifies is **the artifact the
+rig emits**, which the release notes later include. Writing the table by hand
+into a document is the failure mode, not the plan.
+
+**Why generated:** a hand-maintained pass table is a claim nobody re-checks. It
+is written once when everything passes, and then it goes on saying *pass* for
+every milestone afterwards, including the ones where it stopped being true. A
+table produced by the run that it describes cannot drift from it, because
+there is nothing to keep in sync.
+
+**Every emitted table carries its own provenance**, or it is not evidence: the
+ckmux commit it was produced from, the ckVision commit beside it, the vttest
+version string from §2.1, and the host terminal's own version. A table without
+these is a screenshot of an opinion.
+
+**Rows** are the reference apps of §3, plus `tmux`-inside-ckmux (§4), plus the
+printing acceptance (§5), plus one row per claimed vttest chapter (§2.2).
+**Columns** are the three hosts of §1.
+
+**Cell values are a closed set, and the fourth one is the point:**
+
+| Value | Means |
+|---|---|
+| `pass` | Ran, and met §3's three general conditions plus the row's own. |
+| `fail` | Ran and did not. Blocks the milestone. |
+| `n/a — by design` | Ran, and the correct result was that it did not happen: Sixel under Terminal.app (§1). **Requires** a note naming the capability and the host that lacks it, so it can never be used to hide a `fail`. |
+| `not run` | **Did not run at all.** |
+
+**`not run` must be its own value and must never render as blank.** A blank
+cell in a table whose other cells say `pass` is read as `pass` by every reader
+who is not looking for the difference, and the milestone then rests on rows
+nobody executed. This is not hypothetical for WP-21: at the time of writing,
+`vttest`, `fzf`, `emacs` and `lazygit` are not installed on the development
+machine, so every vttest chapter row and two app rows can only be `not run`.
+A table that showed those blank would be claiming M4 on a run that covered
+neither the chapters the milestone is named for nor two of its apps.
+
+**And `not run` is not a pass and not a failure — it is an unfinished
+milestone.** M4's *Done when* is met when every cell is `pass` or a justified
+`n/a — by design`. One `not run` means the answer is not yet known, which is a
+different statement from "it works" and from "it is broken", and the release
+notes must be able to say it.
+
+## 8. The divergence list: where it lives and what one entry looks like
+
+§6 says what an entry must carry and who may add one. This says what it looks
+like, so those fields have a form rather than being re-argued per entry.
+
+**It is a checked-in file that the rig reads** — not assertions buried in the
+suite. Two reasons, and the second is the one that matters: it can be audited
+by the person who owns the bar without reading C++, and an entry is harder to
+add quietly when adding one is a visible edit to a short file rather than a
+line in a test that already contains hundreds.
+
+**Each entry carries an id** (`DIV-<n>`), which is what appears in a matrix
+cell, so a table cell always leads to a written justification rather than to a
+footnote nobody wrote.
+
+```
+DIV-3
+  where:     vttest ch. 8, ICH at the right margin
+  ckmux:     <what it actually does — observed, not intended>
+  standard:  ECMA-48 §8.3.64 — <what the clause requires>
+  status:    open, WP-nn        | won't-fix: <the argument>
+  recorded:  <date>, by <the tester who added it>
+```
+
+**`standard:` cites the standard.** ECMA-48 clause, a DEC manual section, or a
+terminfo capability from `infocmp`. **Never** "differs from $OTHER_TERMINAL" —
+partly because that is not an argument about correctness, and partly because
+the terminals one would reach for are the ones §0 forbids reading. An entry
+whose justification cannot be written without naming another implementation's
+behaviour is an entry that has not been diagnosed yet.
+
+**`ckmux:` is observed, not intended.** What the run produced, not what the
+code was supposed to do. The gap between those two is frequently the defect.
+
+**Entries expire and are not permanent by default.** One with a work-package
+id is re-checked when that package lands, and removed rather than carried. One
+argued as `won't-fix` is re-argued at each milestone — a permanent entry is a
+claim about ckmux's design, and a design claim that nobody has restated in six
+months is one nobody currently holds.
+
+## 9. What is not in this, and is not hiding
 
 - **`ckmux-256color` (WP-23).** The matrix runs against the current default
   terminfo. Flipping the default is its own row and it is blocked on this one.
