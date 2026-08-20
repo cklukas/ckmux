@@ -576,3 +576,49 @@ Two corollaries paid for the same day:
   could go unannounced. The seam was wired, the function was reached, the
   message was constructed. Neither the seam checker nor the dead-code checker
   looks at whether it left.
+
+### Two ways a clean build reports nothing (2026-08-20)
+
+Both were paid for in one afternoon, and they are the same defect on different
+axes: **a flag that never reached the compiler, and a file the compiler never
+saw.** Each one reports as green.
+
+**The flag that never arrived.** Composing two sessions' patches, a fuzzy
+`patch -F3` placed a new `-Wshadow-all` guard inside the `if(MSVC)` arm — a
+Clang warning flag handed to a compiler that does not take it. Build exit 0,
+zero warnings, 146/146, and `CMakeCache.txt` reading
+`CKVISION_HAS_WSHADOW_ALL:INTERNAL=1`. **A probe succeeding says nothing about
+whether its result reaches the compile line.** Read `flags.make` (or
+`build.ninja`) and confirm the flag is on `CXX_FLAGS`. Separately: a `-Wno-`
+passed on the command line loses to the project's own flags appended after it,
+so a warning sweep that does not verify its flags survived is measuring
+nothing.
+
+**The file the compiler never saw.** ckmux embeds ckVision with examples OFF,
+so `examples/` is never compiled in any ckmux build directory. A warning flag
+cannot cover files that do not reach a compiler — which is why a fourteenth
+shadow site survived two independent sweeps that both grepped `src/`. **A clean
+build says nothing about files it did not compile**, and a sweep's scope is the
+set of files it compiled, not the set it meant to.
+
+The consequence is a rule rather than a caution: **the ckVision standalone gate
+with examples ON is the only compile anywhere that guards `examples/`.** That
+configuration was already required because roughly 22 tests need it; it is now
+also the sole coverage for a whole directory of reference code. Turning it off
+does not lose a few tests — it unguards `examples/` entirely.
+
+**And the corresponding rule for mutation.** A mutation is evidence only if the
+bytes changed. Two attempts here renamed a symbol that did not exist in the
+file they targeted, changed nothing, and reported a clean build as though the
+guard had failed to fire. **Checksum the file before and after; refuse to draw
+a conclusion when they match** — together with checking the build exit before
+reading test output, since a mutation that does not compile answers from the
+stale binary and reports as the strongest possible pass.
+
+**One more, from the landing side.** A commit that changes nothing is never
+intentional here. `f820ca0` carries a full message and an empty diff: a shell
+loop over an unquoted variable holding a file list, which zsh does not
+word-split, so `hash-object` and `update-index` both failed and `commit-tree`
+committed the unchanged tree it had already read. Both failures printed and
+neither stopped the commit. **Diff the written tree against its parent and
+refuse when it is empty, before calling `commit-tree`.**
