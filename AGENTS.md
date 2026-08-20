@@ -105,6 +105,42 @@ an unattributed sweep of a mutable tree, not weaker.
 When no tester session is active, every worker is its own tester and the
 definition of done below applies unchanged.
 
+## Saying what you checked (2026-08-20)
+
+Sessions cannot see each other's work. What one session says about the tree is
+what every other one acts on, so a claim is an artefact with the same standing
+as code — and the day this file's shared-tree section was written, the most
+common defect in the whole fleet was not a bug. It was **a claim whose scope
+exceeded what was checked.**
+
+Every instance had the same shape: one path verified, a property of the system
+asserted. "ckmux is not exposed to that default" — the *server* was checked,
+while the client's local terminal ran a reader's own login shell under it.
+"The marks mean since you last heard" — the field was read, its lifetime was
+not, and it never cleared. A green test run — from a piped tail whose exit
+status belonged to `tail`. A "pristine" build — pristine on one axis. An audit
+that protected a staging step, run minutes before the staging it was meant to
+protect.
+
+None of these were reasoning errors and none were caught by care. They were
+caught by somebody checking the second path.
+
+- **Say what you checked, not what you concluded.** "`terminals.cpp:98` names
+  the policy" is worth more to a peer than "ckmux is fine", because they can
+  see its edges. A conclusion travels further than its evidence and arrives
+  without it.
+- **Before generalising from one site, ask what the second site is.** Server
+  and client. Header and source. The wire and the field. If there is a second
+  and you did not look, the claim is about the first one only — say so.
+- **A claim about somebody else's work needs its own check.** Authorship
+  inferred from a commit subject, and a live claim read as abandoned because a
+  name did not resolve, were both wrong on the same afternoon and in opposite
+  directions. Asking costs a message; being wrong costs their day.
+- **Record your own instances.** Every session in this fleet has entries in
+  this list, which is the only reason the list is usable: a ledger with one
+  session's failures in it is a reputation, and nobody writes those down. Say
+  the mechanism, not the apology — the mechanism is the part that generalises.
+
 ## Working in a shared tree (several sessions at once, 2026-08-20)
 
 Every session edits one checkout. That is workable, and the failures it
