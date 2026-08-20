@@ -56,9 +56,17 @@ evidence. If the numbering in a given build disagrees with the titles below,
 **the titles win** — they are what ckmux claims; the numbers are an index into
 one build's menu.
 
-`vttest` is **not currently installed on the development machine** (checked
-2026-08-20: absent from `/opt/homebrew/bin` and `/usr/local/bin`). It is a
-prerequisite for the rig, not an optional extra. Same for `fzf`, also absent.
+**The machine of record runs `vttest 2.7 (20251205)`** — that string
+verbatim, recorded beside `tmux 3.6b` (§4.1) in every report. Pinned on
+2026-08-20, before any chapter was driven, which is the only moment a pin is
+worth anything: a version recorded after a rig encodes an expectation is
+documenting the expectation rather than constraining it.
+
+Also present as of that date: `fzf 0.74.3` and `lazygit 0.64.1`. **`emacs` is
+absent** and is one matrix row (§3). **`chafa` is absent and was withdrawn
+rather than deferred** — it pulls 46 dependencies, and `img2sixel` is present
+and runs that row; if §1 later needs two probers to mean anything, that is a
+case to make on its own merits.
 
 ### 2.2 The chapters ckmux claims
 
@@ -76,19 +84,35 @@ prerequisite for the rig, not an optional extra. Same for `fzf`, also absent.
 A chapter absent from the table above is not an oversight and must not be
 quietly added to a divergence list later:
 
-- **Ch. 4, double-sized characters (DECDHL/DECDWL).** Not implemented. A
-  reader gets normal-sized text. The requirement is only that the sequences do
-  not put their parameters on the screen as literal text — the same bounded
-  -diagnostic rule L-35 applies to `ESC # 3/4/5/6`.
-- **Ch. 7, VT52 mode.** Not implemented and not wanted. ckmux is a VT100/VT220
-  -class emulator; VT52 compatibility mode is a historical mode no reference
-  app on the matrix enters.
+- **Ch. 4, double-sized characters (DECDHL/DECDWL).** Not implemented —
+  confirmed by reading the emulator, not by assuming: there is no `DECDHL`,
+  `DECDWL`, `double_width` or `double_height` anywhere in ckVision's `term`
+  layer. A reader gets normal-sized text. What ckmux **does** guarantee is
+  stronger than "the parameters do not appear as text", and is assertable:
+  `ESC #` enters a dedicated `Hash` parse state, `ESC # 8` runs the alignment
+  pattern, and every other `ESC # <n>` is consumed and **raises a
+  `TerminalDiagnostic::UnsupportedSequence`** rather than being silently
+  dropped (`terminal_emulator.cpp:808`). The chapter is not claimed; the
+  diagnostic is.
+- **Ch. 7, VT52 mode.** Not implemented and not wanted — again confirmed by
+  reading rather than assuming: no `VT52` and no `DECANM` in the emulator.
+  ckmux is a VT100/VT220-class emulator, and VT52 compatibility mode is a
+  historical mode no reference app on the matrix enters.
 - **Ch. 5, keyboard.** Excluded from the *automated* rig, not from the claim:
   it is interactive by construction. Its content is covered by the keymap
   suites, which assert the same encodings without a person pressing keys.
 - **Ch. 9, known bugs, and Ch. 10, reset and self-test.** Ch. 10's RIS half is
-  covered by U0 and asserted in the emulator suite. Neither is a claim ckmux
+  covered by U0 and asserted in the emulator suite; its self-test half is not
+  — there is no `DECTST` in the emulator. Neither chapter is a claim ckmux
   makes as a whole.
+
+**These five were re-checked against the emulator on 2026-08-20, after the
+chapters became runnable and before any of them was driven.** That ordering is
+the whole point: §6 forbids excluding a chapter *after* it fails, so the list
+had to be either confirmed or changed while it was still a decision. It was
+confirmed, and the evidence is cited above rather than asserted, because the
+list was originally written when nothing could be run and an unverified
+exclusion is indistinguishable from a pre-emptive excuse.
 
 ### 2.4 How an expectation is recorded, and against which rig
 
