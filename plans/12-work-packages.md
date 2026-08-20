@@ -120,7 +120,7 @@ take first.
 | 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Done** (2026-08-20, ckmux `f4cab08`, gated) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Done** (2026-08-20) | WP-6 ✓, U0-c ✓ |
 | 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** (ckmux-03, `uds:/tmp/cc-socks/31309.sock`) | WP-6 ✓, U1-c ✓, U1-d ✓ |
-| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Implementation complete — gate pending** (2026-08-20, ckmux-63) | WP-16 ✓ |
+| 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **In progress** (ckmux-63, uds:/tmp/cc-socks/27414.sock) | WP-16 ✓ |
 | 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | Blocked | WP-18, WP-19, WP-20, PRINT-1…6 (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Ready** (a decision, not a build) | — |
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
@@ -139,7 +139,7 @@ take first.
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | — |
-| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | Blocked | U7-a, WP-40 |
+| 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **In progress** (ckmux-53, `uds:/tmp/cc-socks/91796.sock`) — the half that consumes U7-a waits for row 55; the client-learns-the-session-desktop half starts now on WP-40's landed wire (`35b94f7`), the WP-29 two-halves precedent | U7-a, WP-40 |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | Blocked | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.

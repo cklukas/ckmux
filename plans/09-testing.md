@@ -196,48 +196,10 @@ and never closes it must cost exactly the ask cache and not one byte more.
 ### 7. Benchmarks as gates (label `benchmark`)
 
 Deterministic budget counters, not wall-clock (upstream's `bench_terminal`
-style). A gate that measures how long this machine took measures this machine;
-these measure how much the server **says** and how much work it does to say it,
-which is the same number on a busy laptop, an idle one, and a sanitizer lane.
-
-Each gate prints its figure, because a budget nobody reads is a budget nobody
-notices drifting. Ceilings sit well above what is measured and far below what
-the unbounded version produced: what is asserted is a shape, not a machine.
-
-`tests/test_budgets.cpp` (WP-20), measured 2026-08-19 at 80×24:
-
-| Budget | Gate | Measured |
-|---|---|---|
-| Delta bytes for a scroll — `~O(rows)`, not `O(cells)` | under a quarter of a whole-screen delta, **and** the delta carries a `ScrollOp` | 746 B against 3759 B (19.8%) |
-| Cells diffed per frame | one changed cell under 200 B | 58 B |
-| Attach snapshot, 10 terminals × 10 k scrollback | inside `kSnapshotPayloadBudget` before history, inside `kMaxSnapshotPayloadBytes` after | 74 694 B mandatory, 1 277 572 B whole |
-| Picture payload built for a session nobody watches | exactly zero | 0 B across 59 animation frames |
-| An idle terminal | no delta, no picture op, no bytes | 0 across 200 ticks |
-
-The ratio gates carry a positive partner on purpose. A delta can be small
-because it says too little, so "cheap" is asserted together with the mechanism
-that makes it cheap — the scroll gate fails if the saving arrives without a
-`ScrollOp` on the wire.
-
-The picture budgets are the ones WP-16 freed, and they are gated in two places
-because they fail in two ways. `test_budgets.cpp` gates the work **built**;
-`test_attach.cpp` gates what a client is **owed** when it cannot keep up —
-1.8 frames held and 3.6 MiB built across 300 frames, against 354 MiB owed and
-356 MiB built before supersession and the differ's readiness question, and
-528 MiB owed across 200 window moves (see [05](05-protocol.md), Flow control).
-Both were verified 24/24 under ASan+UBSan, and each of the four defects they
-guard — debt appended instead of superseded, placements kept instead of
-superseded, the payload built anyway, the belief adopted for pixels never sent
-— was confirmed to fail exactly one suite when planted deliberately.
-
-**Not gated, stated rather than implied.** *Bytes-parsed-per-flood-tick* has no
-counter: the parser budget is ckVision's (`max_parser_work_per_step`) and is
-gated upstream, while what ckmux owns — that a flood never stops the server
-answering — is `test_core_promise.cpp`'s real `yes` and real `Ping`.
-*Allocations per idle minute* is gated by proxy: replacing global `operator new`
-to count them collides with the sanitizer lane this suite must also pass under,
-so what is asserted is the behaviour that would cause the allocations rather
-than the allocations themselves. Both are honest gaps, not silent ones.
+style): bytes-parsed-per-flood-tick, cells-diffed-per-frame, delta bytes
+for a full-screen `vim` scroll (scroll ops must keep it ~O(rows) not
+O(cells)), attach-snapshot size for 10 terminals × 10 k scrollback,
+allocations per idle minute (target: zero).
 
 ## Invariants the suite enforces globally
 
