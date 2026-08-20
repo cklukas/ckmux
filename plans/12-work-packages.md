@@ -135,7 +135,7 @@ take first.
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
-| 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-28 ✓ |
+| 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Done** (2026-08-20, ckmux `35b94f7` + `3d6cb2d`) | WP-28 ✓ |
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`) | — |
@@ -1843,6 +1843,28 @@ through WP-30's mapping, and SIGWINCHes each child exactly once; and
 `fit-smallest` is sticky — it shrinks for a newcomer and does not grow back
 when they leave, because geometry that oscillates with attach cycles is worse
 than geometry that is merely too small.
+
+*WP-40 landed* in two commits, deliberately: `35b94f7` gave the session a
+desktop and stopped every client's own screen from moving it, and `3d6cb2d`
+added the one path that does — a reader asking, through `Window ▸ Fit Desktop
+to This Screen` and the `SetDesktopSize` message it sends. The split was not a
+plan: `server.cpp` and `client_app.cpp` were held by two other sessions when
+the first half was ready, and a package that waits for a file is worse than one
+that lands the half it can defend.
+
+What the second half settled that the design had not: the message is NEW rather
+than a flag on `Attach` or a meaning added to `ClientResize`, because those
+state a fact — how big one reader's screen is — and this states an act. It
+sends the whole screen rather than `content_area()`, since another reader's
+chrome may be a different height and a collapsed status bar must not shorten
+the shared world for everybody. And it has no chord: reflowing every window and
+resizing every child, for every reader watching, is a menu decision rather than
+a keystroke beside `^B b`.
+
+**What is NOT in it, and is not hiding:** `ckmux attach --adopt-size`. The
+message and the server side are there, so the flag is a CLI parsing change and
+one call at attach time — a sliver, and it belongs to whoever is next in
+`cli.cpp` rather than to a second landing of this row.
 
 **WP-41 — What belongs to a reader rather than to a session** *(ckmux)*. Four
 pieces of client state currently live on the session, each correct until a
