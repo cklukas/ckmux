@@ -91,6 +91,36 @@ void forget(const std::filesystem::path& socket) {
     ::_exit(127);
 }
 
+// The exact mirror of `wait_for_socket`, and the reason it did not exist is
+// the reason fifteen orphaned servers were running on this machine.
+//
+// Every case that ends a server sent `KillServer`, discarded the answer —
+// literally `(void)closer.hear(ignored, 2000)` — and then called `forget()`,
+// which unlinks the socket file. When the kill was not acted on, the test
+// passed anyway and left a server that is not merely leaked but **permanently
+// unreachable**: it is still listening on a path that no longer exists, so no
+// client can ever connect to ask it to stop again. That is why they accumulate
+// across runs instead of being cleaned up by the next one, and why `pkill` was
+// the only thing that ever removed them.
+//
+// So the death is now asserted, before the socket is taken away. A leak
+// becomes a test failure, which is the only thing that stops it recurring — and
+// deliberately NOT a reaper in the harness, because a reaper hides the defect
+// and makes the next `pgrep`-based diagnosis lie about what is running.
+bool wait_for_server_gone(const std::filesystem::path& socket, int budget_ms = 4000) {
+    const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(budget_ms);
+    for (;;) {
+        ckm::platform::ConnectResult probe = ckm::platform::connect_to_server(socket);
+        if (probe.status == ckm::platform::ConnectStatus::Connected) {
+            (void)::close(probe.fd);
+        } else {
+            return true;  // nothing is listening there any more
+        }
+        if (clock_type::now() >= deadline) return false;
+        ::usleep(5000);
+    }
+}
+
 bool wait_for_socket(const std::filesystem::path& socket, int budget_ms = 4000) {
     const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(budget_ms);
     for (;;) {
@@ -241,6 +271,11 @@ CK_TEST(a_client_that_finds_no_server_starts_one_and_the_server_outlives_it) {
     (void)closer.stream.flush();
     ckm::proto::Message ignored;
     (void)closer.hear(ignored, 2000);
+    // Asserted, and asserted BEFORE `forget()` unlinks the socket. This is the
+    // whole of the orphan fix: the acknowledgement above is discarded, so
+    // without this the test passes on a server that never died — and then
+    // removes the only path anything could reach it by.
+    CK_CHECK(wait_for_server_gone(socket));
     forget(socket);
 }
 
@@ -338,6 +373,11 @@ CK_TEST(a_socket_file_left_by_a_dead_server_is_replaced_rather_than_believed) {
     (void)closer.stream.flush();
     ckm::proto::Message ignored;
     (void)closer.hear(ignored, 2000);
+    // Asserted, and asserted BEFORE `forget()` unlinks the socket. This is the
+    // whole of the orphan fix: the acknowledgement above is discarded, so
+    // without this the test passes on a server that never died — and then
+    // removes the only path anything could reach it by.
+    CK_CHECK(wait_for_server_gone(socket));
     forget(socket);
 }
 

@@ -249,6 +249,13 @@ CK_TEST(ending_the_last_session_stops_the_server_and_the_client_offers_a_fresh_s
         if (!server_gone) ::usleep(20000);
     }
     CK_CHECK(server_gone);
+    // Cleanup that does not depend on the assertion passing. `CK_CHECK`
+    // RECORDS a failure and carries on, so a server that did not exit on its
+    // own was reported and then abandoned — and the `forget()` below unlinks
+    // its socket, leaving it alive and permanently unreachable, which is how
+    // fifteen of these accumulated on one machine. `end_process` is safe on a
+    // pid already reaped.
+    end_process(server);
 
     // Creating a session — Session menu, or ^B S — starts a fresh server:
     // "end the last session, then start another" is one uninterrupted thing.
@@ -457,6 +464,13 @@ CK_TEST(closing_the_last_terminal_tells_the_whole_truth_and_ends_the_session) {
         if (!server_gone) ::usleep(20000);
     }
     CK_CHECK(server_gone);
+    // Cleanup that does not depend on the assertion passing. `CK_CHECK`
+    // RECORDS a failure and carries on, so a server that did not exit on its
+    // own was reported and then abandoned — and the `forget()` below unlinks
+    // its socket, leaving it alive and permanently unreachable, which is how
+    // fifteen of these accumulated on one machine. `end_process` is safe on a
+    // pid already reaped.
+    end_process(server);
     reader.quit();
     forget(socket);
 }
@@ -512,6 +526,13 @@ CK_TEST(moving_the_last_terminal_rescues_the_program_into_a_new_session) {
         if (!server_gone) ::usleep(20000);
     }
     CK_CHECK(server_gone);
+    // Cleanup that does not depend on the assertion passing. `CK_CHECK`
+    // RECORDS a failure and carries on, so a server that did not exit on its
+    // own was reported and then abandoned — and the `forget()` below unlinks
+    // its socket, leaving it alive and permanently unreachable, which is how
+    // fifteen of these accumulated on one machine. `end_process` is safe on a
+    // pid already reaped.
+    end_process(server);
     forget(socket);
 }
 
