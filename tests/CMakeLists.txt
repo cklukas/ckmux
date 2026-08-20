@@ -27,6 +27,7 @@ set(CKMUX_TEST_SOURCES
     test_notifications.cpp
     test_paste_credit.cpp
     test_prefix.cpp
+    test_ckspy.cpp
     test_print_acceptance.cpp
     test_printer_button.cpp
     test_printer_output.cpp
@@ -58,6 +59,31 @@ if(TARGET ckmux)
     add_dependencies(ckmux_tests ckmux)
 endif()
 ckmux_strict(ckmux_tests)
+
+# ckspy: the DYLD interposer that answers "what did this process actually open
+# and actually spawn" (tools/ckspy.c). Apple only, because that is where
+# `DYLD_INSERT_LIBRARIES` exists at all.
+#
+# SHARED and not MODULE, which is the counter-intuitive half. MODULE is
+# CMake's word for "loaded at runtime rather than linked against", which
+# describes this exactly — and it produces a Mach-O BUNDLE, which dyld refuses
+# to insert: `cannot link against bundle`, and the target process aborts
+# before `main`. The failure is loud but it names the inserted library rather
+# than the build type, so it reads as a broken interposer rather than a
+# mis-declared target. SHARED produces a real dylib and works.
+#
+# `ckmux_strict` is deliberately NOT applied: the technique is a non-standard
+# section holding function pointers with deliberately mismatched linkage, and
+# the project's warning set exists to forbid precisely that everywhere else.
+if(APPLE)
+    # The project is C++ only, so the C compiler has to be asked for before a
+    # `.c` target can be linked at all.
+    enable_language(C)
+    add_library(ckspy SHARED ${CMAKE_CURRENT_SOURCE_DIR}/../tools/ckspy.c)
+    set_target_properties(ckspy PROPERTIES PREFIX "" SUFFIX ".dylib")
+    target_compile_definitions(ckmux_tests PRIVATE CKSPY_DYLIB_PATH="$<TARGET_FILE:ckspy>")
+    add_dependencies(ckmux_tests ckspy)
+endif()
 
 # Labels are plans/09's own taxonomy — `unit`, `golden`, `script`, `pty`,
 # `e2e`, `benchmark`, `fuzz-corpus`, `portable` — and they have to say what a
@@ -108,6 +134,10 @@ set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
 # and the process observed from outside for the two negatives (§5 requires
 # the negatives be established by watching the run, not by reading source).
 set(CKMUX_LABELS_test_print_acceptance "pty;e2e")
+# ckspy proves itself against a real ckmux server, which forks a real child,
+# so it is `pty` as well as `unit` — and it is the instrument WP-21 §5's
+# negatives depend on, so a broken one must fail loudly rather than quietly.
+set(CKMUX_LABELS_test_ckspy "unit;pty")
 set(CKMUX_LABELS_test_m4_tmux "pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
