@@ -138,7 +138,7 @@ take first.
 | 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-28 ✓ |
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-18 ✓ |
-| 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Ready** | — |
+| 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | Blocked | U7-a, WP-40 |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | Blocked | WP-40, WP-41, WP-42, WP-43 |
 
