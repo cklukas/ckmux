@@ -33,7 +33,7 @@ and then receives only what changed. Closing the client — or losing the
 connection — does not touch the programs. Reattaching replays the current
 state, so you come back to what is there now, not to what you left.
 
-The interface is built on [ckVision](https://github.com/cklukas/ckvision), a
+The interface is built on [ckVision](https://github.com/cklukas/ckVision), a
 windowed terminal-UI framework, which the two projects develop together.
 
 ## Keys
