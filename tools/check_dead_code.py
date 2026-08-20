@@ -64,35 +64,45 @@ from pathlib import Path
 # the failure `check_seams.py` has the same guard against.  Say what it is for
 # and what would retire the entry.
 DELIBERATELY_UNCALLED = {
+    # Category 1 -- reachable from tests/ but not from main. Retire by routing
+    # production through them, or by deleting them.
     "same_state":
-        "test-only invariant helper: 16 callers in tests/, none in src/. "
-        "Retire by making the grid-delta suites use it through a public "
-        "operation, or by deleting it if the suites stop needing it.",
+        "test-only invariant helper: 16 callers in tests/, none in src/.",
     "command_for_action":
-        "test-only mapping helper: 3 callers in tests/, none in src/. Same "
-        "disposition as same_state.",
-    "describe":
-        "NO callers at all, in src/ or tests/. A protocol-diagnostic helper "
-        "that nothing uses. Candidate for deletion -- listed rather than "
-        "removed because deleting another package's code is not this "
-        "checker's call.",
+        "test-only mapping helper: 3 callers in tests/, none in src/.",
     "action_names":
         "test-only table accessor: the config parser reaches `kActions` "
-        "directly and only the keymap suite goes through this. Retire by "
-        "routing the parser through it, or by deleting it.",
+        "directly and only the keymap suite goes through this.",
     "key_context_names":
         "test-only table accessor, same shape as action_names.",
-    "parse_proc_stat":
-        "the parse half of the Linux /proc fill (WP-22): compiled on every "
-        "platform so the suite can feed it fixture text, called only from "
-        "the __linux__ arm of process_stats.cpp -- a call a Mach-O link "
-        "cannot contain. Retire when this checker grows its --gc-sections "
-        "Linux form (see check_root's skip): there it must be reached.",
-    "parse_smaps_rollup_pss":
-        "same shape and same retirement as parse_proc_stat.",
+
+    # Category 2 -- no callers at all, in src/ OR tests/. Deletion candidates,
+    # listed rather than removed because deleting another package's code is
+    # not this checker's call.
+    "describe":
+        "no callers anywhere. A protocol-diagnostic helper nothing uses.",
     "encode_grid":
-        "NO callers at all, in src/ or tests/. One line over "
-        "`proto::to_runs`. Same disposition as describe.",
+        "no callers anywhere. One line over `proto::to_runs`.",
+
+    # Category 3, and NOT a weaker version of the others: excused HERE because
+    # this platform cannot reach it, and it must be REACHED on the platform
+    # that can. `reached_on` records that so the Linux form of this checker
+    # (see check_root's skip) can assert the inverse mechanically instead of
+    # re-reading prose. An exemption that can never retire on the platform
+    # granting it is not an exemption -- it is a blind spot with a caption.
+    # Found by ckmux-53; the framing is theirs.
+    "parse_proc_stat": {
+        "reason": "the parse half of the Linux /proc fill (WP-22): compiled "
+                  "on every platform so the suite can feed it fixture text, "
+                  "called only from the __linux__ arm of process_stats.cpp "
+                  "-- a call a Mach-O link cannot contain.",
+        "reached_on": "linux",
+    },
+    "parse_smaps_rollup_pss": {
+        "reason": "same shape and same obligation as parse_proc_stat: "
+                  "excused here, owed a call site on Linux.",
+        "reached_on": "linux",
+    },
 }
 
 
@@ -241,18 +251,70 @@ def stale_objects(root: Path, build: Path):
     return None, None, len(objects)
 
 
+def generator_of(build: Path) -> str:
+    cache = build / "CMakeCache.txt"
+    if not cache.is_file():
+        return ""
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("CMAKE_GENERATOR:"):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def link_command(build: Path):
+    """The command that links `ckmux`, however this generator records it.
+
+    Makefiles write `CMakeFiles/ckmux.dir/link.txt`. **Ninja writes no
+    link.txt anywhere**, so the checker could not run at all under it, and
+    said so with `no link line ... -- build ckmux first` -- advice a reader
+    cannot follow, because no amount of rebuilding produces that file under
+    Ninja. An error naming a cause that is not the cause is worse than the
+    failure it reports.
+
+    Ninja does record the rule, and `ninja -t commands ckmux` prints it, so
+    the answer is recovered rather than refused. CMake wraps it as
+    `: && <command> && :`, which is stripped here; if that shape ever changes
+    the recovery yields nothing and the caller skips with the true reason
+    rather than guessing.
+    """
+    link_txt = build / "CMakeFiles" / "ckmux.dir" / "link.txt"
+    if link_txt.is_file():
+        return link_txt.read_text(encoding="utf-8").strip()
+
+    if (build / "build.ninja").is_file() and shutil.which("ninja"):
+        listed = subprocess.run(["ninja", "-t", "commands", "ckmux"],
+                                cwd=build, capture_output=True, text=True)
+        if listed.returncode == 0:
+            for line in reversed(listed.stdout.splitlines()):
+                if " -o ckmux " in line or line.rstrip().endswith(" -o ckmux"):
+                    line = line.strip()
+                    if line.startswith(": &&"):
+                        line = line[4:].strip()
+                    if line.endswith("&& :"):
+                        line = line[:-4].strip()
+                    return line
+
+    generator = generator_of(build) or "unknown"
+    print(f"dead-code-check: skipped -- this build directory uses the "
+          f"{generator} generator and no link line for `ckmux` could be "
+          f"recovered from it (no CMakeFiles/ckmux.dir/link.txt, and "
+          f"`ninja -t commands` yielded nothing). The checker needs the "
+          f"link command to build its probe. Rebuilding will not change "
+          f"this -- use a build directory this checker can read.")
+    return "SKIP"
+
+
 def dead_stripped_symbols(root: Path, build: Path) -> list:
     """Relink the production binary with -dead_strip and read the map.
 
     The relink is done here rather than by adding flags to the build, so that
     an ordinary build is unchanged and does not pay for a 45 MB map file.
     """
-    link_txt = build / "CMakeFiles" / "ckmux.dir" / "link.txt"
-    if not link_txt.is_file():
-        print(f"dead-code-check: no link line at {link_txt} -- build ckmux first",
-              file=sys.stderr)
+    command = link_command(build)
+    if command is None:
         return None
-    command = link_txt.read_text(encoding="utf-8").strip()
+    if command == "SKIP":
+        return "SKIP"
     with tempfile.TemporaryDirectory() as tmp:
         binary, mapfile = Path(tmp) / "probe", Path(tmp) / "probe.map"
         command = re.sub(r"-o\s+\S+", f"-o {binary}", command, count=1)
@@ -349,6 +411,8 @@ def check_root(root: Path, build: Path) -> int:
         return 1
 
     dead_symbols = dead_stripped_symbols(root, build)
+    if dead_symbols == "SKIP":
+        return 0
     if dead_symbols is None:
         return 1
     blob = "\n".join(dead_symbols)
@@ -357,7 +421,8 @@ def check_root(root: Path, build: Path) -> int:
     for name, header in sorted(names.items()):
         if not re.search(r"(?:^|::)" + re.escape(name) + r"\(", blob, re.M):
             continue
-        reason = DELIBERATELY_UNCALLED.get(name)
+        entry = DELIBERATELY_UNCALLED.get(name)
+        reason = entry["reason"] if isinstance(entry, dict) else entry
         if reason:
             excused.append((name, header, reason))
             continue
@@ -367,14 +432,44 @@ def check_root(root: Path, build: Path) -> int:
               f"DELIBERATELY_UNCALLED with the reason.", file=sys.stderr)
         violations += 1
 
+    # An exemption for a function that IS reached is how this list rots: the
+    # entry outlives its reason, nobody re-reads it, and the next reader
+    # believes the code is excused for a cause that stopped being true. It
+    # happened here -- `process_stats_supported` was excused as test-only and
+    # then wired into production, and nothing said so; the entry was found by
+    # hand while chasing an unrelated failure.
+    #
+    # Reported as a violation rather than a warning, because the fix is to
+    # delete one line, and a warning in a green run is a line nobody reads.
+    for name in sorted(DELIBERATELY_UNCALLED):
+        if name not in names:
+            print(f"dead-code-check: {name} is excused but is not a free "
+                  f"function declared in any src/ header -- the exemption "
+                  f"names something that no longer exists. Remove it.",
+                  file=sys.stderr)
+            violations += 1
+        elif not re.search(r"(?:^|::)" + re.escape(name) + r"\(", blob, re.M):
+            print(f"dead-code-check: {name} is excused as uncalled, but it IS "
+                  f"reached from main now. The exemption has outlived its "
+                  f"reason -- remove it.", file=sys.stderr)
+            violations += 1
+
     for name, header, reason in excused:
         print(f"dead-code-check: {name} ({header}) deliberately uncalled -- {reason}")
     if violations:
         print(f"dead-code-check: {violations} unexplained dead function(s)",
               file=sys.stderr)
     else:
+        # The verdict names its own configuration. This checker's answer
+        # depends on the build directory in three separate ways -- optimisation
+        # level, staleness, and generator -- and all three were found by
+        # somebody running it in a configuration nobody else had. A result
+        # quoted without its configuration is how the -O3 divergence survived
+        # a whole day of confident reports.
         print(f"dead-code-check: OK ({len(excused)} deliberately uncalled, "
-              f"{len(names)} free functions checked)")
+              f"{len(names)} free functions checked) "
+              f"[build={build}, generator={generator_of(build) or 'unknown'}, "
+              f"opt=-O0]")
     return violations
 
 
