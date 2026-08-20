@@ -1341,20 +1341,33 @@ void Server::announce_terminal_news() {
         // whole difference between a mark and an event, and a session with no
         // client is precisely when a reader most wants to be told afterwards
         // that something happened.
-        // NOTE (WP-41): this suppression is per SESSION and belongs per client.
-        // The wire now carries the EDGE it was waiting for — `TermMeta`'s
-        // `bell_serial` and `activity_serial`, counted just below whoever is
-        // watching — so the remaining half is client-side: a client remembers
-        // the serials a terminal had when ITS reader last looked, and shows a
-        // mark when they have moved. When that lands, this whole branch goes
-        // and the level (`flags`) can follow it, because a serial says both
-        // "something happened" and "it happened AGAIN", which a level cannot.
+        // WHAT IS LEFT OF WP-41 HERE, measured rather than guessed.
         //
-        // Left standing until then, deliberately: `clear_marks()` here is
-        // still the only thing that ever puts a mark down, and removing it
-        // before the client reads serials would leave every terminal that has
-        // ever printed permanently marked — a signal that is on for ever is
-        // not a signal.
+        // The reader-facing half is done: a client decides what it has missed
+        // from the SERIALS, against its own focus, and answers them by looking
+        // (`af6539a`). Nothing below is consulted for that. What remains is
+        // that this branch still decides WHEN a `TermMeta` is sent, and it
+        // decides it from `Session::last_focused` — one answer to a question
+        // that has one per reader.
+        //
+        // It cannot simply be removed, and the obvious replacement was tried
+        // and rejected by measurement rather than by argument. Lowering the
+        // level on ANNOUNCE instead of on focus — so it means "since this was
+        // last stated" — is focus-free and re-arms correctly, and it costs a
+        // `TermMeta` per tick for every terminal that is writing at all:
+        // `a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before`
+        // and `a_cli_client_is_not_sent_a_screenful_of_deltas` both fail, the
+        // high-water case exceeds its mark, and the mirror's level flickers on
+        // and off every tick. The stickiness of this level is load-bearing for
+        // message economy; the focus clear is what re-arms it cheaply.
+        //
+        // So the residue is narrow and worth stating exactly: **activity on
+        // whichever terminal the session last focused is not announced**, to
+        // any reader, because this branch clears its marks. Bells are
+        // unaffected — `count_bell()` announces regardless of focus. The real
+        // fix is per-CLIENT announce state ("has THIS client been told the
+        // current serials"), which is the same fan-out WP-44 is building for
+        // `client_attached_to`, and belongs there rather than here.
         // The FACT, counted before anybody's focus is consulted (WP-41's
         // serial, the edge this NOTE was waiting for). A bell that rang rang,
         // whoever was looking; what each reader has answered is their own

@@ -136,7 +136,7 @@ take first.
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
 | 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Done** (2026-08-20, ckmux `35b94f7` + `3d6cb2d`, `--adopt-size` in the CLI landing) | WP-28 ✓ |
-| 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
+| 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **Done** (2026-08-20; one residue named and handed to WP-44) | WP-40 ✓ (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d1d71e2` × ckVision `e070775` — 36/36 Debug, 36/36 ASan+UBSan, ctest exit 0; the `pty` label confirmed by measurement, and case 6 standing as ckVision `a1a5433`'s downstream acceptance) | U7-a ✓, WP-40 ✓ |
@@ -1890,16 +1890,26 @@ two readers typing would steal each other's marker. It is now
 holding its own `focused`, and a `LayoutDelta` carrying the receiving
 watcher's, never the session's.
 
-**The marks are half done and half blocked.** `2621fab` moved the ANSWER to
-the client: a reader who has looked has answered, and each window remembers
-that this client saw its mark. What cannot be done yet is removing the
-server's per-session suppression, because `clear_marks()` on the focused
-terminal is the only thing that ever puts a mark DOWN — the flags are sticky
-until respawn — so dropping it leaves every terminal that has ever printed
-permanently marked. Three suites said so when it was tried. **`TermMeta` needs
-to carry an edge** (a serial beside the flags, the way `TerminalStatus::bell_serial`
-already counts locally and for the same stated reason) before the fact can be
-recorded unconditionally.
+**The marks are done.** `2621fab` moved the ANSWER to the client; `af6539a`
+made it a COUNT rather than a flag, so a reader can be told "it rang again"
+after answering the first — which no level can express — and fixed the defect
+that discovery turned up: `02f7c97` produced `bell_serial` and never announced
+it, because `mark_bell()` returns early when the level is already up, so a
+second ring emitted no `TermMeta` at all. Snapshots now state the counts too,
+so an arriving reader answers everything up to now rather than reading a
+session's history as news.
+
+**One residue, measured rather than assumed, and handed to WP-44.** The server
+still decides WHEN to send a `TermMeta` from `Session::last_focused`, so
+**activity on whichever terminal the session last focused is announced to
+nobody**. Bells are unaffected. The obvious repair — lower the level on
+announce rather than on focus — was tried and rejected by measurement: it
+costs a `TermMeta` per tick for every writing terminal, failing
+`a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before`,
+`a_cli_client_is_not_sent_a_screenful_of_deltas` and the high-water case. The
+level's stickiness is load-bearing for message economy. The real fix is
+per-CLIENT announce state, which is the same fan-out WP-44 is already building
+for `client_attached_to`.
 
 **`host_sixel` is not a defect, checked rather than believed.** The row said a
 child's advertised capabilities "would change under it because somebody else
