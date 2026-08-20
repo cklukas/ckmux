@@ -208,7 +208,7 @@ pass against a screen on which the feature under test never drew at all.
 |---|---|---|
 | **Creates and splits panes** | The pane **divider** is present at the expected column (vertical split) or row (horizontal), found via `find_cell()`, with distinct content addressed into each pane — write a different marker into each and locate both, on opposite sides of the divider. | "The screen changed." A redraw of any kind passes that. |
 | **Switches windows** | A marker written in window 1 is **absent** while window 2 is shown, and present again after switching back. The absence is only meaningful with the two presences either side of it. | Asserting the window-index in the status line. That is tmux drawing its own idea of state, and it will say `2` whether or not the switch reached the screen. |
-| **Resizes with its status line intact** | After a ckmux-side resize, the status line occupies the **last row** of the new geometry and spans it — read `rows().back()` against the new width — and a pane's content reflows to the new column count. | A substring match for a status-line fragment anywhere on screen. Passes against a status line stranded at the old row after a failed reflow, which is precisely the defect. |
+| **Resizes with its status line intact** | Driven by a **ckmux window action** (`^B z`, Zoom) — see §4.2.1 — after which the status line occupies the **last row of the window's new geometry** and spans it — read `rows().back()` against the new width — and a pane's content reflows to the new column count. | A substring match for a status-line fragment anywhere on screen. Passes against a status line stranded at the old row after a failed reflow, which is precisely the defect. |
 | **Enters and leaves copy mode** | Copy mode's own indicator appears **and** a key that only means something in copy mode has a visible effect (scroll back to content no longer on the live screen); on leaving, the live screen is restored. | The indicator alone. It is drawn by tmux on entry and says nothing about whether the mode functions. |
 | **Survives detach-and-reattach with panes where they were** | **Pane geometry is captured before the detach and compared after** — the divider's row/column and each pane's marker position, `find_cell()` for both. Equality is the assertion. | "tmux is still running", or the session name appearing after reattach. Both are true of a session whose layout was destroyed and redrawn wrongly. |
 
@@ -216,6 +216,37 @@ pass against a screen on which the feature under test never drew at all.
 absence assertion passes vacuously the moment the marker text changes for an
 unrelated reason. Absence is only evidence when it sits between two presences
 of the same marker, produced by the same mechanism.
+
+**And the second half of that rule, which cost a 1-in-5 flake to find: a
+marker is only evidence while it is still on screen.** A marker printed early
+and read several steps later can scroll out of its pane under load — every
+readiness probe that prints a line pushes it further up — and the clause then
+fails and blames whatever it was testing. A window-switch test failed this way
+on its switch-back leg, reporting a switching defect for a scroll. So **write
+the marker immediately before the clause that reads it, and clear the pane
+first.** Three of §4's five clauses needed this.
+
+#### 4.2.1 Which resize, and the prefix that collides
+
+**Two facts an implementer hits in the first hour, neither of which was in
+this document until somebody hit them.**
+
+**The resize clause means a ckmux *window* resize, not a host screen resize.**
+Growing the host terminal from 30 to 40 rows grows ckmux's screen and leaves
+the inner tmux's status line where it was — and that is **correct**, not a
+defect: a ckmux terminal is a window on a desktop rather than the screen
+itself, so a bigger desktop does not resize the windows on it. Measured before
+being written down. As the clause was originally worded, a reasonable
+implementer resizes the screen, sees the status line stay put, and reports a
+defect that does not exist. The clause is driven by `^B z` (Zoom), a ckmux
+window action; the reflow inside is tmux's answer to it.
+
+**The prefix collides, and this is what "nesting depth of one" means in
+practice.** ckmux's prefix is `^B` and so is tmux's, so every key intended for
+the inner multiplexer must go through ckmux's send-prefix: **`^B ^B <key>`**
+([06-ui-design.md](06-ui-design.md)'s key table, `Action::SendPrefix`). A test
+that sends `^B c` to create a tmux window addresses *ckmux*, and what it
+asserts afterwards is a statement about the wrong multiplexer.
 
 ### 4.3 The rig already exists, and it is not found by grepping for `forkpty`
 
@@ -232,6 +263,17 @@ rules and they apply here unchanged, including the one that matters most for
 the table above: **column-exact assertions go through `find_cell()`, never
 `screen()` or `rows()`**, because a string index skips continuation cells and a
 divider's column is exactly the kind of claim that off-by-one destroys.
+
+**One limit of that capture, worth knowing before a clause depends on it:
+`grapheme()` reads text, and some screen content is not text.** With `-f
+/dev/null`, tmux's clock mode (`^B t`) draws its digits as **reverse-video
+spaces** rather than glyphs, so a grapheme-only dump of that screen is blank —
+the digits are in the cell *styles*, not in the characters. This is a fact
+about how the rig reads the screen and **not** a ckmux/tmux divergence, so it
+does not belong on the §6 list. But any future clause asserting on
+attribute-drawn content must read cell styles rather than text, or it will
+assert against an empty string and pass or fail for reasons unconnected to
+what it is testing.
 
 ## 5. The printing acceptance
 
