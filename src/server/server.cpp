@@ -805,24 +805,33 @@ void Server::handle(Client& client, const proto::Message& message) {
         // them against mirrored mode state — bracketed-paste markers included
         // — and a server that re-encoded would be a third opinion about the
         // child's dialect.
-        if (Terminal* terminal = terminals_.find(chunk->term)) {
-            terminal->send_input(chunk->bytes);
-            // Pasting into a terminal is being in it, the same statement
-            // `Input` makes: a reader who pastes has chosen where the text
-            // goes, and the activity mark must not then call it output in a
-            // terminal they are not in.
-            if (Session* const home = session_holding(chunk->term)) home->focused = chunk->term;
+        Terminal* const terminal = terminals_.find(chunk->term);
+        if (terminal == nullptr) {
+            // Acked whether or not the terminal was there. The credit is about
+            // the CLIENT'S queue, not about this terminal's existence: a client
+            // that pastes into a window whose program has just ended would
+            // otherwise wait for ever on an ack that is never coming, holding
+            // the rest of the paste — and every later paste behind it — in a
+            // queue nothing drains. An ack for a terminal that has gone costs
+            // one small frame and says only "this chunk is dealt with", which
+            // is true.
+            forget_paste_slot(chunk->term);
+            proto::PasteAck ack;
+            ack.seq = chunk->seq;
+            send(client, ack);
+            return;
         }
-        // Acked whether or not the terminal was there. The credit is about the
-        // CLIENT'S queue, not about this terminal's existence: a client that
-        // pastes into a window whose program has just ended would otherwise
-        // wait for ever on an ack that is never coming, holding the rest of
-        // the paste — and every later paste behind it — in a queue nothing
-        // drains. An ack for a terminal that has gone costs one small frame
-        // and says only "this chunk is dealt with", which is true.
-        proto::PasteAck ack;
-        ack.seq = chunk->seq;
-        send(client, ack);
+        // One paste at a time (WP-42). A chunk from anybody but the reader
+        // currently mid-paste waits, and waits UNACKED — which is what bounds
+        // it: WP-18's credit stops each client at two chunks on the wire, so
+        // however long the paste in front of them is, a terminal holds at most
+        // two per waiting reader.
+        PasteSlot& slot = paste_slots_[chunk->term];
+        if (slot.owner != 0 && slot.owner != client.id) {
+            slot.waiting.push_back(PendingPaste{client.id, *chunk});
+            return;
+        }
+        write_paste_chunk(*terminal, client, *chunk);
         return;
     }
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
@@ -1303,6 +1312,10 @@ void Server::announce_layout() {
 }
 
 void Server::remove_terminal(TerminalId id, bool exited) {
+    // Whatever was waiting to be pasted into it is acked and forgotten
+    // (WP-42): the text has nowhere to go, and a client left waiting on an ack
+    // holds the rest of its paste for ever.
+    forget_paste_slot(id);
     Session* const home = session_holding(id);
     std::optional<int> status;
     if (Terminal* const terminal = terminals_.find(id)) status = terminal->exit_status();
@@ -1802,7 +1815,95 @@ void Server::owe_image(Client& client, proto::Message op) {
     client.owed_images.push_back(std::move(owed));
 }
 
+Server::Client* Server::client_with_id(ClientId id) {
+    for (const std::unique_ptr<Client>& client : clients_)
+        if (client->id == id && client->stream.open()) return client.get();
+    return nullptr;
+}
+
+void Server::write_paste_chunk(Terminal& terminal, Client& client, const proto::PasteChunk& chunk) {
+    terminal.send_input(chunk.bytes);
+    // Pasting into a terminal is being in it, the same statement `Input`
+    // makes: a reader who pastes has chosen where the text goes, and the
+    // activity mark must not then call it output in a terminal they are not
+    // in.
+    if (Session* const home = session_holding(chunk.term)) home->focused = chunk.term;
+    const bool finished = chunk.final_chunk != 0;
+    paste_slots_[chunk.term].owner = finished ? 0 : client.id;
+    proto::PasteAck ack;
+    ack.seq = chunk.seq;
+    send(client, ack);
+    if (finished) drain_paste_slot(chunk.term);
+}
+
+void Server::drain_paste_slot(TerminalId term) {
+    // Re-found on every pass rather than held across the loop: `send` can drop
+    // a client, and dropping one releases its slots — which erases from the
+    // very map an iterator would be pointing into.
+    for (;;) {
+        auto slot = paste_slots_.find(term);
+        if (slot == paste_slots_.end() || slot->second.owner != 0) return;
+        if (slot->second.waiting.empty()) {
+            paste_slots_.erase(slot);
+            return;
+        }
+        const PendingPaste next = std::move(slot->second.waiting.front());
+        slot->second.waiting.pop_front();
+        Terminal* const terminal = terminals_.find(term);
+        if (terminal == nullptr) {
+            forget_paste_slot(term);
+            return;
+        }
+        Client* const waiting = client_with_id(next.client);
+        // Its reader left while it waited. Nothing to write and nobody to ack;
+        // the next in line gets the slot instead.
+        if (waiting == nullptr) continue;
+        write_paste_chunk(*terminal, *waiting, next.chunk);
+        return;  // whoever just wrote either holds the slot or drained it
+    }
+}
+
+void Server::release_paste_slots(ClientId client) {
+    std::vector<TerminalId> freed;
+    for (auto& [term, slot] : paste_slots_) {
+        // Nothing this client queued is wanted any more: the reader who asked
+        // for it is gone, and half their clipboard is not what the next reader
+        // of that terminal should find in it.
+        std::erase_if(slot.waiting, [client](const PendingPaste& pending) {
+            return pending.client == client;
+        });
+        if (slot.owner == client) {
+            slot.owner = 0;
+            freed.push_back(term);
+        }
+    }
+    // Drained after the sweep rather than inside it: draining writes, writing
+    // can drop a client, and dropping one comes back here.
+    for (const TerminalId term : freed) drain_paste_slot(term);
+}
+
+void Server::forget_paste_slot(TerminalId term) {
+    const auto slot = paste_slots_.find(term);
+    if (slot == paste_slots_.end()) return;
+    std::deque<PendingPaste> waiting = std::move(slot->second.waiting);
+    paste_slots_.erase(slot);
+    // Acked, not dropped. The terminal is gone and the text has nowhere to go,
+    // but a client that never hears back holds the rest of that paste — and
+    // every later one — in a queue nothing drains (WP-18).
+    for (const PendingPaste& pending : waiting) {
+        Client* const owner = client_with_id(pending.client);
+        if (owner == nullptr) continue;
+        proto::PasteAck ack;
+        ack.seq = pending.chunk.seq;
+        send(*owner, ack);
+    }
+}
+
 void Server::drop(Client& client, std::string_view why) {
+    // A paste this connection was holding cannot be finished by anybody, and
+    // what it queued is not wanted (WP-42). Released before the socket goes,
+    // so the terminal is free for whoever is still here.
+    release_paste_slots(client.id);
     // A socket that closed IS a detach (plans/03): no message arrives, nothing
     // is asked, and the terminals carry on. Marked before the stream goes so
     // that whatever the loop does next does not treat this client as attached.

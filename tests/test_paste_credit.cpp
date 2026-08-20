@@ -25,6 +25,7 @@
 #include "cvision/testing/cktest.hpp"
 #include "platform/socket.hpp"
 #include "server/server.hpp"
+#include "server/terminals.hpp"
 
 namespace {
 
@@ -322,6 +323,137 @@ CK_TEST(the_server_acks_a_chunk_it_could_not_deliver) {
     if (ack == nullptr) return;
     CK_CHECK(ack->seq == 17U);
 
+    forget(socket);
+}
+
+
+// --- One terminal, two clients (WP-42) -------------------------------------
+//
+// The server routes a `PasteChunk` by terminal id and asks nothing about who
+// is attached — exactly as it does for `Input`. So two CONNECTED clients can
+// paste into one terminal today, without multi-attach existing at all: a
+// client that has been taken over still holds its socket, and a CLI client
+// never attaches in the first place. Two pastes then interleave, chunk by
+// chunk, and the child is given text neither reader typed.
+//
+// The ack is the observable. `PasteAck` means "written to the PTY" — that is
+// the whole of the pacing contract — so the ORDER acks come back in is the
+// order the writes happened in, and a test can assert the rule without
+// reading a child's echo or waiting on real time.
+
+namespace {
+
+ckm::server::TerminalSpec spec_running(std::string command) {
+    ckm::server::TerminalSpec spec;
+    spec.command = std::move(command);
+    spec.working_directory = "/";
+    spec.columns = 80;
+    spec.rows = 24;
+    spec.pixel_width = 80 * 9;
+    spec.pixel_height = 24 * 18;
+    spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"}, {"LC_ALL", "C"}};
+    return spec;
+}
+
+PasteChunk chunk_of(std::uint64_t term, std::uint32_t seq, bool last, std::string bytes) {
+    PasteChunk chunk;
+    chunk.term = term;
+    chunk.seq = seq;
+    chunk.final_chunk = last ? 1 : 0;
+    chunk.bytes = std::move(bytes);
+    return chunk;
+}
+
+// Steps the server a few times and reports whether this client has an ack
+// waiting. For the cases whose claim is that one has NOT arrived.
+bool acked(ckm::server::Server& server, WireClient& client, std::uint32_t seq, int passes = 8) {
+    for (int pass = 0; pass < passes; ++pass) {
+        if (!server.step()) return false;
+        Message message;
+        while (client.take(message)) {
+            const auto* ack = std::get_if<PasteAck>(&message);
+            if (ack != nullptr && ack->seq == seq) return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+CK_TEST(a_second_clients_paste_waits_for_the_first_to_finish) {
+    const std::filesystem::path socket = private_socket("two-pastes");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    WireClient first;
+    WireClient second;
+    CK_CHECK(first.connect(socket));
+    CK_CHECK(second.connect(socket));
+    ckm::proto::Hello hello;
+    hello.build = std::string(ckm::proto::kBuildIdentity);
+    first.say(hello);
+    second.say(hello);
+    Message greeting;
+    CK_CHECK(pump_until(server, first, greeting));
+    CK_CHECK(pump_until(server, second, greeting));
+
+    // The first reader starts a paste and does not finish it.
+    first.say(chunk_of(terminal.id(), 1, /*last=*/false, "first client, part one\n"));
+    CK_CHECK(acked(server, first, 1));
+
+    // The second reader pastes into the SAME terminal, whole and final.
+    second.say(chunk_of(terminal.id(), 1, /*last=*/true, "second client, all of it\n"));
+    // It must not be written yet: a terminal takes one paste at a time, and
+    // the first reader's is still open. No ack means not written.
+    CK_CHECK(!acked(server, second, 1));
+
+    // The first reader finishes.
+    first.say(chunk_of(terminal.id(), 2, /*last=*/true, "first client, part two\n"));
+    CK_CHECK(acked(server, first, 2));
+
+    // And the slot passes to whoever was waiting, without them resending.
+    CK_CHECK(acked(server, second, 1));
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_client_that_goes_away_mid_paste_does_not_wedge_the_terminal) {
+    // The failure this must not have: a reader whose laptop slept holding a
+    // half-finished paste, and a terminal nobody else may paste into for the
+    // rest of the session. The slot is released when its holder's connection
+    // goes, exactly as every other per-connection resource is.
+    const std::filesystem::path socket = private_socket("wedge");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+
+    WireClient waiting;
+    ckm::proto::Hello hello;
+    hello.build = std::string(ckm::proto::kBuildIdentity);
+    {
+        WireClient leaver;
+        CK_CHECK(leaver.connect(socket));
+        leaver.say(hello);
+        Message greeting;
+        CK_CHECK(pump_until(server, leaver, greeting));
+        leaver.say(chunk_of(terminal.id(), 1, /*last=*/false, "half a paste"));
+        CK_CHECK(acked(server, leaver, 1));
+    }  // and its socket closes with the paste still open
+
+    CK_CHECK(waiting.connect(socket));
+    waiting.say(hello);
+    Message greeting;
+    CK_CHECK(pump_until(server, waiting, greeting));
+    waiting.say(chunk_of(terminal.id(), 1, /*last=*/true, "the next reader's text"));
+    CK_CHECK(acked(server, waiting, 1));
+
+    server.terminals().close_all();
     forget(socket);
 }
 

@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <deque>
 #include <unordered_map>
 #include <vector>
 
@@ -289,6 +290,46 @@ private:
     // Whoever is attached to this session, or nullptr. At most one (plans/03:
     // the latest client wins), which is why this can answer with one pointer.
     Client* client_attached_to(SessionId id);
+    // The connection with this id, or nullptr once it has gone. Used by the
+    // paste slot below, which remembers a client across the time its chunk
+    // spends waiting for another reader to finish.
+    Client* client_with_id(ClientId id);
+
+    // --- One paste at a time, per terminal (WP-42) --------------------
+    //
+    // `PasteChunk` is routed by terminal id and asks nothing about who is
+    // attached — exactly as `Input` does — so two connected clients can paste
+    // into one terminal, and without this they interleave chunk by chunk and
+    // the child is given text neither reader typed. It does not take
+    // multi-attach to reach: a client that was taken over still holds its
+    // socket, and a CLI client never attaches at all.
+    //
+    // So a terminal has a slot. The first chunk of a paste takes it, the
+    // final chunk releases it, and a chunk from anyone else waits — UNACKED,
+    // which is what makes the waiting bounded: WP-18's credit stops each
+    // client at two chunks on the wire, so a terminal can hold at most two
+    // per waiting reader however long the paste in front of them is.
+    struct PendingPaste {
+        ClientId client = 0;
+        proto::PasteChunk chunk;
+    };
+    struct PasteSlot {
+        ClientId owner = 0;  // 0 while nobody is mid-paste
+        std::deque<PendingPaste> waiting;
+    };
+    // Writes one chunk, acks it, and takes or releases the slot accordingly.
+    void write_paste_chunk(Terminal& terminal, Client& client, const proto::PasteChunk& chunk);
+    // Hands a free slot to whoever has been waiting longest, until somebody
+    // takes it or nobody is left.
+    void drain_paste_slot(TerminalId term);
+    // A connection has gone: it cannot finish a paste it was holding, and
+    // nothing it queued will ever be wanted. Without this a reader whose
+    // laptop slept mid-paste would wedge that terminal for everybody else.
+    void release_paste_slots(ClientId client);
+    // A terminal has gone: everything waiting for it is acked rather than
+    // dropped, because the credit is about a CLIENT'S queue and a client that
+    // never hears back holds the rest of that paste for ever (WP-18).
+    void forget_paste_slot(TerminalId term);
     // Ending a session, without blocking the loop.
     //
     // Every terminal is ASKED to end — ckVision signals the process group,
@@ -376,6 +417,7 @@ private:
     platform::Poller poller_;
     std::vector<std::unique_ptr<Client>> clients_;
     ClientId next_client_ = 1;
+    std::unordered_map<TerminalId, PasteSlot> paste_slots_;
     Terminals terminals_;
     DiffEngine diffs_;
     std::int64_t next_tick_nanos_ = 0;
