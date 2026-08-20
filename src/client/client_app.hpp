@@ -1028,6 +1028,18 @@ private:
         // the `[exit]` badge went in above.
         bool lit = false;
         bool noted_activity = false;
+        // How many title polls this terminal's bell has stood for. The poll is
+        // the client's only regular tick, so the bell's whole behaviour is
+        // counted in it rather than read off a clock: at 100 ms a phase is 5
+        // ticks and five seconds is 50, which makes "blinks once a second" and
+        // "stops after five seconds" the SAME mechanism at two multiples — and
+        // makes both testable without a real clock anywhere near them.
+        int bell_ticks = 0;
+        // What the title currently shows for the bell: the glyph, a single
+        // space during a blink's off phase, or nothing at all once the bell is
+        // over. Stored rather than recomputed in `effective_title`, which is
+        // static and has no business knowing about focus or ticks.
+        std::string bell_cell;
         // What this reader has already answered by looking. The server's flag
         // is sticky — set when the child rings, cleared only on respawn — so
         // it says "this terminal has rung at some point", not "since you last

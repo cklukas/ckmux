@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "client/client_app.hpp"
+#include "cvision/core/text.hpp"
 #include "cvision/term/headless_terminal.hpp"
 #include <cstdlib>
 #include <filesystem>
@@ -2187,4 +2188,133 @@ CK_TEST(a_reader_who_did_not_ask_for_noise_does_not_get_any) {
     f.poll();
     CK_CHECK(f.rings == 0);
     CK_CHECK(any_label_contains(f.client.footer_labels(), "• 1"));
+}
+
+// --- WP-19's rendering: the bell glyph ---------------------------------------
+
+namespace {
+
+// One title poll, exactly. `title_poll_nanos` is 100 ms, and the bell counts
+// polls rather than seconds — so a test that advanced by some other amount
+// would be counting something the code does not.
+void tick(MarkedFixture& f) {
+    f.clock.advance(100'000'000);
+    f.app.step(f.clock.now_nanos());
+}
+
+ckv::widgets::Window* other_window(ClientApp& client) {
+    for (ckv::widgets::Window* w : client.desktop().windows())
+        if (subsession_of(w) != nullptr && w != client.desktop().active_window()) return w;
+    return nullptr;
+}
+
+}  // namespace
+
+CK_TEST(the_bell_glyph_is_one_cell_and_so_is_the_space_that_replaces_it) {
+    // The invariant the owner's whitespace clause protects, checked against
+    // ckVision's own measurement rather than against how narrow a character
+    // looks. U+1F514 🔔 — the obvious choice — is width 2, and would move
+    // every unfocused title a column twice a second for as long as it rang.
+    CK_CHECK(ckv::text::text_width("⍾") == 1);
+    CK_CHECK(ckv::text::text_width(" ") == 1);
+    CK_CHECK(ckv::text::text_width("\U0001F514") != 1);  // the one not to use
+}
+
+CK_TEST(a_bell_in_the_window_a_reader_is_in_is_said_once_and_then_let_go) {
+    // Five seconds, steady, not blinking: the program rang while they were
+    // looking at it, so this is an acknowledgement rather than a summons.
+    MarkedFixture f;
+    tick(f);
+    ckv::widgets::Window* const here = f.client.desktop().active_window();
+    CK_CHECK(subsession_of(here) != nullptr);
+    f.marks[subsession_of(here)] = ckm::client::TerminalMarks{true, false};
+
+    tick(f);
+    CK_CHECK(here->title().find("⍾") != std::string::npos);
+    // Steady while it stands: no off phase to catch it in.
+    for (int i = 0; i < 8; ++i) {
+        tick(f);
+        CK_CHECK(here->title().find("⍾") != std::string::npos);
+    }
+    // And it stops. Fifty polls is five seconds; well past that it is gone,
+    // rather than blinking on forever at a slow rate.
+    for (int i = 0; i < 60; ++i) tick(f);
+    CK_CHECK(here->title().find("⍾") == std::string::npos);
+}
+
+CK_TEST(a_bell_in_a_window_the_reader_is_not_in_blinks_until_they_answer_it) {
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    tick(f);
+    ckv::widgets::Window* const away = other_window(f.client);
+    CK_CHECK(away != nullptr);
+    if (away == nullptr) return;
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+
+    // Both phases occur within one cycle — the point of a blink is that it
+    // has two states, and a test that only ever caught one would pass on a
+    // glyph that never turned off.
+    bool seen_on = false;
+    bool seen_off = false;
+    for (int i = 0; i < 20; ++i) {
+        tick(f);
+        if (away->title().find("⍾") != std::string::npos) seen_on = true;
+        else seen_off = true;
+    }
+    CK_CHECK(seen_on);
+    CK_CHECK(seen_off);
+}
+
+CK_TEST(a_blinking_bell_never_moves_the_title_it_sits_in_front_of) {
+    // The whitespace clause, stated as the property it exists for: across a
+    // full cycle the rendered width must not change, or the row re-flows twice
+    // a second. This is the case that fails if anybody swaps the glyph for an
+    // emoji, and it fails on WIDTH rather than on the character, so it keeps
+    // working for whatever glyph a later reader prefers.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    tick(f);
+    ckv::widgets::Window* const away = other_window(f.client);
+    CK_CHECK(away != nullptr);
+    if (away == nullptr) return;
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+
+    tick(f);
+    const int width = ckv::text::text_width(away->title());
+    for (int i = 0; i < 20; ++i) {
+        tick(f);
+        CK_CHECK(ckv::text::text_width(away->title()) == width);
+    }
+}
+
+CK_TEST(visiting_the_window_puts_the_bell_glyph_down_with_the_mark) {
+    // The glyph answers the same question the footer flag does, so it is
+    // answered the same way: by looking. Without this the blink would outlive
+    // the reason for it.
+    MarkedFixture f;
+    f.client.open_terminal("second");
+    tick(f);
+    ckv::widgets::Window* const away = other_window(f.client);
+    CK_CHECK(away != nullptr);
+    if (away == nullptr) return;
+    f.marks[subsession_of(away)] = ckm::client::TerminalMarks{true, false};
+    for (int i = 0; i < 4; ++i) tick(f);
+
+    f.client.desktop().activate(away);
+    for (int i = 0; i < 60; ++i) tick(f);   // past its own five seconds
+    CK_CHECK(away->title().find("⍾") == std::string::npos);
+
+    // And back out again, which is the half that matters and that the first
+    // version of this case missed: while the reader stands IN the window the
+    // blink branch never runs at all, so a mutation making a visited bell
+    // blink forever passed. The bell must stay down once answered — that is
+    // what "answered" means, and stepping away is when it would return.
+    ckv::widgets::Window* const back = f.client.desktop().windows().front() == away
+                                           ? f.client.desktop().windows().back()
+                                           : f.client.desktop().windows().front();
+    f.client.desktop().activate(back);
+    for (int i = 0; i < 20; ++i) {
+        tick(f);
+        CK_CHECK(away->title().find("⍾") == std::string::npos);
+    }
 }

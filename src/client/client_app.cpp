@@ -1614,7 +1614,10 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
             refresh_footer();
         });
     };
-    titles_[terminal_window] = TerminalTitle{fallback_title, {}, {}, {}, number};
+    // Named rather than positional: this initialiser has silently shifted a
+    // field into the wrong slot twice as the struct grew (`badge`, then `lit`),
+    // and each time it compiled or failed somewhere unrelated.
+    titles_[terminal_window] = TerminalTitle{.fallback = fallback_title, .number = number};
     desktop_->add_window(std::move(window));
     app_.set_focus(terminal_view);
     refresh_footer();
@@ -1803,6 +1806,19 @@ ckv::widgets::Window* ClientApp::active_terminal() const {
     return desktop_ != nullptr ? desktop_->active_window() : nullptr;
 }
 
+// The bell a window wears in front of its name (WP-19, owner ruling
+// 2026-08-20). One cell, always: `⍾` is U+237E, measured at width 1 by
+// ckVision's own `text::text_width`, and the blink's off phase is a SPACE
+// rather than nothing so the title never shifts a column. The obvious glyph,
+// U+1F514 🔔, measures 2 — it would re-flow every unfocused title once per
+// second, which is the invariant the whitespace rule exists to protect.
+constexpr std::string_view kBellGlyph = "\u237E";
+// Both in POLLS, because the poll is the only regular tick this client has.
+// At `title_poll_nanos` = 100 ms: five polls is half a second, so ten is one
+// blink cycle; fifty is five seconds.
+constexpr int kBellBlinkPolls = 5;
+constexpr int kBellFocusedPolls = 50;
+
 std::string ClientApp::effective_title(const TerminalTitle& title) {
     // The reader's name outranks everything, which is what makes it an
     // override rather than one more writer of the same string. Underneath it
@@ -1818,8 +1834,13 @@ std::string ClientApp::effective_title(const TerminalTitle& title) {
     // different news — one is a build that failed and one is a build that
     // finished — so the number is stated when the host can supply it, and
     // `[exited]` stands in when it cannot rather than inventing a zero.
-    if (!title.badge.empty()) return name + " " + title.badge;
-    return name;
+    std::string composed = name;
+    if (!title.badge.empty()) composed += " " + title.badge;
+    // In FRONT of the name, because it is the thing a reader is meant to catch
+    // out of the corner of an eye, and because the badge is about the program
+    // that ended while this is about the one that is still there.
+    if (!title.bell_cell.empty()) composed = title.bell_cell + composed;
+    return composed;
 }
 
 
@@ -1909,6 +1930,39 @@ void ClientApp::refresh_terminal_titles() {
                 // only when some unrelated event happened to redraw the
                 // footer, which for a reader waiting on a build is never.
                 refresh_footer();
+            }
+
+            // The bell glyph, whose whole behaviour is counted in polls.
+            //
+            // A reader IN the window is told briefly and then left alone: the
+            // program rang while they were looking at it, so five seconds is
+            // an acknowledgement rather than a summons. A reader ELSEWHERE is
+            // summoned, and a blink is what carries across a screen they are
+            // not pointed at — until they answer it by visiting, which is what
+            // `bell_seen` records.
+            if (!marks.bell) {
+                entry->second.bell_ticks = 0;
+            } else {
+                ++entry->second.bell_ticks;
+            }
+            const int ticks = entry->second.bell_ticks;
+            std::string cell;
+            if (marks.bell) {
+                if (!elsewhere) {
+                    // 50 polls at 100 ms. Steady, not blinking: a reader
+                    // looking straight at it does not need to be waved at.
+                    if (ticks <= kBellFocusedPolls) cell = std::string(kBellGlyph);
+                } else if (!entry->second.bell_seen) {
+                    // 5 polls on, 5 off — one second a cycle. The off phase is
+                    // a SPACE and not an empty string, or the title shifts a
+                    // column twice a second for as long as the bell stands.
+                    const bool on = ((ticks - 1) / kBellBlinkPolls) % 2 == 0;
+                    cell = on ? std::string(kBellGlyph) : std::string(" ");
+                }
+            }
+            if (cell != entry->second.bell_cell) {
+                entry->second.bell_cell = cell;
+                window->set_title(effective_title(entry->second));
             }
         }
         // While its history is being read the caption belongs to copy mode,
