@@ -56,6 +56,18 @@ evidence. If the numbering in a given build disagrees with the titles below,
 **the titles win** — they are what ckmux claims; the numbers are an index into
 one build's menu.
 
+**For `2.7 (20251205)` the numbering has been read off the running program and
+it matches plans/04**, so on the machine of record the numbers and the titles
+agree and neither has to give way:
+
+    1 cursor movements   2 screen features    3 character sets   4 double-sized
+    5 keyboard           6 terminal reports   7 VT52             8 VT102 features
+    9 known bugs        10 reset/self-test   11 non-VT100        12 parameters
+
+Claimed: **1, 2, 3, 6, 8, 11**. Excluded (§2.3): **4, 5, 7, 9, 10**. Captured
+rather than assumed, because a chapter number is the one thing a divergence
+entry cannot afford to be vague about.
+
 **The machine of record runs `vttest 2.7 (20251205)`** — that string
 verbatim, recorded beside `tmux 3.6b` (§4.1) in every report. Pinned on
 2026-08-20, before any chapter was driven, which is the only moment a pin is
@@ -169,6 +181,55 @@ golden that nobody predicted has stopped asserting anything — it now records
 what the code did, which is precisely the thing under test. And keep the clock
 and everything else time-varying *out* of the frame, or the golden goldens the
 clock (`test_core_promise.cpp` is the model for both halves).
+
+#### 2.4.1 Two evidence paths: the screen, and the wire
+
+Found by driving the oracle rather than by reading about it, and it changes
+what §2 should assert for one chapter in particular.
+
+**`vttest` does not have to be driven by keystrokes.** It takes a command file
+and writes its own log:
+
+```
+vttest -c cmdfile -l logfile 24x80
+```
+
+`-c` feeds the menu non-interactively; `-l` records what happened. And the log
+is not prose — **it is the wire exchange**:
+
+```
+Note: Setup Terminal with test-defaults
+Send: <27> [ 0 c
+Wait: 1
+Read:
+Done: 1
+```
+
+`Send:` / `Wait:` / `Read:` / `Done:` — what the oracle sent, what it waited
+for, and what came back.
+
+**So there are two kinds of evidence, and the chapter decides which one is
+right:**
+
+| Path | Chapters | Evidence |
+|---|---|---|
+| **Visual** | 1, 2, 3, 8 | The decoded grid, per §2.4 — the claim is about what is drawn, and a golden frame is the only thing that captures it. |
+| **Wire** | **6** | The log's `Send:`/`Read:` pairs. The claim is about *replies*, not about pixels: DA1, DSR, DECRPTUI. Scraping the screen for a reply the terminal made is lossy in the one direction that matters. |
+| Mixed | 11 | Per section — it is a grab bag, so the rig picks the path section by section and says which it used. |
+
+**And the wire path is what §0 asked for and could not previously have.** §6
+requires a divergence entry to cite the standard rather than another
+implementation; with the log, an entry can quote **the actual bytes sent and
+the actual bytes returned** and compare those to the ECMA-48 clause. A screen
+impression cannot be compared to a clause with the same confidence, and the
+gap between them is exactly where somebody reaches for another terminal to
+settle it. **Better evidence is a provenance safeguard, not only a convenience.**
+
+**One asymmetry to carry into the rig, because it is not a matter of degree:**
+chapter 6 driven against a terminal that never answers produces **no log at
+all** — vttest blocks on a reply that never arrives and never reaches the
+point of writing one. Chapters 1 and 6 differ in kind, not in content. §7 says
+what that must not be recorded as.
 
 ## 3. The reference-app matrix
 
@@ -381,7 +442,16 @@ printing acceptance (§5), plus one row per claimed vttest chapter (§2.2).
 | `pass` | Ran, and met §3's three general conditions plus the row's own. |
 | `fail` | Ran and did not. Blocks the milestone. |
 | `n/a — by design` | Ran, and the correct result was that it did not happen: Sixel under Terminal.app (§1). **Requires** a note naming the capability and the host that lacks it, so it can never be used to hide a `fail`. |
-| `not run` | **Did not run at all.** |
+| `not run` | **The rig did not drive it at all.** Not to be confused with driving it and getting nothing back — see below. |
+
+**Absence of output is not absence of a run, and conflating them converts a
+failure into an unfinished item.** A chapter driven under a terminal that never
+answers can produce **no log file at all** — vttest's chapter 6 does exactly
+this, blocking on a reply that never comes and never reaching the point of
+writing one (measured, 2026-08-20). A rig that maps "no artifact" to `not run`
+silently downgrades that to something nobody has to fix. **If the rig drove it,
+the cell is `pass` or `fail`, whatever came back — including nothing.** `not
+run` is reserved for what the rig never attempted.
 
 **`not run` must be its own value and must never render as blank.** A blank
 cell in a table whose other cells say `pass` is read as `pass` by every reader
