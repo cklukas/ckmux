@@ -149,6 +149,13 @@ struct WireClient {
             ++count;
             if (std::holds_alternative<ckm::proto::HelloAck>(message)) continue;
             (void)session.handle(message);
+            // Latched as it goes past, not left to be read off `last_`. A pump
+            // call decodes every complete frame in the buffer, so under a flood
+            // a `Pong` is followed by more `GridDelta`s in the SAME batch and
+            // `last_` no longer holds it — the answer arrived and the reader
+            // looking at the end of the batch missed it.
+            if (const auto* pong = std::get_if<ckm::proto::Pong>(&message))
+                last_pong_nonce_ = pong->nonce;
             last_ = std::move(message);
         }
         session.heal_if_needed();
@@ -182,6 +189,7 @@ struct WireClient {
     }
 
     ckm::proto::Message last_;
+    std::uint64_t last_pong_nonce_ = 0;
 };
 
 // The highest counter value on a screen that reads "count 1 count 2 ...".
@@ -469,8 +477,7 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
         const clock_type::time_point deadline = sent + std::chrono::milliseconds(2000);
         while (!answered && clock_type::now() < deadline) {
             client.pump();
-            if (const auto* pong = std::get_if<ckm::proto::Pong>(&client.last_))
-                answered = pong->nonce == attempt;
+            answered = client.last_pong_nonce_ == attempt;
             if (!answered) ::usleep(200);
         }
         CK_CHECK(answered);
