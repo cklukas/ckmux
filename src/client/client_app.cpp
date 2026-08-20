@@ -1429,6 +1429,14 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     const ckm::ShellLaunch shell = ckm::shell_launch(options_.settings.shell, options_.settings.login_shell);
     ckv::term::TerminalLaunchSpec launch =
         ckv::term::TerminalLaunchSpec::program(shell.executable, shell.arguments);
+    // Bounded, and this is a serverless terminal running the READER'S OWN
+    // login shell -- the case ckVision's unbounded policy cannot close. An
+    // interactive shell ignores SIGTERM by design, so under `WaitForExit` a
+    // single terminal whose shell declined to go could hold the client in its
+    // destructor for as long as that shell felt like living. The server side
+    // has always named this policy (`terminals.cpp`); the local path took the
+    // library default and so inherited an unbounded close.
+    launch.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
     launch.argv0 = shell.argv0;
     launch.profile = ckv::term::embedded_xterm_sixel_profile();
     // Let the child name its own window (OSC 0 and OSC 2). This is what makes
