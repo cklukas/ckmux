@@ -141,6 +141,7 @@ take first.
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d1d71e2` × ckVision `e070775` — 36/36 Debug, 36/36 ASan+UBSan, ctest exit 0; the `pty` label confirmed by measurement, and case 6 standing as ckVision `a1a5433`'s downstream acceptance) | U7-a ✓, WP-40 ✓ |
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`; the wire edge `02f7c97`, the `--share` flag that reaches it in the CLI landing) — the marks a reader is owed wait on WP-41's client half | WP-40, WP-41, WP-42, WP-43 |
+| 58 | **WP-45** — One name, one session | ckmux | 0.5 d | **Done** (2026-08-20, owner ruling) | — |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -2006,6 +2007,41 @@ ckVision `a1a5433`, with this suite's case 6 as the standing repro), and
 a `CKV_ASSERT` under `HeadlessTerminal` died mute because the message ledger
 is only printed by a live `PosixTerminal` — every headless abort in the
 fleet now names its contract on stderr instead.
+
+**WP-45 — One name, one session** *(ckmux)*. plans/03 contradicted itself for
+months and nobody noticed until ckmux-63 read both rows in one sitting:
+`new-session` said *"name collision → reject with error"*, `rename-session`
+said *"a duplicate is their business"*, and the code implemented the second in
+both places. The owner ruled on 2026-08-20 — **reject in both, "for users
+clarity"** — which is the reading that makes the rule hold: a name a reader
+cannot take at creation is one they could otherwise reach in two steps by
+making it under another name and renaming into it. The id remains the identity
+and every message on the wire still refers to it; what changed is that the
+NAME, which is the only handle a reader has in the picker and in `ckmux attach
+build`, now points at exactly one thing.
+
+*Done when*, and the interesting half is what must NOT become a refusal:
+renaming a session to the name it already has is a no-op (a reader confirming
+a dialog unchanged has not asked for anything), an empty name still leaves the
+name alone, and `Build` and `build` remain two names because case folding is a
+locale question a multiplexer has no business answering. Six cases in
+`tests/test_session_names.cpp`, all six failing when the two rejections are
+mutated out.
+
+Two things fell out of it. `ErrorCode::NameTaken` had **no producer in `src/`**
+— declared, and referenced only by a test that fabricated the error to check
+the client's dialog rendered it. Third instance of the shape in a week, after
+`Attach.share` and `TermMeta::bell_serial`; this gives it its first real one.
+And `ckmux new -s <taken>` answered *"the server did not confirm the new
+session"* — true, useless, and indistinguishable from a crash — because
+`run_new` read one message and expected a `SessionList`. It now repeats the
+server's own sentence.
+
+The client-side ambiguity branch in `cli.cpp` (`resolve_session`) is kept and
+**relabelled defensive**: no server of this build can produce a list it would
+fire on, and its comment previously stated "two sessions may share a name" as a
+fact — a true sentence about the old server that would have been read as one
+about this one.
 
 **WP-44 — Simultaneous attach, opt-in** *(ckmux)*. The flag, and the server
 side of it: `Attach` gains an opt-in, attaching without it takes the session

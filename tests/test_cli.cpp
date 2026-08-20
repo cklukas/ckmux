@@ -307,22 +307,29 @@ CK_TEST(a_session_made_from_the_cli_is_a_session_the_cli_can_see_and_end) {
     forget(socket);
 }
 
-CK_TEST(a_name_that_names_two_sessions_is_refused_rather_than_guessed) {
-    // Sessions are identified by id, not by name (plans/03), so two may share
-    // one. Picking either is how a reader ends the session they meant to keep.
+CK_TEST(a_name_already_in_use_is_refused_at_the_shell_and_says_so) {
+    // This case used to assert the opposite half: it made two sessions called
+    // `same` and checked that `attach same` refused to guess between them.
+    // That state can no longer be built — plans/03's two operation rows were
+    // made to agree on 2026-08-20 and the server refuses a duplicate at
+    // creation — so the case now asserts the refusal that replaced it. The
+    // ambiguity path in `resolve_session` survives as a defensive branch and
+    // is documented there as one; what changed is that nothing can reach it.
     const std::filesystem::path socket = private_socket("ambiguous");
     forget(socket);
     CK_CHECK(run_ckmux_against(socket, {"new", "-s", "same"}).exit_code == 0);
-    CK_CHECK(run_ckmux_against(socket, {"new", "-s", "same"}).exit_code == 0);
 
-    for (const char* verb : {"kill-session", "attach"}) {
-        const RunResult result = run_ckmux_against(socket, {verb, "same"});
-        CK_CHECK(result.exit_code == 1);
-        CK_CHECK(result.err.find("more than one session") != std::string::npos);
-    }
-    // An id is unambiguous by construction, and is what the refusal advises.
-    const RunResult by_id = run_ckmux_against(socket, {"kill-session", "1"});
-    CK_CHECK(by_id.exit_code == 0);
+    const RunResult again = run_ckmux_against(socket, {"new", "-s", "same"});
+    CK_CHECK(again.exit_code == 1);
+    // The server's own sentence, not a generic failure: before this, a reader
+    // colliding on a name was told "the server did not confirm the new
+    // session", which is true, useless, and reads like a crash.
+    CK_CHECK(again.err.find("already called") != std::string::npos);
+    CK_CHECK(again.err.find("same") != std::string::npos);
+    // And the name still names exactly one session, which is the whole point
+    // of refusing: `kill-session` by name has something unambiguous to act on.
+    const RunResult by_name = run_ckmux_against(socket, {"kill-session", "same"});
+    CK_CHECK(by_name.exit_code == 0);
 
     (void)run_ckmux_against(socket, {"kill-server"});
     forget(socket);

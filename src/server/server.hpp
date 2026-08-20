@@ -318,6 +318,12 @@ private:
     // one past the largest number already taken. A reader who names nothing
     // still gets names that sort and do not collide.
     std::string next_session_name() const;
+    // The session already called `name`, ignoring the one with `except_id` —
+    // which is what lets a rename to a session's OWN name be a no-op rather
+    // than a refusal. Names are compared exactly: a reader who wants `Build`
+    // and `build` to be different sessions is entitled to them, and case
+    // folding is a locale question this has no business answering.
+    const Session* session_named(std::string_view name, SessionId except_id = 0) const;
     void send_session_list(Client& client);
     // Whoever is attached to this session, or nullptr. At most one (plans/03:
     // the latest client wins), which is why this can answer with one pointer.

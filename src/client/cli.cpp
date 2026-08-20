@@ -194,8 +194,16 @@ CliRequest parse_cli(const std::vector<std::string>& arguments) {
 // whatever session happens to hold id 3 would act on the wrong one.
 //
 // Returns 0 for "no match", and sets `ambiguous` when a name names more than
-// one: two sessions may share a name (plans/03 makes the id the identity, not
-// the name), and picking one of them silently is how a reader kills the other.
+// one.
+//
+// That branch is DEFENSIVE, not live, and saying so is the point: a server of
+// this build refuses a duplicate name at creation and at rename (plans/03's
+// two operation rows, made to agree on 2026-08-20), so it cannot produce a
+// list this branch would fire on. It stays because the cost is a counter and
+// the alternative — picking one of two silently — is how a reader kills the
+// session they meant to keep. A comment that still claimed "two sessions may
+// share a name" would be a true sentence about the old server read as a fact
+// about this one.
 namespace {
 
 std::uint64_t resolve_session(const std::vector<proto::SessionInfo>& sessions,
@@ -284,6 +292,14 @@ int run_new(const std::filesystem::path& socket, const std::filesystem::path& ex
     proto::Message answer;
     if (!await_message(connection.stream, reader, answer)) {
         std::fprintf(stderr, "ckmux: the server did not confirm the new session\n");
+        return 1;
+    }
+    // A refusal is an answer, and it is the one worth repeating word for word.
+    // Without this the reader of `ckmux new -s build` on a name already taken
+    // got "the server did not confirm the new session" — true, useless, and
+    // indistinguishable from a server that had fallen over.
+    if (const auto* refused = std::get_if<proto::Error>(&answer)) {
+        std::fprintf(stderr, "ckmux: %s\n", refused->human.c_str());
         return 1;
     }
     const auto* list = std::get_if<proto::SessionList>(&answer);

@@ -540,6 +540,21 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
     if (const auto* request = std::get_if<proto::NewSession>(&message)) {
+        // Two sessions with one name is a reader looking at a picker that
+        // cannot tell them which is which, and a `ckmux attach build` that has
+        // to refuse rather than answer. The id is still the identity — that is
+        // what everything on the wire refers to — but the NAME is the only
+        // handle a reader has, and a handle that points at two things is not
+        // one. Refused here rather than silently disambiguated, because the
+        // reader is right here and can choose another.
+        if (const Session* const taken = session_named(request->name)) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NameTaken);
+            error.context = "NewSession";
+            error.human = "a session is already called \"" + taken->name + "\"";
+            send(client, error);
+            return;
+        }
         Session& session = create_session(request->name);
         // The fields this message always carried and this handler ignored,
         // found by WP-11: `ckmux new 'make -j8'` made an empty session and
@@ -588,8 +603,25 @@ void Server::handle(Client& client, const proto::Message& message) {
             send(client, error);
             return;
         }
-        // A name is a reader's label, not an identifier: the id is what
-        // everything else refers to, so a duplicate name is their business.
+        // The same rule as `NewSession`, and it has to be the same rule: a
+        // name a reader cannot take at creation is a name they could otherwise
+        // reach in two steps by renaming into it, which would leave the picker
+        // in exactly the state the other handler exists to prevent.
+        //
+        // `except_id` is what makes renaming a session to the name it already
+        // has a no-op rather than a refusal — a reader confirming a dialog
+        // without changing the text has not asked for anything and should not
+        // be told off for it. An EMPTY name still leaves the name alone, for
+        // the older reason: a session with no name is a row in the picker with
+        // nothing to point at.
+        if (const Session* const taken = session_named(request->name, session->id)) {
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::NameTaken);
+            error.context = "RenameSession";
+            error.human = "a session is already called \"" + taken->name + "\"";
+            send(client, error);
+            return;
+        }
         session->name = request->name.empty() ? session->name : request->name;
         for (const std::unique_ptr<Client>& watcher : clients_)
             if (watcher->greeted) send_session_list(*watcher);
@@ -1075,6 +1107,13 @@ std::size_t Server::attached_count(SessionId id) {
 Server::Client* Server::client_attached_to(SessionId id) {
     for (const std::unique_ptr<Client>& client : clients_)
         if (client->attached && !client->closing && client->session == id) return client.get();
+    return nullptr;
+}
+
+const Session* Server::session_named(std::string_view name, SessionId except_id) const {
+    if (name.empty()) return nullptr;
+    for (const Session& session : sessions_)
+        if (session.id != except_id && session.name == name) return &session;
     return nullptr;
 }
 
