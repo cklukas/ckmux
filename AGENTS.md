@@ -76,6 +76,23 @@ The division:
 - **The tester runs them.** Full CTest sweeps, ASan/UBSan configurations,
   cross-repo rebuilds, and the gate on `HEAD` after every landing belong to
   the tester. A worker does not run these.
+- **The tester commits work it has approved (owner, 2026-08-20).** A worker
+  writes the code and its tests and hands over files and intent; the tester
+  gates them, and when they pass, *the tester makes the commit*. Authorship
+  stays with the worker and the message says whose work it is. A worker does
+  not land its own package while a tester is active.
+
+  The reason is not trust, it is arithmetic. On the day this was written, six
+  separate incidents happened at the moment of landing and none happened in
+  the code: a shared working tree behind HEAD, a shared index carrying another
+  session's staging, a prepared tree built against a ref read minutes earlier,
+  a commit that swept a peer's staged reversion into itself, a commit whose
+  tree equalled its parent's, and a package landed by whole-file add that took
+  ~550 foreign lines with it. Every countermeasure — explicit pathspec, the
+  cached audit in the same chain, the ref read once, the replay afterwards — is
+  a discipline that five sessions must each apply perfectly every time.
+  **One writer to the index removes the class instead of mitigating it five
+  times over.**
 - **Workers delegate testing to the tester and wait for the result.** If work
   depends on a test outcome, it waits for that outcome. Do not carry on
   against an assumed-green — that is how a red `HEAD` survives four sessions
