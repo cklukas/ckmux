@@ -34,6 +34,7 @@ set(CKMUX_TEST_SOURCES
     test_process_stats.cpp
     test_paths.cpp
     test_proto.cpp
+    test_reference_apps.cpp
     test_remote_terminal.cpp
     test_rename_terminal.cpp
     test_rename_wire.cpp
@@ -138,6 +139,11 @@ set(CKMUX_LABELS_test_print_acceptance "pty;e2e")
 # so it is `pty` as well as `unit` — and it is the instrument WP-21 §5's
 # negatives depend on, so a broken one must fail loudly rather than quietly.
 set(CKMUX_LABELS_test_ckspy "unit;pty")
+# WP-21 §3, the reference-app matrix: real programs inside a real ckmux,
+# driven by keystrokes and read off the screen.
+set(CKMUX_LABELS_test_reference_apps "pty;e2e")
+# Eleven rows, each starting a server, a client and a real program.
+set(CKMUX_TIMEOUT_test_reference_apps 900)
 set(CKMUX_LABELS_test_m4_tmux "pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
@@ -176,5 +182,17 @@ foreach(source ${CKMUX_TEST_SOURCES})
     if(DEFINED CKMUX_LABELS_${suite})
         set(CKMUX_SUITE_LABELS "${CKMUX_LABELS_${suite}}")
     endif()
-    set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}" TIMEOUT 120)
+    # Two minutes suits every suite that drives data structures, and none that
+    # drives a matrix of real applications: WP-21 §3 starts a server, a client
+    # and a program per row, and waits on each one's own idea of ready. A suite
+    # may name its own budget rather than have its assertions trimmed to fit a
+    # number chosen for a different kind of test — an acceptance row shortened
+    # until it fits a timeout is an acceptance row that has stopped asserting
+    # what it was written for.
+    set(CKMUX_SUITE_TIMEOUT 120)
+    if(DEFINED CKMUX_TIMEOUT_${suite})
+        set(CKMUX_SUITE_TIMEOUT ${CKMUX_TIMEOUT_${suite}})
+    endif()
+    set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}"
+                         TIMEOUT ${CKMUX_SUITE_TIMEOUT})
 endforeach()

@@ -118,6 +118,15 @@ inline void end_process(::pid_t child) {
 struct Reader {
     std::unique_ptr<ckv::term::PosixTerminalSubsession> client;
 
+    // What the client is told its HOST can do. Settable because WP-21 §3's
+    // Sixel row is about a host that cannot render a picture: the program
+    // draws unconditionally — `img2sixel 1.10.5` sends no probe at all
+    // (§3.1) — so it is ckmux, not the child's manners, that has to keep a
+    // non-graphical screen clean. A test that could not lower this could only
+    // ever exercise the easy half.
+    ckv::term::TerminalCapabilityProfile host_profile =
+        ckv::term::embedded_xterm_sixel_profile();
+
     // The host terminal's own size. Defaulted to something roomy so every
     // existing case is unchanged, and settable because the interesting
     // question for a dialog is what happens when the screen is SMALL — the
@@ -137,7 +146,7 @@ struct Reader {
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
         for (const std::pair<std::string, std::string>& entry : extra_environment)
             spec.environment.push_back({entry.first, entry.second});
-        spec.profile = ckv::term::embedded_xterm_sixel_profile();
+        spec.profile = host_profile;
         spec.profile.cells = cells;
         spec.profile.cell_pixels = ckv::Size{9, 18};
         spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
