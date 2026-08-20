@@ -237,6 +237,20 @@ if(CKMUX_BUILD_TESTING)
                 --self-test)
     set_tests_properties(layer_checker_self_test PROPERTIES
         LABELS "script;architecture" TIMEOUT 30)
+    # A seam nobody wires is a feature a reader cannot reach. The printer
+    # shipped that way -- nine `std::function`s declared, assigned nowhere,
+    # every test green, because every test exercised the half that existed.
+    # Same wiring and same reasoning as the layer checker above, including the
+    # self-test: a checker that has quietly stopped checking reads exactly like
+    # a clean repository.
+    add_test(NAME seam_check
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_seams.py)
+    set_tests_properties(seam_check PROPERTIES LABELS "script;architecture" TIMEOUT 30)
+    add_test(NAME seam_checker_self_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_seams.py
+                --self-test)
+    set_tests_properties(seam_checker_self_test PROPERTIES
+        LABELS "script;architecture" TIMEOUT 30)
 endif()
 
 # After tests/, deliberately: the fuzz directory registers its bounded corpus
