@@ -209,6 +209,53 @@ report confidently on both.
   session's failures in it is a reputation, and nobody writes those down. Say
   the mechanism, not the apology — the mechanism is the part that generalises.
 
+### A number without its configuration is not a measurement (2026-08-20)
+
+`plans/09` recorded `32 ms worst, 24 ms mean` for the flood gate and named no
+build type. Five sessions spent the better part of two days hunting a 20×
+regression against it. There was none: 32 ms was an optimized-build figure,
+every session since has run the Debug build this file documents, and the
+known-good commit measures the same ~500 ms as HEAD when both are built the
+same way.
+
+The figure could not be refuted because it could not be reproduced, and it
+could not be reproduced because the one fact needed to reproduce it was never
+written down. It then survived every careful attempt to explain it — each of
+which produced a true finding about something irrelevant.
+
+**So: a recorded performance figure states its build type, or it is not a
+measurement and must not be used as a baseline.** Where both matter, record
+both — this project gates in Debug, so the Debug number is the one with
+operational meaning and the optimized one is the aspiration.
+
+The same commit turned up the harder half: `046d738` does not build against
+any ckVision commit that existed when it was written, so its figure was taken
+against an uncommitted working tree and is not reconstructible by anyone,
+ever. **A measurement taken against unlanded dependencies is unfalsifiable by
+construction.** Land the dependency first, or record the figure as
+provisional.
+
+### An instrument pointed at the wrong subject is perfectly self-consistent
+
+Three profiles in a row reported "the server is idle in `poll`", with clean
+call graphs and stable sample counts. All three had attached to the wrong
+process: `pgrep -f "ckmux --server"` matched a nine-hour-old orphan from
+another session's gate tree, and then two short-lived servers belonging to
+other tests in the same suite. The truth was the opposite — the server under
+test was pegged at 1.01 s of CPU per second of wall clock for ten straight
+seconds.
+
+Nothing in the output looked wrong, because nothing WAS wrong except the
+subject. This is the same family as a green run from a piped tail: the
+instrument answered a question nobody asked.
+
+**Identify the subject by something unique to this run** — the socket the test
+actually created, a path inside your own build directory — never by a pattern
+that a peer's leftovers can satisfy. A shared machine running eight sessions
+has orphans on it; assume yours is not the only process with that name. And
+where a cheap total exists, prefer it to a sample: `ps -o time=` settled in
+one command what three call graphs had got backwards.
+
 ## Working in a shared tree (several sessions at once, 2026-08-20)
 
 Every session edits one checkout. That is workable, and the failures it
