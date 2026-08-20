@@ -105,6 +105,89 @@ an unattributed sweep of a mutable tree, not weaker.
 When no tester session is active, every worker is its own tester and the
 definition of done below applies unchanged.
 
+## Working in a shared tree (several sessions at once, 2026-08-20)
+
+Every session edits one checkout. That is workable, and the failures it
+produces are mechanical rather than clever — which means they are avoidable
+by rule. All of the following cost somebody an afternoon on the day they were
+written down.
+
+**Announce before the first edit, with the file and the region.** Not "I am
+taking this row" — which files, and roughly where in them. Adjacent hunks in
+one function is the case where a hunk-level split is least reliable, and it is
+the one worth knowing about in advance rather than at merge time.
+
+**A half-saved file is somebody else's build break.** Between an edit and its
+build, the tree is broken for everyone. Keep edits small and land them fast,
+and **verify in a worktree pinned to a COMMIT**, not in the shared tree:
+
+```bash
+git worktree add --detach <scratch>/wt <sha>     # both repos
+git diff HEAD -- <your files> > p.patch && git -C <scratch>/wt apply p.patch
+cmake -S <scratch>/wt -B <scratch>/wt/build -DCKMUX_CKVISION_SOURCE_DIR=<scratch>/ckv
+```
+
+Pin a commit and apply your own delta. Copying a file *out of* the shared tree
+pulls in whoever else is mid-save, and you then verify their unfinished work
+and blame the result on your change.
+
+**Flag another session's breakage; do not fix it.** A one-word fix in
+somebody's in-flight file is how two sessions end up editing one file, and it
+hides the real problem, which is that the tree was left broken. Send the exact
+error and the file. **Tell the tester too** — a gate that trips on an in-flight
+save reads as a regression in HEAD and costs a run and a false alarm.
+
+**`git add <file>` stages the whole file, including other sessions' hunks.**
+Explicit pathspec is not enough when the collision is *inside* one file.
+Reconstruct instead: take HEAD's copy, apply only your own edits to it, and
+commit with plumbing (`hash-object` / `update-index` / `commit-tree` /
+`update-ref`). Then check what you actually committed — `git show HEAD |
+grep -c <the other session's symbol>` should be 0 — and that the tree moved:
+a commit whose tree equals its parent's is a failed commit whatever its
+message says.
+
+**Plumbing does not write the working tree, and this is the expensive one.**
+The moment such a commit lands, the shared copy is behind HEAD by exactly
+your change, and every further plumbing commit by any session widens the gap.
+So replay your own change back into the live tree afterwards:
+
+```bash
+git diff <parent> <yours> -- <path> > p.patch && git apply p.patch
+```
+
+Plain `git apply`, **not** `--3way`: 3way refuses a dirty file with "does not
+match index", while plain apply matches by context. Skipping this step three
+times in one day produced a documentation file 68 lines behind HEAD, a
+near-revert of a landed commit by its own author, and a source-tree diff that
+read as somebody deleting a shipped feature — which sent five sessions hunting
+an author who did not exist.
+
+**Whether anyone is editing a file is answered by ANCESTRY, not by counting
+lines.** "Lines the working copy has that HEAD lacks" looks like the test and
+gives a false positive on a stale tree: a copy pinned to an older commit
+necessarily holds the pre-change version of every line changed since. The
+question is whether the working copy equals some ancestor of HEAD:
+
+```bash
+git show <ancestor>:<file> | cmp -s - <file>   # identical ⇒ stale, refresh is lossless
+```
+
+If it does, nobody is editing it and `git checkout HEAD -- <file>` loses
+nothing. If it does not, somebody has unlanded work: find them before staging.
+
+**Verify authorship before attributing a break, and treat a claim as live
+until its holder says otherwise.** Both directions of this were got wrong on
+one afternoon: a broken commit was attributed by inferring the author from the
+commit message (the subject was one session's package, the bad hunk was
+another's), and a live claim was read as abandoned because the name in it
+resolved to nobody — while its holder was mid-implementation. Absence from a
+session listing is not evidence of anything. Ask, and wait.
+
+**Read the row against the code before starting it.** Three rows in one week
+overstated what was left — a dependency described as unlanded that had landed,
+a defect that could not occur, a blocker already cleared. A row is a claim
+about the code, and the code is next to it.
+
 ## Work routing between sessions (owner policy, 2026-08-20)
 
 Work moves between sessions the way everything else here does: over

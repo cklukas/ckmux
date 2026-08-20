@@ -111,7 +111,7 @@ take first.
 | 26 | **WP-11** — CLI subcommands | ckmux | 3–4 d | **Done** (2026-08-19) | WP-2 ✓, WP-8 ✓ |
 | 27 | **WP-13** — Exit policy, banners, and respawn | ckmux | 2–3 d | **Done** (2026-08-20) | WP-8 ✓ |
 | 28 | **WP-14** — Notifications and the complete help pages | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `3162146`, gated) | WP-12 ✓ |
-| 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | **In progress** (ckmux-63, `uds:/tmp/cc-socks/27414.sock`) | WP-13 ✓, WP-14 ✓, WP-31 ✓ (WP-9 ✓, WP-10 ✓) |
+| 29 | **WP-15** — M3 acceptance: every operation row, driven from menus alone | ckmux | 2–3 d | Blocked | WP-13, WP-14, WP-31 (WP-9 ✓, WP-10 ✓) |
 | 30 | **U1-a** — emulator: tab stops (HTS/TBC) | ckVision | 1 d | **Done** (2026-08-17) | — |
 | 31 | **U1-c** — emulator: Media Copy capture behind a policy | ckVision | 1–2 d | **Done** (2026-08-17) | — |
 | 32 | **U1-d** — typed dialog fields: `Radio`, `Combo`, `Number` | ckVision | 2–3 d | **Done** (2026-08-17) | — |
@@ -163,14 +163,6 @@ WP-20; and WP-15 and WP-21, which are genuinely still blocked, now name only
 what is actually missing. **A `Blocked` row whose prerequisite column shows
 nothing but ✓ marks is a bug in this file** — that is the check, and it takes a
 minute.
-
-Run again 2026-08-20, and it caught one: **WP-15 was still marked `Blocked`
-after WP-13, WP-14 and WP-31 had all become `Done`** — the exact bug the
-paragraph above describes, sitting in the row directly under it. A falsely
-blocked row is worse than an unclaimed one, because a reader stops at the
-state column and never reaches the prerequisites to notice they are all ✓. So
-the check belongs on every landing rather than on a periodic sweep: a package
-going `Done` may free rows that name it, and nothing else will notice.
 
 ## Verification policy for every package
 
