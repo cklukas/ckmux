@@ -42,6 +42,18 @@ struct RunOptions {
     // ordinary launch, where the picker or the sole session decides (WP-11,
     // plans/06:401 — the CLI bypasses the picker for scripting).
     std::uint64_t preselected_session = 0;
+    // `ckmux attach --share` (WP-44): every `Attach` this client sends carries
+    // the opt-in, not only the first. A heal, a session switch and a
+    // reconnection all re-`Attach`, and one that dropped the flag would take
+    // over the session it had been sharing — silently, and at the moment a
+    // reader is least able to tell why.
+    bool share_session = false;
+    // `ckmux attach --adopt-size` (WP-40): once, on arrival, ask the session's
+    // desktop to become this screen. Once and not continuously: a client that
+    // re-asserted its size would fight the next reader who asked for theirs,
+    // and the session would end up owned by whoever's terminal resized last —
+    // which is precisely what WP-40 took away from `ClientResize`.
+    bool adopt_session_size = false;
 };
 
 // Runs until the reader quits or the server goes away. Returns a process exit

@@ -41,6 +41,16 @@ struct CliRequest {
     // what a reader is told, and `usage` names the one-line form to follow it.
     std::string problem;
     std::string usage;
+    // `ckmux attach --share`: join a session another reader may already be
+    // watching instead of taking it over (WP-44). Opt-in because taking over
+    // is what every reader before this flag got, and a shared session is a
+    // different thing to be in — what one reader types, both see.
+    bool share = false;
+    // `ckmux attach --adopt-size`: make the session's desktop this client's
+    // screen, once, on arrival (WP-40). Opt-in for the same reason the menu
+    // item has no chord: it reflows every window and resizes every child, for
+    // every reader watching, not only for whoever asked.
+    bool adopt_size = false;
 
     bool ok() const noexcept { return problem.empty(); }
 };

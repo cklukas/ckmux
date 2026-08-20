@@ -135,14 +135,48 @@ CliRequest parse_cli(const std::vector<std::string>& arguments) {
         return request;
     }
 
-    if (request.subcommand == "attach" || request.subcommand == "kill-session") {
-        request.usage = "ckmux " + request.subcommand + " <name|id>";
+    if (request.subcommand == "attach") {
+        request.usage = "ckmux attach [--share] [--adopt-size] <name|id>";
+        for (std::size_t index = 1; index < arguments.size(); ++index) {
+            const std::string& word = arguments[index];
+            if (word == "--share") {
+                request.share = true;
+                continue;
+            }
+            if (word == "--adopt-size") {
+                request.adopt_size = true;
+                continue;
+            }
+            // Flags come before the session and nothing comes after it. An
+            // unknown one is refused rather than taken for a session name: a
+            // reader who mistypes `--adopt-siz` means the flag, and resolving
+            // it as a session gives them "no such session `--adopt-siz`",
+            // which sends them looking in the wrong place entirely.
+            if (word.rfind("--", 0) == 0) {
+                request.problem = "`attach` has no `" + word + "` flag";
+                return request;
+            }
+            if (!request.name.empty()) {
+                request.problem = "`attach` takes one session, not several";
+                return request;
+            }
+            request.name = word;
+        }
+        if (request.name.empty()) {
+            request.problem = "`attach` needs the session to act on";
+            return request;
+        }
+        return request;
+    }
+
+    if (request.subcommand == "kill-session") {
+        request.usage = "ckmux kill-session <name|id>";
         if (arguments.size() < 2) {
-            request.problem = "`" + request.subcommand + "` needs the session to act on";
+            request.problem = "`kill-session` needs the session to act on";
             return request;
         }
         if (arguments.size() > 2) {
-            request.problem = "`" + request.subcommand + "` takes one session, not several";
+            request.problem = "`kill-session` takes one session, not several";
             return request;
         }
         request.name = arguments[1];

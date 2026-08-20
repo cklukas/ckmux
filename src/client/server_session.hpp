@@ -110,6 +110,13 @@ public:
     // whole, which is exactly what a client that has lost track needs and is why
     // healing needs no message of its own.
     void attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels);
+    // Whether this client's `Attach`es ask to SHARE the session rather than
+    // take it over (WP-44). Held here rather than passed to `attach()` because
+    // every re-attach — a heal, a switch, a reconnection — must carry the same
+    // answer; a flag that applied only to the first one would turn a shared
+    // reader into a takeover at the first hiccup.
+    void set_share(bool on) noexcept { share_ = on; }
+    bool shares() const noexcept { return share_; }
     // Whether this client wants per-terminal process stats (WP-39's View
     // toggles, any of them). Sent to the server when it changes, and restated
     // after every `Attached`: the subscription is per CONNECTION on the
@@ -329,6 +336,7 @@ private:
     // session already held — the server kept the layout it was told, so
     // restating it would be a message that changes nothing.
     std::vector<proto::LayoutEntry> layout_sent_;
+    bool share_ = false;
     std::uint64_t resnapshots_ = 0;
     std::uint64_t attachments_ = 0;
     // Whether a snapshot this client asked for is still on its way. Cleared by

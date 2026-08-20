@@ -78,6 +78,12 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     ServerSession session([&connection](const proto::Message& message) {
         (void)connection.stream.send(proto::encode(message));
     });
+    // `ckmux attach --share` (WP-44), set before anything can attach. It rides
+    // every `Attach` rather than only the first: a heal, a session switch and a
+    // reconnection all re-attach, and one that dropped the flag would take over
+    // the session this reader chose to share — at the moment they are least
+    // able to tell why it happened.
+    session.set_share(options.share_session);
     ckv::ui::Application app(terminal, clock);
     // Pace against the reader's own terminal (ckVision's ARCHITECTURE.md §4,
     // docs/graphics.md "Knowing the terminal took it"). Writing a frame proves
@@ -529,11 +535,27 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // A request the server could not honour, in front of the reader who made
     // it. The client already sent one of eight `Error`s back for every
     // impossible request; what was missing was anybody to show it.
-    session.on_session_desktop = [&client](ckv::Size world) {
+    // `ckmux attach --adopt-size` (WP-40) is spent the first time the server
+    // states its desktop, which is the earliest moment there is anything to
+    // answer. Once, and then never again: the flag is a request made at the
+    // door, not a standing claim. A client that re-asserted its size would
+    // fight the next reader who asked for theirs, and the session would end up
+    // belonging to whoever's terminal resized last — exactly what WP-40 took
+    // away from `ClientResize` in the first place.
+    bool size_still_to_adopt = options.adopt_session_size;
+    session.on_session_desktop = [&client, size_still_to_adopt](ckv::Size world) mutable {
         // The world, into the desktop's extent (WP-43). The session layer
         // knows what the server said; the client knows what a desktop is;
         // this file is the one place that has both, as ever.
-        if (client != nullptr) client->set_session_desktop(world);
+        if (client == nullptr) return;
+        client->set_session_desktop(world);
+        if (!size_still_to_adopt) return;
+        size_still_to_adopt = false;
+        // Through the client's own command rather than a second
+        // `SetDesktopSize` built here, so that what "this screen" means is
+        // decided in one place and the reader who typed the flag is told it
+        // took, exactly as the reader who picked the menu item is.
+        client->fit_desktop_to_screen();
     };
     session.on_stats = [&client](RemoteTerminalSubsession& remote,
                                  const proto::TermStats& stats) {

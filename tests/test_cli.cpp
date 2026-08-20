@@ -145,6 +145,24 @@ CK_TEST(help_is_a_page_on_stdout_and_an_exit_of_zero) {
     CK_CHECK(result.out.find("--version") != std::string::npos);
     CK_CHECK(result.out.find("CKMUX_SOCKET") != std::string::npos);
     CK_CHECK(result.out.find("CKMUX_CONFIG") != std::string::npos);
+    // Including the flags a subcommand takes. `--share` and `--adopt-size` are
+    // both opt-ins for things that change what OTHER readers see, so a page
+    // that lists the subcommand and hides them documents the safe half of a
+    // command whose interesting half is the other one.
+    CK_CHECK(result.out.find("--share") != std::string::npos);
+    CK_CHECK(result.out.find("--adopt-size") != std::string::npos);
+}
+
+CK_TEST(an_attach_flag_that_does_not_exist_is_refused_at_the_shell) {
+    // Before a clock, a terminal or a socket — the same reasoning that has
+    // `ckmux attach typo` answered here rather than behind PosixTerminal's
+    // demand for a real tty. A script gets an exit code and a sentence.
+    const RunResult result = run_ckmux({"attach", "--adopt-siz", "work"});
+    CK_CHECK(result.exit_code == 2);
+    CK_CHECK(result.out.empty());
+    CK_CHECK(result.err.find("--adopt-siz") != std::string::npos);
+    // And the usage line that follows names the flag they meant.
+    CK_CHECK(result.err.find("--adopt-size") != std::string::npos);
 }
 
 CK_TEST(every_spelling_of_help_prints_the_same_page) {

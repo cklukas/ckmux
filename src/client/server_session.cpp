@@ -40,6 +40,7 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
     request.pixel_height =
         static_cast<std::uint16_t>(std::max(0, desktop.height) * std::max(0, cell_pixels.height));
     request.host_sixel = host_sixel_ ? 1 : 0;
+    request.share = share_ ? 1 : 0;
     send_(request);
 }
 

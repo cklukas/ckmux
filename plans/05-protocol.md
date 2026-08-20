@@ -479,6 +479,28 @@ wire once, wire the ends as the packages arrive — and R8 was the package that
 arrived for all three. The column is honest only while it is re-derived, which
 is what m-docs asks for and what the header date says was last done.
 
+**A message can be live and still carry a dead FIELD, and the catalogue test
+cannot see it.** `Attach.share` shipped with WP-44 declared, encoded, decoded,
+handled by the server, and round-tripping in `test_proto`'s catalogue — while
+no line in the client ever set it, so the opt-in it existed for was unreachable
+from a shell. The guard was working exactly as designed and could not have
+caught it: "every alternative of the variant round-trips" is a claim about the
+ENCODER. It says a value survives the wire, not that anything in the program
+ever produces one. The same blind spot swallowed `TermMeta`'s `bell_serial`
+until a suite was written that asserted a non-zero value, and `SetDesktopSize`
+would have joined them had its own message not been new enough to fail the
+catalogue outright.
+
+So the rule the message-level column states — nothing wired at one end — reads
+down to the field: **every field needs a producer somewhere in `src/`, and a
+test that names it.** A `grep` for the field's own name returning only its
+declaration is the cheap version and would have caught all three. The
+expensive-but-honest version is a case that sets the thing through the API a
+reader actually reaches and asserts the byte on the wire, which is what
+`tests/test_attach_flags.cpp` does for `share` — deliberately in two layers,
+because a suite that only proved the flag PARSED would have passed on the day
+WP-44 shipped it unreachable.
+
 Two shapes are worth knowing before writing against it. `Message` is a
 `std::variant` of every message struct, and a decoder finds the alternative
 whose `kType` matches the frame — so adding a message to the variant is the

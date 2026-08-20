@@ -559,6 +559,19 @@ public:
     // client's alone and never travels, and no window's rect changes because
     // somebody looked elsewhere — U7-a moves paint offsets, never bounds.
     void set_session_desktop(ckv::Size world);
+    // `Window ▸ Fit Desktop to This Screen` (WP-40): tells the server this
+    // reader's screen is the size the session's desktop should be. Every
+    // window in the session is then re-laid against it and every child is
+    // resized — for both readers, which is why it is asked for rather than
+    // done whenever a terminal changes size.
+    //
+    // Public because the menu is no longer its only caller: `ckmux attach
+    // --adopt-size` asks for the same act on arrival, and routing it through
+    // here rather than sending its own `SetDesktopSize` keeps ONE answer to
+    // "what does this reader's screen mean" — the whole screen, chrome rows
+    // included — and gives the CLI reader the same acknowledgement the menu
+    // reader gets.
+    void fit_desktop_to_screen();
     // The part of the world the reader can currently SEE, in world
     // coordinates: `content_area()` clipped to the view at its pan, mirroring
     // the library's own clamp arithmetic. Equal to `content_area()` itself
@@ -833,12 +846,6 @@ private:
     // The complete listing, on the page rather than for the surface in front
     // of the reader — Help ▸ All Keybindings… (WP-14).
     void show_all_keys();
-    // `Window ▸ Fit Desktop to This Screen` (WP-40): tells the server this
-    // reader's screen is the size the session's desktop should be. Every
-    // window in the session is then re-laid against it and every child is
-    // resized — for both readers, which is why it is asked for rather than
-    // done whenever a terminal changes size.
-    void fit_desktop_to_screen();
     // The name the New Session prompt offers, from the sessions last seen.
     std::string suggested_session_name() const;
     std::vector<SessionRow> last_sessions_;

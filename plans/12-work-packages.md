@@ -135,12 +135,12 @@ take first.
 | 49 | **WP-37** — Process-stats seam: the tree and what it costs, macOS first | ckmux | 2–3 d | **Done** (2026-08-19) | — |
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
-| 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Done** (2026-08-20, ckmux `35b94f7` + `3d6cb2d`) | WP-28 ✓ |
+| 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **Done** (2026-08-20, ckmux `35b94f7` + `3d6cb2d`, `--adopt-size` in the CLI landing) | WP-28 ✓ |
 | 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **Done** (2026-08-20, ckmux `e14f3ac`, gated) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Done** (2026-08-20, ckVision `df99316`; a defect found consuming it fixed in `a1a5433`) | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | **Implementation complete — gate pending** (2026-08-20, ckmux-53; central pair gate requested at ckVision `a1a5433`) | U7-a ✓, WP-40 ✓ |
-| 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`) — marks half waits on WP-41 | WP-40, WP-41, WP-42, WP-43 |
+| 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`; the wire edge `02f7c97`, the `--share` flag that reaches it in the CLI landing) — the marks a reader is owed wait on WP-41's client half | WP-40, WP-41, WP-42, WP-43 |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -1869,10 +1869,16 @@ the shared world for everybody. And it has no chord: reflowing every window and
 resizing every child, for every reader watching, is a menu decision rather than
 a keystroke beside `^B b`.
 
-**What is NOT in it, and is not hiding:** `ckmux attach --adopt-size`. The
-message and the server side are there, so the flag is a CLI parsing change and
-one call at attach time — a sliver, and it belongs to whoever is next in
-`cli.cpp` rather than to a second landing of this row.
+*The `--adopt-size` sliver landed too*, with WP-44's `--share` beside it, since
+both were the same shape of leftover in the same file. It is spent once, on the
+first thing the server says about its desktop, and never again: a client that
+re-asserted its size would fight the next reader who asked for theirs, and the
+session would end up belonging to whoever's terminal resized last — which is
+precisely what this package took away from `ClientResize`. It routes through
+`ClientApp::fit_desktop_to_screen()` rather than sending its own
+`SetDesktopSize`, so what "this screen" means is decided in one place and the
+reader who typed the flag is told it took, exactly as the reader who picked the
+menu item is.
 
 **WP-41 — What belongs to a reader rather than to a session** *(ckmux)*. Four
 pieces of client state currently live on the session, each correct until a
@@ -2024,11 +2030,28 @@ it a "whose arrangement wins" question**, decided rather than discovered: the
 reporting client's arrangement is authoritative and the other is told, which is
 the rule one reader has always had with themselves.
 
-*Still open, and named rather than implied*: "each client sees the marks it is
-owed" cannot be satisfied while `TermMeta` carries a level rather than an edge
-— WP-41's blocked piece. A second reader gets its own snapshot, its own focus
-and its own view of the desktop; it gets the marks when the wire learns to say
-"rang again".
+*The wire learned to say "rang again"* at ckmux `02f7c97`: `TermMeta` carries
+`bell_serial` and `activity_serial`, counted the moment the fact happens rather
+than after anybody's focus has been consulted, because "a terminal you are not
+in" is a sentence about ONE reader and cannot be true for two at once. The
+existing level and the session-wide `clear_marks()` were deliberately left
+standing, so the change is additive: removing them before a client reads
+serials would leave every terminal that has ever printed permanently marked,
+and a signal that is on for ever is not a signal. What remains is client-side
+and belongs to WP-41 — a client remembering the serials ITS reader last
+answered and showing a mark when they have moved.
+
+*The `--share` sliver landed* (with WP-40's `--adopt-size`, same file, same
+shape of leftover). It is worth recording what it was, because the defect is
+reusable: `Attach.share` shipped declared, encoded, decoded, server-handled and
+round-tripped by `test_proto`'s catalogue — and set by **no line in the
+client**, so this package's entire opt-in was unreachable from a shell. The
+catalogue guard could not have caught it and was not failing: "every
+alternative round-trips" is a claim about the encoder, not about whether the
+program ever produces the value. The generalisation is written where it
+belongs, in [05-protocol.md](05-protocol.md): every wire FIELD needs a producer
+in `src/` and a test that names it, and `grep` returning only a declaration is
+the cheap version of that check.
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
 attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty
