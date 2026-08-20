@@ -304,6 +304,14 @@ CK_TEST(a_refusal_names_the_request_and_promises_no_release) {
     CK_CHECK(!f.errors.empty());
     if (f.errors.empty()) return;
     const ckm::proto::Error& refusal = f.errors.back();
+    // The CODE, not only the sentence. `ErrorCode::NotImplemented` had a
+    // producer in `src/` and nothing in `tests/` naming it — so a change that
+    // set the wrong code here would have passed every assertion below, which
+    // are all about the prose. Found sweeping the whole enum for the rule the
+    // wire-field cases taught: a value needs a producer AND a test that names
+    // it. The other five codes each had one; this was the gap, and it was in
+    // this suite.
+    CK_CHECK(refusal.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NotImplemented));
     CK_CHECK(refusal.context == "Pong");
     CK_CHECK(refusal.human.find("Pong") != std::string::npos);
     // Exactly, not "does not contain 'a message'": the old text would have
