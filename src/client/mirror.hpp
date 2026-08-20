@@ -127,6 +127,16 @@ public:
     // `TermMeta` flags), as the server last stated it.
     bool bell_marked() const noexcept { return bell_marked_; }
     bool activity_marked() const noexcept { return activity_marked_; }
+    // How many times this terminal has rung, and how many times it has
+    // written, counted by the server from the moment it opened and never
+    // reset (WP-41). The LEVEL above says a mark is up and the server decides
+    // when to put it down — which cannot be right for two readers at once,
+    // because "a terminal you are not in" is a sentence about one reader, and
+    // cannot say "rang AGAIN" even to one, because a bit that is already set
+    // cannot be set harder. A serial says both, so a client that remembers the
+    // number it last answered can tell a second bell from the first.
+    std::uint32_t bell_serial() const noexcept { return bell_serial_; }
+    std::uint32_t activity_serial() const noexcept { return activity_serial_; }
     // The clipboard, as the child last asked for it. The serial is what a
     // consumer compares; the text is what it forwards when the serial moved. A
     // mirror that has just adopted a snapshot holds the server's serial and NO
@@ -244,6 +254,8 @@ private:
     std::string custom_title_;
     bool bell_marked_ = false;
     bool activity_marked_ = false;
+    std::uint32_t bell_serial_ = 0;
+    std::uint32_t activity_serial_ = 0;
     std::optional<int> exit_status_;
 };
 

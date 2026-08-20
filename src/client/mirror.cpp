@@ -265,6 +265,13 @@ void TerminalMirror::apply(const proto::TermMeta& meta) {
     // message with the bits off.
     bell_marked_ = (meta.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Bell)) != 0;
     activity_marked_ = (meta.flags & static_cast<std::uint8_t>(proto::TermMetaFlag::Activity)) != 0;
+    // The counts are assigned rather than accumulated for the same reason the
+    // marks are: the message states them as they now stand. They only ever go
+    // up on the server, but a mirror must not assume that — a reattach states
+    // whatever is current, and a mirror that took a maximum would be holding a
+    // number the server does not have.
+    bell_serial_ = meta.bell_serial;
+    activity_serial_ = meta.activity_serial;
 }
 
 void TerminalMirror::apply(const proto::PrintJobAdded& added) {
