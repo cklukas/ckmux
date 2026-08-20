@@ -252,6 +252,21 @@ if(CKMUX_BUILD_TESTING)
                 --self-test)
     set_tests_properties(seam_checker_self_test PROPERTIES
         LABELS "script;architecture" TIMEOUT 30)
+    # A function nobody reaches is a feature nobody can use, and the compiler
+    # says nothing: `expand_user_path` sat defined and uncalled in HEAD for an
+    # hour after its definition landed without its call site. The linker's
+    # dead-strip pass answers the question a source scan only approximates --
+    # is this reachable from `main` in the production binary. It re-links its
+    # own probe, so an ordinary build is unchanged and pays for no map.
+    add_test(NAME dead_code_check
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_dead_code.py
+                --build ${CMAKE_BINARY_DIR})
+    set_tests_properties(dead_code_check PROPERTIES LABELS "script;architecture" TIMEOUT 120)
+    add_test(NAME dead_code_checker_self_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_dead_code.py
+                --build ${CMAKE_BINARY_DIR} --self-test)
+    set_tests_properties(dead_code_checker_self_test PROPERTIES
+        LABELS "script;architecture" TIMEOUT 180)
 endif()
 
 # After tests/, deliberately: the fuzz directory registers its bounded corpus
