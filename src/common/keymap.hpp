@@ -32,6 +32,11 @@ namespace ckm {
 enum class Action : unsigned char {
     NewTerminal,
     CloseTerminal,
+    // Appended at the END of the enum rather than beside CloseTerminal, so no
+    // existing action's value moves: these are serialised nowhere today, and
+    // the day one is, a reordering would silently rebind every reader's
+    // keymap. Cheaper to keep the rule than to remember when it starts to
+    // matter.
     MoveTerminal,
     // Naming a terminal is not the same as moving it, and it is a different
     // verb from renaming a SESSION: one pins a window's caption, the other
@@ -95,6 +100,8 @@ enum class Action : unsigned char {
     About,
     SendPrefix,
     Quit,
+    // plans/03's `kill-terminal`. Last, per the note at the top of the enum.
+    KillTerminal,
 };
 
 // Where a binding applies. `terminal` is the key *after* the prefix, which is

@@ -143,6 +143,9 @@ take first.
 | 57 | **WP-44** — Simultaneous attach, opt-in | ckmux | 2–3 d | **Done** (2026-08-20, ckmux `41bda41`; the wire edge `02f7c97`, the `--share` flag that reaches it in the CLI landing) — the marks a reader is owed wait on WP-41's client half | WP-40, WP-41, WP-42, WP-43 |
 | 58 | **WP-45** — One name, one session | ckmux | 0.5 d | **Done** (2026-08-20, owner ruling) | — |
 
+| 59 | **WP-46** — `kill-terminal`, and the refusal that told the truth | ckmux | 1 d | **Done** (2026-08-20) | — |
+| 60 | **WP-47** — A test that leaks a server has not finished | ckmux | 0.5 d | **Done** (2026-08-20) | — |
+
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
 commits; its row stays `In progress` until every acceptance item is met.
@@ -2042,6 +2045,75 @@ The client-side ambiguity branch in `cli.cpp` (`resolve_session`) is kept and
 fire on, and its comment previously stated "two sessions may share a name" as a
 fact — a true sentence about the old server that would have been read as one
 about this one.
+
+**WP-46 — `kill-terminal`, and the refusal that told the truth** *(ckmux)*.
+plans/03's operations table has promised `kill-terminal` since M1 and nothing
+implemented it. `proto::KillTerminal` existed as a message type, sat in the
+`Message` variant and round-tripped in `test_proto`'s catalogue — with no
+server handler, no command id, no keymap action and no menu path. **The fourth
+shaped-and-dead find of the week** after `Attach.share`, `TermMeta::bell_serial`
+and `ErrorCode::NameTaken`, and the first that is a whole message rather than a
+field. Found by ckmux-63 reading the table against the code for WP-15.
+
+The server enters the operation into the existing close machinery at exactly
+the state a forced close would have escalated *to* — grace expired, kill sent
+— rather than giving it a removal path of its own. Two paths that both remove
+a terminal are two places for the paste slot, the diff state, the session's
+terminal list, every watcher's `TermClosed` and the kill-empty-session rule to
+be forgotten, and only one of them would get fixed next time. The signal goes
+out in the handler because `request_kill()` returns at once; the terminal goes
+on the tick that observes it died, because `close()` reaps and a server that
+reaps inline has stopped being a server (M-S3).
+
+*The refusal came with it, because it is what a reader met when they asked.*
+`name_of()` named eleven of fifty-three message types behind a `default:` arm
+returning the literal string `"a message"`, so the `Error.context` field —
+whose entire job is to say WHICH request failed — said nothing for the other
+forty-two. And the `human` text told readers to wait for WP-8 and WP-6, which
+had landed three days earlier. The `default:` is *why* it went stale, so it is
+gone and every enumerator is listed: `-Wswitch` under `-Werror` now breaks the
+build the day somebody adds a message and forgets the table. **A guard that
+cannot go stale beats a guard that was correct once** — verified by deleting
+one case and watching the build fail. The `human` text no longer names
+releases, because which release fixes something is not a fact the server has.
+
+**A stated limitation, because a green suite otherwise reads as proof.**
+`tests/test_kill_terminal.cpp` pins that a killed program gets no chance to
+finish (its `SIGTERM` trap would `exit 42`; the answer is -1), that the
+terminal goes, and that the watcher is told — with a polite close through the
+same shell and trap as the positive partner producing 42, which is what makes
+-1 mean something. It does **not** pin that the implementation sends SIGKILL
+*only*. It does, and plans/03 requires it, but mutating the handler to
+`begin_close(force, 0)` passes every case: a zero grace escalates on the next
+tick, ~33 ms, and no shell can run a trap and exit inside that window — tried
+with a busy loop for microsecond latency, and the mutant still survived. Three
+test constructions were discarded getting to that answer, and each of them
+PASSED while measuring nothing.
+
+**WP-47 — A test that leaks a server has not finished** *(ckmux)*. Fifteen
+`ckmux --server` processes were running on this machine, some two days old,
+and three sessions had been misled by that process table in one day. It is one
+defect in three suites, and it is worse than a leak: each case sent
+`KillServer`, **discarded the acknowledgement** — `(void)closer.hear(ignored,
+2000)`, the only evidence the kill was acted on — and then called `forget()`,
+which unlinks the socket. A server that did not die is left listening on a path
+that no longer exists, so nothing can ever connect to ask it to stop again.
+That is why they accumulated across runs rather than being cleaned up by the
+next one, and why `pkill` was the only thing that removed them.
+
+The death is now asserted before the socket is taken away, and
+`test_menu_commands` gained an **unconditional** `end_process(server)` at its
+three `CK_CHECK(server_gone)` sites — because `CK_CHECK` records a failure and
+carries on, so a server that failed to exit was reported and then abandoned.
+**Cleanup that depends on the assertion passing is the general form of that
+bug.** Deliberately not a reaper in the harness: a reaper hides the defect and
+makes the next `pgrep`-based diagnosis lie about what is running.
+
+*And a warning that belongs with the row rather than in a chat log:* the
+process table contains the owner's OWN session, on the uid-default socket
+(`ckmux-501/default.sock`), indistinguishable from a leak to any pattern match.
+**Kill orphans by pid, never by pattern.** A `pkill ckmux` takes down the
+owner's live terminals and whatever is running in them.
 
 **WP-44 — Simultaneous attach, opt-in** *(ckmux)*. The flag, and the server
 side of it: `Attach` gains an opt-in, attaching without it takes the session

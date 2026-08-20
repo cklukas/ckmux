@@ -268,6 +268,12 @@ struct ClientOptions {
     // whatever ignored the asking.
     std::function<void(ckv::term::TerminalSubsession& terminal, bool force, int grace_seconds)>
         close_terminal_in_session;
+    // plans/03's `kill-terminal`: SIGKILL the process group, drop the terminal.
+    // No `force`, no `grace_seconds` — the absence of both IS this operation,
+    // and giving it parameters it does not have would invite somebody to pass
+    // them. Unset without a server, where there is no process group to reach
+    // past ckVision's own escalation.
+    std::function<void(ckv::term::TerminalSubsession& terminal)> kill_terminal_in_session;
     // Pins one terminal's caption to a name the reader chose, or hands it
     // back — an empty name means "use the default title again", which is
     // exactly what the rename dialog's third button asks for.
@@ -579,6 +585,11 @@ public:
     // included — and gives the CLI reader the same acknowledgement the menu
     // reader gets.
     void fit_desktop_to_screen();
+    // `Terminal ▸ Kill Terminal` (plans/03). Asks first — the table says
+    // "Confirmed in the UI" and this is why: SIGKILL takes a program's unsaved
+    // work with no grace and no undo, so the one thing this must never be is
+    // fast.
+    void confirm_then_kill(ckv::widgets::Window* window);
     // The part of the world the reader can currently SEE, in world
     // coordinates: `content_area()` clipped to the view at its pan, mirroring
     // the library's own clamp arithmetic. Equal to `content_area()` itself

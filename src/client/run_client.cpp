@@ -320,6 +320,15 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         ask.grace_seconds = static_cast<std::uint16_t>(std::max(0, grace_seconds));
         session.request(ask);
     };
+    // plans/03's `kill-terminal`, carried to the server. No force and no grace
+    // because the operation has neither: the whole of it is SIGKILL now.
+    options.client.kill_terminal_in_session = [&session](ckv::term::TerminalSubsession& terminal) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::KillTerminal ask;
+        ask.term = *id;
+        session.request(ask);
+    };
     // Naming a terminal, and handing the name back — one seam for both,
     // because an empty name IS the request to use the default title again.
     // Sent rather than applied here: a custom title is session state (plans/03)

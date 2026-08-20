@@ -46,6 +46,12 @@ namespace commands {
 // that assigned it.
 inline constexpr std::string_view kNewTerminal = "ckmux.terminal.new";
 inline constexpr std::string_view kCloseTerminal = "ckmux.terminal.close";
+// plans/03's `kill-terminal`: SIGKILL now, no asking, no grace. A separate
+// command from Close rather than a checkbox inside it, because the two answer
+// different questions — Close asks a program to finish and negotiates about
+// what happens if it will not; this one is what a reader reaches for when that
+// negotiation has already failed.
+inline constexpr std::string_view kKillTerminal = "ckmux.terminal.kill";
 inline constexpr std::string_view kMoveTerminal = "ckmux.terminal.move-session";
 // Pinning one terminal's caption to a name the reader chose. Separate from
 // `kRenameSession` because a terminal and a session are different things to

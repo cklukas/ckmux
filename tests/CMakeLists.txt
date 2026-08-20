@@ -19,6 +19,7 @@ set(CKMUX_TEST_SOURCES
     test_core_promise.cpp
     test_diff_engine.cpp
     test_grid_delta.cpp
+    test_kill_terminal.cpp
     test_keymap.cpp
     test_m4_tmux.cpp
     test_menu_commands.cpp
@@ -91,6 +92,7 @@ ckmux_strict(ckmux_tests)
 # session whose first terminal is a real child. Measured at 4 PTY children
 # across 3 processes, not inferred — a suite that changes category mid-package
 # is exactly what this block exists to catch.
+set(CKMUX_LABELS_test_kill_terminal "pty")
 set(CKMUX_LABELS_test_cli "script;pty;e2e")
 set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
 # WP-20's budget gates. `benchmark` because the assertions are deterministic

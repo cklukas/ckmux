@@ -39,10 +39,18 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 35>& default_bindings() {
-    static const std::array<KeyBinding, 35> kBindings{{
+const std::array<KeyBinding, 36>& default_bindings() {
+    static const std::array<KeyBinding, 36> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
+        // No chord, on purpose, and for a stronger reason than Fit Desktop's:
+        // this one destroys a reader's unsaved work with no grace and no undo.
+        // A key beside `^B x` that differs from it by one letter is a key
+        // somebody hits by accident, once, and remembers for a long time. The
+        // menu is the right speed for it; a reader who wants a chord can bind
+        // `kill-terminal` themselves, which is a decision rather than an
+        // accident.
+        {"", commands::kKillTerminal, "&Kill Terminal", "kill term", 0, Action::KillTerminal},
         {".", commands::kMoveTerminal, "&Move to Session…", "move to session", 0,
          Action::MoveTerminal},
         // The chord plans/06 gives it, and the one a reader arriving from tmux
@@ -125,6 +133,7 @@ std::string_view command_for_action(Action action) {
     switch (action) {
         case Action::NewTerminal: return commands::kNewTerminal;
         case Action::CloseTerminal: return commands::kCloseTerminal;
+        case Action::KillTerminal: return commands::kKillTerminal;
         case Action::MoveTerminal: return commands::kMoveTerminal;
         case Action::RenameTerminal: return commands::kRenameTerminal;
         case Action::PrintOutput: return commands::kPrintOutput;

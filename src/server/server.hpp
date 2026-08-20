@@ -416,6 +416,11 @@ private:
         bool killed = false;
     };
     void begin_close(TerminalId term, bool force, int grace_seconds);
+    // plans/03's `kill-terminal`: SIGKILL the process group and drop the
+    // terminal, with none of `begin_close`'s courtesy — no SIGHUP, no SIGTERM,
+    // no grace. A reader reaches this when asking nicely has already failed,
+    // so asking nicely again is the one thing it must not do.
+    void begin_kill_terminal(TerminalId term);
     void advance_closes();
     // Tells the watchers about children that ended on their own — the ones
     // nobody asked to close. On the tick, once, per terminal: what happens next

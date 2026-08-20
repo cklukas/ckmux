@@ -136,6 +136,19 @@ PrinterMode wire_printer_mode_in(proto::PrinterMode mode) {
     return PrinterMode::Ask;
 }
 
+// Every message type, by name, for the `context` field of an `Error` — whose
+// entire job is to say WHICH request failed.
+//
+// Written without a `default:` arm on purpose, and that is the whole fix. This
+// function used to name eleven types and answer the literal string "a message"
+// for the other forty-two, so a reader refused a `KillTerminal` was told that
+// "a message" is not implemented — a sentence that names nothing and cannot be
+// searched for. The `default:` is what let it drift: forty-two message types
+// were added over the project's life and not one of them made anything fail.
+//
+// With every enumerator listed and no catch-all, `-Wswitch` under `-Werror`
+// breaks the build the day somebody adds a message and forgets this table. A
+// guard that cannot go stale beats a guard that was correct once.
 const char* name_of(proto::MessageType type) {
     switch (type) {
         case proto::MessageType::Hello: return "Hello";
@@ -146,12 +159,56 @@ const char* name_of(proto::MessageType type) {
         case proto::MessageType::ListSessions: return "ListSessions";
         case proto::MessageType::NewSession: return "NewSession";
         case proto::MessageType::Attach: return "Attach";
-        case proto::MessageType::Attached: return "Attached";
         case proto::MessageType::Detach: return "Detach";
+        case proto::MessageType::ClientResize: return "ClientResize";
+        case proto::MessageType::RenameSession: return "RenameSession";
+        case proto::MessageType::KillSession: return "KillSession";
         case proto::MessageType::KillServer: return "KillServer";
-        default: break;
+        case proto::MessageType::SessionList: return "SessionList";
+        case proto::MessageType::SessionsChanged: return "SessionsChanged";
+        case proto::MessageType::Attached: return "Attached";
+        case proto::MessageType::Detached: return "Detached";
+        case proto::MessageType::NewTerminal: return "NewTerminal";
+        case proto::MessageType::CloseTerminal: return "CloseTerminal";
+        case proto::MessageType::KillTerminal: return "KillTerminal";
+        case proto::MessageType::RespawnTerminal: return "RespawnTerminal";
+        case proto::MessageType::MoveTerminal: return "MoveTerminal";
+        case proto::MessageType::MoveResize: return "MoveResize";
+        case proto::MessageType::Raise: return "Raise";
+        case proto::MessageType::FocusTerm: return "FocusTerm";
+        case proto::MessageType::ZoomTerm: return "ZoomTerm";
+        case proto::MessageType::RenameTerminal: return "RenameTerminal";
+        case proto::MessageType::Input: return "Input";
+        case proto::MessageType::PasteChunk: return "PasteChunk";
+        case proto::MessageType::PasteAck: return "PasteAck";
+        case proto::MessageType::SetLayout: return "SetLayout";
+        case proto::MessageType::WatchStats: return "WatchStats";
+        case proto::MessageType::SetDesktopSize: return "SetDesktopSize";
+        case proto::MessageType::LayoutDelta: return "LayoutDelta";
+        case proto::MessageType::TermOpened: return "TermOpened";
+        case proto::MessageType::TermClosed: return "TermClosed";
+        case proto::MessageType::TermMeta: return "TermMeta";
+        case proto::MessageType::GridDelta: return "GridDelta";
+        case proto::MessageType::ImageAddBegin: return "ImageAddBegin";
+        case proto::MessageType::ImageChunk: return "ImageChunk";
+        case proto::MessageType::ImageEnd: return "ImageEnd";
+        case proto::MessageType::ImagePlace: return "ImagePlace";
+        case proto::MessageType::ImageRemove: return "ImageRemove";
+        case proto::MessageType::ClipboardSet: return "ClipboardSet";
+        case proto::MessageType::TermDiagnostic: return "TermDiagnostic";
+        case proto::MessageType::TermStats: return "TermStats";
+        case proto::MessageType::Error: return "Error";
+        case proto::MessageType::SetPrinterPolicy: return "SetPrinterPolicy";
+        case proto::MessageType::PrintState: return "PrintState";
+        case proto::MessageType::PrintJobAdded: return "PrintJobAdded";
+        case proto::MessageType::PrintJobFetch: return "PrintJobFetch";
+        case proto::MessageType::PrintJobData: return "PrintJobData";
+        case proto::MessageType::PrintJobDiscard: return "PrintJobDiscard";
     }
-    return "a message";
+    // Not a message this build has a name for, which after the switch above
+    // can only be a value no enumerator has: a frame whose type field was
+    // corrupt or came from a build that is not this one.
+    return "an unrecognised message";
 }
 
 }  // namespace
@@ -1066,6 +1123,16 @@ void Server::handle(Client& client, const proto::Message& message) {
                     static_cast<int>(close_it->grace_seconds));
         return;
     }
+    if (const auto* kill_it = std::get_if<proto::KillTerminal>(&message)) {
+        // plans/03's operations table has promised this since M1 and nothing
+        // implemented it: the message type existed, sat in the `Message`
+        // variant and round-tripped in `test_proto`'s catalogue, and no server
+        // handler ever claimed it — so a reader asking got the not-implemented
+        // refusal below, which named the wrong packages and did not even say
+        // which request had failed.
+        begin_kill_terminal(kill_it->term);
+        return;
+    }
     if (const auto* move = std::get_if<proto::MoveTerminal>(&message)) {
         move_terminal(client, *move);
         return;
@@ -1082,9 +1149,12 @@ void Server::handle(Client& client, const proto::Message& message) {
     proto::Error error;
     error.code = static_cast<std::uint16_t>(proto::ErrorCode::NotImplemented);
     error.context = name_of(type);
-    error.human = std::string(name_of(type)) +
-                  " is not implemented by this build of the server yet (sessions arrive with WP-8, "
-                  "attach with WP-6).";
+    // No package numbers. The old text promised sessions "with WP-8" and attach
+    // "with WP-6" — both landed on 2026-08-17/18, so for three days the server
+    // answered every unimplemented request by pointing at work that was already
+    // done. A refusal a reader can act on says what was asked and that this
+    // build cannot do it; which release fixes it is not a fact the server has.
+    error.human = std::string(name_of(type)) + " is not something this build of the server does.";
     send(client, error);
 }
 
@@ -1272,6 +1342,48 @@ void Server::begin_close(TerminalId id, bool force, int grace_seconds) {
     closes_.push_back(PendingClose{id, deadline, force});
     std::fprintf(stderr, "ckmux server: closing terminal %llu (%d s grace, %s)\n",
                  static_cast<unsigned long long>(id), grace_seconds, force ? "then kill" : "no kill");
+}
+
+void Server::begin_kill_terminal(TerminalId id) {
+    Terminal* const terminal = terminals_.find(id);
+    // Already gone is not an error, exactly as in `begin_close`: a reader
+    // killing a terminal whose program has just ended races this message, and
+    // neither side is wrong. It is doubly true here — what they asked for is
+    // that the terminal be dead, and it is.
+    if (terminal == nullptr) return;
+    // The signal now. `request_kill()` returns at once; `close()` is the one
+    // that escalates by WAITING, and a server that waits has stopped being a
+    // server (M-S3).
+    terminal->request_kill();
+    const std::int64_t now = clock_.now_nanos();
+    // Entered into the close machinery at exactly the state it would have
+    // reached had a forced close escalated — grace expired, kill sent — rather
+    // than given a removal path of its own. Two paths that both remove a
+    // terminal are two places for the paste slot, the diff state, the session's
+    // terminal list, every watcher's `TermClosed` and the kill-empty-session
+    // rule to be forgotten, and only one of them would get fixed next time.
+    //
+    // So the terminal goes on the tick that observes it died, which is the next
+    // one: SIGKILL is not refusable. "Immediately" in plans/03 is a promise to
+    // the READER — no grace, no negotiation, the window goes — and a tick is
+    // 33 ms. What it cannot mean is reaping inside this handler.
+    for (PendingClose& pending : closes_) {
+        if (pending.term != id) continue;
+        // A pending polite close is superseded rather than raced. Leaving it
+        // would let its own deadline fire later against a terminal id this one
+        // has already removed — harmless today because `advance_closes` checks,
+        // and exactly the kind of thing that stops being harmless.
+        pending.force = true;
+        pending.deadline_nanos = now;
+        pending.killed = true;
+        pending.kill_deadline_nanos = now + 2'000'000'000;
+        return;
+    }
+    closes_.push_back(PendingClose{id, now, /*force=*/true,
+                                   /*kill_deadline_nanos=*/now + 2'000'000'000,
+                                   /*killed=*/true});
+    std::fprintf(stderr, "ckmux server: killing terminal %llu at a reader's request\n",
+                 static_cast<unsigned long long>(id));
 }
 
 void Server::advance_closes() {

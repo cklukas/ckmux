@@ -305,6 +305,19 @@ void ClientApp::register_commands() {
             });
         } else if (binding.key == commands::kCloseTerminal) {
             declare(binding.key, binding.title, "Terminal", [this] { close_terminal(active_terminal()); });
+        } else if (binding.key == commands::kKillTerminal) {
+            const u::CommandId kill =
+                declare(binding.key, binding.title, "Terminal",
+                        [this] { confirm_then_kill(active_terminal()); });
+            // Two conditions, and both are real. Without a server there is no
+            // process group to signal past ckVision's own escalation, so the
+            // operation does not exist; and with no terminal there is nothing
+            // to aim it at — a state a reader reaches by closing the last
+            // window, so it is asked rather than assumed.
+            registry.set_enabled_predicate(kill, [this] {
+                return static_cast<bool>(options_.kill_terminal_in_session) &&
+                       active_terminal() != nullptr;
+            });
         } else if (binding.key == commands::kMoveTerminal) {
             // Somewhere else for the program to keep running requires there
             // to BE a somewhere else: a server with sessions, not M1's one
@@ -547,7 +560,8 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
     w::MenuBarItem terminal_menu{
         "&Terminal",
         {item(commands::kNewTerminal), item(commands::kCloseTerminal),
-         item(commands::kRenameTerminal), item(commands::kMoveTerminal), separator,
+         item(commands::kKillTerminal), item(commands::kRenameTerminal),
+         item(commands::kMoveTerminal), separator,
          item(commands::kPrintOutput), item(commands::kPrinterSettings), separator,
          item(u::std_command_keys::kNextWindow), item(u::std_command_keys::kPreviousWindow),
          separator, item(commands::kCopyMode), item(commands::kPaste), separator,
@@ -1623,6 +1637,62 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     app_.set_focus(terminal_view);
     refresh_footer();
     return terminal_window;
+}
+
+void ClientApp::confirm_then_kill(w::Window* window) {
+    if (window == nullptr || desktop_ == nullptr || !options_.kill_terminal_in_session) return;
+    ckv::term::TerminalSubsession* const terminal = terminal_shown_by(window);
+    if (terminal == nullptr) return;
+
+    // Deliberately NOT the close dialog with different words. That one is a
+    // negotiation — ask the program, kill it after a grace, or move it
+    // somewhere it keeps running — and every option it offers is a way to end
+    // well. This dialog has no such options, because the operation has none,
+    // and offering a checkbox here would suggest a middle course that does not
+    // exist.
+    w::DialogDescriptor descriptor;
+    descriptor.title = "Kill terminal";
+    w::FieldDescriptor what;
+    what.kind = w::FieldKind::Note;
+    what.label = "Kill \"" + window->title() + "\" and everything running in it, now.";
+    descriptor.fields.push_back(std::move(what));
+    w::FieldDescriptor how;
+    how.kind = w::FieldKind::Note;
+    // The mechanism, in the reader's terms rather than the kernel's: what
+    // matters to them is that nothing gets a chance to save, and that this is
+    // not the thing Close does.
+    how.label = "  The program is not asked and gets no time to save. Close asks first.";
+    descriptor.fields.push_back(std::move(how));
+    if (terminal_windows_.size() == 1 && options_.settings.kill_empty_session) {
+        // The same consequence the close dialog surfaces, for the same reason:
+        // a reader cannot see it from here, and it is larger than what they
+        // think they are doing.
+        w::FieldDescriptor last;
+        last.kind = w::FieldKind::Note;
+        const std::string& name = attached_session_name_;
+        last.label = "  This is the last terminal: killing it ends " +
+                     (name.empty() ? std::string("the session") : "session \"" + name + "\"") + ".";
+        descriptor.fields.push_back(std::move(last));
+    }
+
+    // Cancel FIRST and Kill second, which is the opposite order to the close
+    // dialog and the opposite for a reason: the default button is the one a
+    // reader hits by pressing Enter on a dialog they have not finished
+    // reading, and on this dialog that must be the harmless one.
+    descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
+    descriptor.buttons.push_back(w::ButtonDescriptor{"&Kill terminal", w::ButtonRole::Accept, {}});
+
+    auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
+        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+    presentation->set_completion_handler([this, presentation, terminal](
+                                             const w::DialogResult& result) {
+        if (!result.accepted) return;
+        // Asked of the server, not done here. The window stays until the
+        // server says the terminal ended — a window that closed itself on the
+        // strength of having asked would be claiming something it cannot know,
+        // which is the same rule the close path follows.
+        if (options_.kill_terminal_in_session) options_.kill_terminal_in_session(*terminal);
+    });
 }
 
 void ClientApp::confirm_then_close(w::Window* window) {
