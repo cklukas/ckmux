@@ -175,6 +175,7 @@ add_library(ckmux_client STATIC
     src/client/client_app.cpp
     src/client/commands.cpp
     src/client/copy_mode.cpp
+    src/client/capability_grace.cpp
     src/client/printer_button.cpp
     src/client/printer_output.cpp
     src/client/mirror.cpp

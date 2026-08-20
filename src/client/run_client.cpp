@@ -24,6 +24,7 @@
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
+#include "client/capability_grace.hpp"
 #include "platform/paths.hpp"
 #include "cvision/core/assert.hpp"
 #include "cvision/core/clock.hpp"
@@ -820,8 +821,11 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         // and behaviour is exactly what it was before this wait existed.
         const std::int64_t now = clock.now_nanos();
         if (could_have_opened_since == 0) could_have_opened_since = now;
-        constexpr std::int64_t kCapabilityGraceNanos = 250'000'000;  // 250 ms
-        if (!host_caps_answered && now - could_have_opened_since < kCapabilityGraceNanos) return;
+        // The decision itself lives in `client/capability_grace.hpp`, where it
+        // can be asserted without standing up a client, a server and a host.
+        // What stays here is the clock reading and the "since when" stamp,
+        // which are facts about this loop rather than about the rule.
+        if (!first_terminal_may_open(host_caps_answered, now - could_have_opened_since)) return;
         asked_for_the_first_terminal = true;
         if (!session.terminal_ids().empty()) return;
         proto::NewTerminal ask;

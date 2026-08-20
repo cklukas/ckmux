@@ -12,6 +12,7 @@ set(CKMUX_TEST_SOURCES
     test_attach.cpp
     test_budgets.cpp
     test_cli.cpp
+    test_capability_grace.cpp
     test_client_pacing.cpp
     test_client_smoke.cpp
     test_config.cpp
