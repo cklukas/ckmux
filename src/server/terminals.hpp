@@ -240,6 +240,16 @@ public:
     // an unchanged pair costs no message and a changed one costs exactly one —
     // which is what keeps a terminal printing steadily from putting a `TermMeta`
     // on the wire every tick for the whole of a build.
+    // The counts behind the marks (WP-41/WP-44). Incremented every time the
+    // child rings or writes, whoever is watching and whether or not anybody
+    // is — a fact about the terminal, not about a reader — and never reset,
+    // so a client that remembers the number it last answered can tell a
+    // second bell from the first one it already dismissed.
+    std::uint32_t bell_serial() const noexcept { return bell_serial_; }
+    std::uint32_t activity_serial() const noexcept { return activity_serial_; }
+    void count_bell() noexcept { ++bell_serial_; }
+    void count_activity() noexcept { ++activity_serial_; }
+
     bool marks_announced() const noexcept { return marks_announced_; }
     void note_marks_announced() noexcept { marks_announced_ = true; }
     // Where this terminal's window is, and whether the watching client has been
@@ -414,6 +424,8 @@ private:
     // True until a mark moves. A terminal nobody has ever marked has nothing to
     // say, so the announcement starts as already made.
     bool marks_announced_ = true;
+    std::uint32_t bell_serial_ = 0;
+    std::uint32_t activity_serial_ = 0;
     WindowLayout layout_;
     // And true until a window moves, for the same reason: a terminal whose
     // place nobody has stated has no place to state.

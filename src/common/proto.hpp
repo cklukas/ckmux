@@ -994,6 +994,24 @@ struct TermMeta {
     // what it is told.
     std::string custom_title;
     std::uint8_t flags = 0;
+    // How many times this terminal has rung, and how many times it has
+    // written to a screen nobody was necessarily watching — counted from the
+    // moment it opened and never reset (WP-41/WP-44).
+    //
+    // `flags` above is a LEVEL: it says a mark is up, and the server has to
+    // decide when to put it down. That decision cannot be right for two
+    // readers at once — "a terminal you are not in" is a sentence about ONE
+    // reader — and it cannot even be made twice, because a level carries no
+    // way to say "rang AGAIN" to somebody who has already answered the first.
+    //
+    // A serial is the edge that fixes both. The server counts the fact and
+    // never clears it; each client remembers the number it had when its own
+    // reader last looked at that terminal, and a mark is simply "the count has
+    // moved since then". Two readers can then disagree about the same
+    // terminal, which is the whole point, and a second bell reaches a reader
+    // who dismissed the first.
+    std::uint32_t bell_serial = 0;
+    std::uint32_t activity_serial = 0;
     friend bool operator==(const TermMeta&, const TermMeta&) = default;
 };
 

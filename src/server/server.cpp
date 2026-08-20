@@ -1341,15 +1341,38 @@ void Server::announce_terminal_news() {
         // whole difference between a mark and an event, and a session with no
         // client is precisely when a reader most wants to be told afterwards
         // that something happened.
-        // NOTE (WP-41): this suppression is per SESSION and belongs per client,
-        // but it cannot simply be removed. `clear_marks()` here is the only
-        // thing that ever puts a mark down — the flags are otherwise sticky
-        // until respawn — so dropping it leaves every terminal that has ever
-        // printed permanently marked, which is not a signal at all. The wire
-        // has to carry an EDGE ("rang again") before the fact can be recorded
-        // unconditionally and each reader left to answer for itself. Left as
-        // it stands, with the client-side memory of `2621fab` covering the
-        // single-reader case, until `TermMeta` gains a serial.
+        // NOTE (WP-41): this suppression is per SESSION and belongs per client.
+        // The wire now carries the EDGE it was waiting for — `TermMeta`'s
+        // `bell_serial` and `activity_serial`, counted just below whoever is
+        // watching — so the remaining half is client-side: a client remembers
+        // the serials a terminal had when ITS reader last looked, and shows a
+        // mark when they have moved. When that lands, this whole branch goes
+        // and the level (`flags`) can follow it, because a serial says both
+        // "something happened" and "it happened AGAIN", which a level cannot.
+        //
+        // Left standing until then, deliberately: `clear_marks()` here is
+        // still the only thing that ever puts a mark down, and removing it
+        // before the client reads serials would leave every terminal that has
+        // ever printed permanently marked — a signal that is on for ever is
+        // not a signal.
+        // The FACT, counted before anybody's focus is consulted (WP-41's
+        // serial, the edge this NOTE was waiting for). A bell that rang rang,
+        // whoever was looking; what each reader has answered is their own
+        // business and is not knowable here. `wrote` is computed once and used
+        // by both the count and the level below, so the two cannot come to
+        // disagree about what output means.
+        bool wrote_this_tick = false;
+        if (!a_client_resized_it) {
+            wrote_this_tick = damage.scrollback_pushed > 0;
+            for (const ckv::term::TerminalDamage::RowSpan& row : damage.rows) {
+                if (row.empty()) continue;
+                wrote_this_tick = true;
+                break;
+            }
+        }
+        if (damage.bell) terminal->count_bell();
+        if (wrote_this_tick) terminal->count_activity();
+
         if (home->last_focused == id) {
             // The reader is in this terminal, so there is nothing they have
             // missed. Cleared before the marks below are set, so output in the
@@ -1364,15 +1387,7 @@ void Server::announce_terminal_news() {
             // that moved and a mode that changed are the child doing something
             // ABOUT the screen rather than writing to it, and a program that
             // parks a cursor would otherwise mark itself forever.
-            if (!a_client_resized_it) {
-                bool wrote = damage.scrollback_pushed > 0;
-                for (const ckv::term::TerminalDamage::RowSpan& row : damage.rows) {
-                    if (row.empty()) continue;
-                    wrote = true;
-                    break;
-                }
-                if (wrote) terminal->mark_activity();
-            }
+            if (wrote_this_tick) terminal->mark_activity();
         }
 
         Client* const watcher = client_attached_to(home->id);
@@ -1383,6 +1398,8 @@ void Server::announce_terminal_news() {
         // bell does rather than a message of its own.
         if (!terminal->marks_announced() || !terminal->custom_title_announced()) {
             proto::TermMeta meta;
+            meta.bell_serial = terminal->bell_serial();
+            meta.activity_serial = terminal->activity_serial();
             meta.term = id;
             const auto position = std::find(home->terminals.begin(), home->terminals.end(), id);
             meta.index = static_cast<std::uint16_t>(position - home->terminals.begin());

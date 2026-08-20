@@ -150,7 +150,9 @@ std::vector<Message> every_message() {
     // codec that wrote one field twice, or dropped the new one, would round-
     // trip cleanly if they were equal.
     messages.emplace_back(
-        TermMeta{11, 2, "make", "build", static_cast<std::uint8_t>(TermMetaFlag::Activity)});
+        // Serials as well as the level: a round trip that left them at zero
+        // would pass while the edge WP-41 needs travelled nowhere (WP-44).
+        TermMeta{11, 2, "make", "build", static_cast<std::uint8_t>(TermMetaFlag::Activity), 3, 41});
     messages.emplace_back(NewTerminal{4, "htop", Rect{0, 0, 60, 20}});
     // Non-default force and grace, so a codec that silently drops either
     // field fails here rather than in a dialog whose checkbox stopped

@@ -799,6 +799,8 @@ void write(Writer& w, const TermMeta& m) {
     w.str(m.title);
     w.str(m.custom_title);
     w.u8(m.flags);
+    w.u32(m.bell_serial);
+    w.u32(m.activity_serial);
 }
 void read(Reader& r, TermMeta& m) {
     m.term = r.u64();
@@ -806,6 +808,8 @@ void read(Reader& r, TermMeta& m) {
     m.title = r.str();
     m.custom_title = r.str();
     m.flags = r.u8();
+    m.bell_serial = r.u32();
+    m.activity_serial = r.u32();
 }
 
 // The op tags. Their own byte, so a GridDelta reads as a sequence of tagged
