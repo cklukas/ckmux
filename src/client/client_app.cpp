@@ -2148,8 +2148,51 @@ PrinterButtonModel ClientApp::printer_model_for(w::Window* window) const {
     return model;
 }
 
+w::Window* ClientApp::window_showing(const ckv::term::TerminalSubsession& terminal) {
+    if (desktop_ == nullptr) return nullptr;
+    for (w::Window* window : desktop_->windows()) {
+        if (titles_.find(window) == titles_.end()) continue;  // a dialog, not a terminal
+        if (terminal_shown_by(window) == &terminal) return window;
+    }
+    return nullptr;
+}
+
+void ClientApp::finish_pending_save() {
+    if (awaiting_print_job_ == 0 || pending_save_window_ == nullptr) return;
+    if (desktop_ == nullptr) return;
+    // Still open? A reader who closed the window while the text was on its way
+    // has withdrawn the question, and nothing should be written on their behalf.
+    const std::vector<w::Window*> windows = desktop_->windows();
+    if (std::find(windows.begin(), windows.end(), pending_save_window_) == windows.end()) {
+        awaiting_print_job_ = 0;
+        pending_save_window_ = nullptr;
+        pending_save_path_.clear();
+        return;
+    }
+    ckv::term::TerminalSubsession* const terminal = terminal_shown_by(pending_save_window_);
+    if (terminal == nullptr) return;
+    if (!options_.print_job_text) return;
+    const std::string* const text = options_.print_job_text(*terminal, awaiting_print_job_);
+    if (text == nullptr) return;  // not here yet; ask again next poll
+    // Taken before the write, so a save that fails cannot leave the request
+    // armed and repeat itself on every poll for the rest of the session.
+    const std::uint64_t job = awaiting_print_job_;
+    const std::string path = pending_save_path_;
+    awaiting_print_job_ = 0;
+    pending_save_window_ = nullptr;
+    pending_save_path_.clear();
+    save_print_job(*terminal, job, path);
+}
+
 void ClientApp::refresh_printer_buttons() {
     if (desktop_ == nullptr) return;
+    // A save waiting on its text finishes here, on the same poll that moves the
+    // byte counter. Until this existed, `save_print_job` asked for the text,
+    // recorded what it was waiting for, and nothing ever read those fields
+    // back: the fetch went out, the answer arrived, and the reader who pressed
+    // Save got no file and no message — the silent failure the save path's own
+    // comment calls the worst of the four outcomes.
+    finish_pending_save();
     for (w::Window* window : desktop_->windows()) {
         if (titles_.find(window) == titles_.end()) continue;  // a dialog, not a terminal
         const PrinterButtonModel model = printer_model_for(window);
@@ -2566,6 +2609,15 @@ void ClientApp::save_print_job(ckv::term::TerminalSubsession& terminal, std::uin
         if (options_.fetch_print_job) {
             awaiting_print_job_ = job;
             pending_save_path_ = path;
+            // The WINDOW showing this terminal, not the terminal itself: a
+            // pointer to the subsession would dangle if the reader closed the
+            // window while the fetch was in flight, whereas a window that has
+            // gone is simply absent from `desktop_->windows()` on the next
+            // poll — which makes the liveness check exact rather than hopeful.
+            //
+            // Job ids are per terminal, so the window is also what stops the
+            // resumed save from matching the same id on a different one.
+            pending_save_window_ = window_showing(terminal);
             options_.fetch_print_job(terminal, job);
             return;
         }

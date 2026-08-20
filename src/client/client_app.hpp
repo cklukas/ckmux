@@ -801,6 +801,10 @@ private:
     // byte counter has to move while a child prints, and the emulator raises
     // no event a client could subscribe to.
     void refresh_printer_buttons();
+    // The window showing one terminal, or null when none does.
+    ckv::widgets::Window* window_showing(const ckv::term::TerminalSubsession& terminal);
+    // Completes a save that was waiting on its job text, if the text is here.
+    void finish_pending_save();
     // Pins the caption, or — with an empty name — hands it back to whatever
     // the program says it is. One function for both because they are one
     // decision with two answers, and splitting them would be two places for
@@ -1080,6 +1084,11 @@ private:
     // finishes arriving rather than by polling for it.
     std::uint64_t awaiting_print_job_ = 0;
     std::string pending_save_path_;
+    // The window whose terminal the pending save belongs to, used to find that
+    // terminal again when the text arrives and to tell whether the reader has
+    // closed it meanwhile. A window pointer rather than a subsession pointer
+    // because its liveness is checkable against `desktop_->windows()`.
+    ckv::widgets::Window* pending_save_window_ = nullptr;
     // What one terminal's window is called, given everything currently known
     // about it: the reader's name if they set one, else the program's if it
     // claimed one, else ckmux's own. The single answer, so the title poll, the

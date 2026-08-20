@@ -413,6 +413,27 @@ bool ServerSession::handle(const proto::Message& message) {
             terminal->mirror().apply(*printing);
         return true;
     }
+    // The jobs themselves, which `PrintState` does not carry: it reports the
+    // COUNT a terminal holds, and these two report WHICH ones and what is in
+    // them. Both were sent by the server and both had an `apply` waiting on
+    // the mirror; neither was ever dispatched, so `TerminalMirror::print_jobs()`
+    // stayed empty however much a child printed. The reader saw the count on
+    // the frame button and an empty Print Output dialog beside it — the button
+    // reading `PRINT · 2 · 0 B` against "Nothing has been captured from this
+    // terminal", on one screen at one moment.
+    if (const auto* added = std::get_if<proto::PrintJobAdded>(&message)) {
+        if (RemoteTerminalSubsession* terminal = this->terminal(added->term))
+            terminal->mirror().apply(*added);
+        return true;
+    }
+    // One job's text, in chunks, and only ever after the reader asked for it:
+    // the payload never travels unasked, so this arrives in answer to a
+    // `PrintJobFetch` and completes on the chunk marked final.
+    if (const auto* chunk = std::get_if<proto::PrintJobData>(&message)) {
+        if (RemoteTerminalSubsession* terminal = this->terminal(chunk->term))
+            (void)terminal->mirror().apply(*chunk);
+        return true;
+    }
     if (const auto* said = std::get_if<proto::TermDiagnostic>(&message)) {
         if (RemoteTerminalSubsession* terminal = this->terminal(said->term))
             terminal->mirror().apply(*said);

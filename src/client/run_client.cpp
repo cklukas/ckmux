@@ -2,15 +2,24 @@
 #include "client/run_client.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
+#include <fcntl.h>
 #include <poll.h>
+#include <unistd.h>
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
@@ -376,6 +385,135 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         marks.activity_serial = remote->mirror().activity_serial();
         return marks;
     };
+    // Why the last save failed, in the system's own words, so the message the
+    // reader is shown names the cause rather than only the fact. Lives out
+    // here because the write and the explanation are two hooks and have to
+    // agree about one attempt.
+    std::string save_problem;
+    // --- The virtual printer's client half (PRINT-3…6) --------------------
+    //
+    // `ClientApp` takes every printer fact as an injected hook so that a test
+    // can drive it without a filesystem or a server. Those hooks were declared
+    // and used when the printer landed; NOTHING assigned them here, and the
+    // effect was not a crash but something quieter and worse: the frame button
+    // counts jobs from the emulator's own scalars (the M1 fallback), while the
+    // Print Output dialog — the reader's only route to a captured document, and
+    // the only place View / Save lives — has no fallback and so reported
+    // "Nothing has been captured from this terminal" while the button beside it
+    // said two jobs were held. Both readings were on one screen at one moment.
+    // A reader could not open, view or save a single job.
+    //
+    // Everything needed was already in the mirror. What was missing was this.
+    options.client.printer_status =
+        [&session](const ckv::term::TerminalSubsession& terminal) -> ckm::client::PrinterButtonModel {
+        ckm::client::PrinterButtonModel model;
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return model;
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        if (remote == nullptr) return model;
+        model.mode = remote->mirror().printer_mode();
+        model.state = remote->mirror().printer_state();
+        model.pending_bytes = remote->mirror().printer_bytes();
+        model.jobs = remote->mirror().printer_jobs();
+        // `answered` stays the client's own: it is a fact about what THIS
+        // reader has been shown, and a second client attaching has been shown
+        // nothing (client_app.hpp).
+        return model;
+    };
+    options.client.printer_jobs =
+        [&session](const ckv::term::TerminalSubsession& terminal) -> std::vector<proto::PrintJobInfo> {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return {};
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        if (remote == nullptr) return {};
+        const std::span<const proto::PrintJobInfo> jobs = remote->mirror().print_jobs();
+        return std::vector<proto::PrintJobInfo>(jobs.begin(), jobs.end());
+    };
+    options.client.print_job_text =
+        [&session](const ckv::term::TerminalSubsession& terminal,
+                   std::uint64_t job) -> const std::string* {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return nullptr;
+        const RemoteTerminalSubsession* const remote = session.terminal(*id);
+        if (remote == nullptr) return nullptr;
+        // Null until a fetch has completed, which is what the preview shows as
+        // "fetching" rather than as an empty document.
+        return remote->mirror().print_job_text(job);
+    };
+    options.client.fetch_print_job = [&session](ckv::term::TerminalSubsession& terminal,
+                                                std::uint64_t job) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::PrintJobFetch ask;
+        ask.term = *id;
+        ask.job = job;
+        session.request(ask);
+    };
+    options.client.discard_print_job = [&session](ckv::term::TerminalSubsession& terminal,
+                                                  std::uint64_t job) {
+        const std::optional<std::uint64_t> id = session.id_of(terminal);
+        if (!id) return;
+        proto::PrintJobDiscard ask;
+        ask.term = *id;
+        // Zero means every job this terminal holds, which is what the frame
+        // button's Discard means when nothing in particular is selected.
+        ask.job = job;
+        session.request(ask);
+    };
+    // The one hook that genuinely touches the filesystem, which is exactly why
+    // it is injected rather than called directly from the client.
+    //
+    // `printer_save_problem` carries the reason across, because a save that
+    // failed silently is the worst of the four outcomes: the reader believes
+    // they have the document and finds out when they need it.
+    options.client.write_print_file = [&save_problem](const std::string& path,
+                                                      std::string_view bytes) {
+        save_problem.clear();
+        std::error_code failed;
+        // `~` is resolved HERE, at the filesystem boundary, because this is
+        // the first place the path stops being something a reader typed and
+        // becomes something the kernel is handed. The configured folder
+        // defaults to `~/Documents` and nothing expanded it: the first working
+        // save this rig produced landed in `/tmp/~/Documents/`, a directory
+        // literally named `~` beside wherever the client happened to be
+        // running. The file was correct and a reader would never have found it.
+        std::string resolved = path;
+        if (resolved == "~" || resolved.rfind("~/", 0) == 0) {
+            const char* const home = std::getenv("HOME");
+            if (home != nullptr && *home != '\0')
+                resolved = std::string(home) + resolved.substr(1);
+        }
+        const std::filesystem::path target(resolved);
+        if (target.has_parent_path()) {
+            std::filesystem::create_directories(target.parent_path(), failed);
+            failed.clear();
+        }
+        // Exclusive create: a save must never quietly overwrite a document the
+        // reader already has. The dialog is what asks about replacing.
+        const int fd = ::open(resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) {
+            save_problem = std::strerror(errno);
+            return false;
+        }
+        std::size_t written = 0;
+        while (written < bytes.size()) {
+            const ::ssize_t wrote = ::write(fd, bytes.data() + written, bytes.size() - written);
+            if (wrote <= 0) {
+                if (errno == EINTR) continue;
+                save_problem = std::strerror(errno);
+                (void)::close(fd);
+                return false;
+            }
+            written += static_cast<std::size_t>(wrote);
+        }
+        if (::close(fd) != 0) {
+            save_problem = std::strerror(errno);
+            return false;
+        }
+        return true;
+    };
+    options.client.printer_save_problem = [&save_problem]() { return save_problem; };
+
     // And the host's own bell, when the reader asked for one.
     options.client.ring_host_bell = [&terminal] { terminal.bell(); };
     // The one message that changes a session's coordinate space (WP-40). Sent
