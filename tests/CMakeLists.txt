@@ -19,6 +19,7 @@ set(CKMUX_TEST_SOURCES
     test_diff_engine.cpp
     test_grid_delta.cpp
     test_keymap.cpp
+    test_m4_tmux.cpp
     test_menu_commands.cpp
     test_minimize_chrome.cpp
     test_notifications.cpp
@@ -94,6 +95,10 @@ set(CKMUX_LABELS_test_server_lifecycle "script;e2e")
 # child for every terminal a gate measures.
 set(CKMUX_LABELS_test_budgets "benchmark;pty")
 set(CKMUX_LABELS_test_client_pacing "script;pty;e2e")
+# WP-21 §4, the M4 acceptance: `tmux` inside a ckmux terminal. Forks the real
+# client through ckVision's PTY and runs a real tmux inside it, so it is `pty`
+# and `e2e` both, and it needs the oracle on the machine (§4.1).
+set(CKMUX_LABELS_test_m4_tmux "pty;e2e")
 set(CKMUX_LABELS_test_menu_commands "script;pty;e2e")
 set(CKMUX_LABELS_test_core_promise "script;pty;e2e;golden")
 # Server side: `Terminals::open` and `Server::open_terminal` both go straight
