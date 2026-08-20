@@ -136,7 +136,7 @@ take first.
 | 50 | **WP-38** — Stats on the server tick and on the wire | ckmux | 2–3 d | **Done** (2026-08-19; gated by the test-coordinator session at ckmux `2adadc3` × ckVision `4d0afef` — 27/27 Debug, 27/27 ASan+UBSan) | WP-37 ✓, U5-a ✓ |
 | 51 | **WP-39** — The View menu, the config keys, and the frame readout | ckmux | 2–3 d | **Done** (2026-08-20, ckmux-53; gated by the test-coordinator session at ckmux `d3c69e0` × ckVision `3135907` — 29/30 Debug, 29/30 ASan+UBSan, the one red a positional menu locator owned by another package) | WP-38 ✓ |
 | 52 | **WP-40** — The session owns its desktop, and only a reader changes it | ckmux | 2 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-28 ✓ |
-| 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | Blocked | WP-40 (WP-19 ✓, WP-35 ✓) |
+| 53 | **WP-41** — What belongs to a reader rather than to a session | ckmux | 2–3 d | **In progress** (ckmux-be, `uds:/tmp/cc-socks/76113.sock`) | WP-40 (WP-19 ✓, WP-35 ✓) |
 | 54 | **WP-42** — A terminal takes one paste at a time | ckmux | 0.5–1 d | **In progress** (ckmux-33, `uds:/tmp/cc-socks/71409.sock`) | WP-18 ✓ |
 | 55 | **U7-a** — A ckVision desktop larger than the view of it, with a pan offset | ckVision | 2–3 d | **Ready** | — |
 | 56 | **WP-43** — A client smaller than the session desktop pans | ckmux | 1–2 d | Blocked | U7-a, WP-40 |
