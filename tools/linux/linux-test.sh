@@ -110,7 +110,9 @@ step() {   # step <label> <command...>
         # The first diagnostics, not the last: the first error is the cause
         # and the rest are usually its consequences.
         grep -nE 'error:|error C|tests failed' "$build_root/$label.log" | grep -v '^[0-9]*:FAILED:' | head -8 | cut -c1-160 | sed 's/^/          /'
-        flags=$(grep -oE '\[-W[a-z=-]+\]' "$build_root/$label.log" | sort | uniq -c | sort -rn | awk '{printf "%s x%s  ", $2, $1}')
+        # GCC says [-Werror=shadow]; Clang says [-Werror,-Wshadow]. Count the
+        # named warning either way, so the summary reads the same per compiler.
+        flags=$(grep -oE '\[-W(error[=,])?-?W?[a-z=-]+\]' "$build_root/$label.log" | sed -E 's/\[-Werror[=,]-?W?/[-W/' | sort | uniq -c | sort -rn | awk '{printf "%s x%s  ", $2, $1}')
         [ -n "$flags" ] && echo "          by flag: $flags"
         echo "          full log: $build_root/$label.log"
     fi
