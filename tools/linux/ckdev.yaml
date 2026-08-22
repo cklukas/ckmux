@@ -1,0 +1,83 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# A Linux test bed for ckmux and ckVision, as a Lima VM on a Mac.
+#
+# Why this exists: macOS cannot see a class of defects that Linux can. glibc
+# marks write()/read() warn_unused_result and Apple's headers do not; GCC
+# raises -Wshadow, -Wreturn-type and -Wmaybe-uninitialized where Apple Clang
+# stays quiet; MSVC is a third story. The first public CI run found eleven
+# ignored write() results, three of them losing terminal output, after every
+# build on this machine had been clean for weeks. Every one of those needs a
+# Linux compiler to be visible at all, and this VM is that compiler, local.
+#
+# Debian stable rather than a rolling release, on purpose: a test instrument
+# should not change under you from week to week, and Debian is the closest
+# relative of the Ubuntu that GitHub's runners use.
+#
+#   limactl create --name ckdev tools/linux/ckdev.yaml   # once
+#   limactl start ckdev
+#   limactl shell ckdev                                  # interactive: your own
+#                                                        #   terminal, so Sixel
+#                                                        #   and mouse work
+#   tools/linux/linux-test.sh                            # build + ctest, both
+#                                                        #   repos, from the Mac
+#
+# The VM mounts /Volumes/PRO-BLADE/git at the same path, so the source trees
+# are the same files on both sides. Build directories go on the VM's own disk
+# (~/build), never on the mount: virtiofs is fine for reading source and slow
+# for the thousands of small writes a build makes.
+
+base:
+  - template:debian-13
+
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 6GiB
+disk: 40GiB
+
+# The source trees, at their Mac path, writable. /tmp/lima is the default
+# scratch exchange. The Mac home directory is deliberately NOT mounted.
+mounts:
+  - location: /Volumes/PRO-BLADE/git
+    mountPoint: /Volumes/PRO-BLADE/git
+    writable: true
+  - location: /tmp/lima
+    writable: true
+mountType: virtiofs
+
+provision:
+  # The toolchain both repositories need, and nothing else. GCC and Clang
+  # both, because CI runs both and they disagree about what to warn on.
+  # libclang-rt-dev is libFuzzer, for the -DCKVISION_BUILD_FUZZERS=ON lane.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        build-essential g++ gcc \
+        clang lld libclang-rt-dev \
+        cmake ninja-build \
+        python3 \
+        git rsync binutils pkg-config \
+        locales-all procps lsof
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      mkdir -p ~/build ~/src
+
+probes:
+  - description: "toolchain present"
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! timeout 120s bash -c "until command -v g++ && command -v clang++ && command -v cmake; do sleep 3; done"; then
+        echo >&2 "toolchain is not installed yet"
+        exit 1
+      fi
+    hint: |
+      The provisioning apt-get has not finished. See "/var/log/cloud-init-output.log" in the guest.

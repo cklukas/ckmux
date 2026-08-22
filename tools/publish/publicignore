@@ -10,5 +10,9 @@ AGENTS.md
 # The specification, roadmap, work packages and acceptance checklists.
 plans/
 
+# The Linux test bed. Its VM definition hardcodes this machine's source path,
+# which makes it a tool for this checkout rather than for a stranger's.
+tools/linux/
+
 # This machinery itself.
 tools/publish/
