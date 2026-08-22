@@ -70,6 +70,35 @@ bool open_terminal_report(Reader& reader) {
 
 }  // namespace
 
+// Where ckVision's `hello` example actually is, according to the build that
+// built it — never a guess. This used to be an absolute path into one
+// developer's Mac checkout, guarded by exists(). On that machine it worked; on
+// the Linux VM the guard was worse than useless, because that path is MOUNTED
+// there, so the file exists — it is simply a Mach-O binary Linux cannot
+// execute. The guard passed, the child never started, and two tests spent the
+// full sees() budget twice over waiting for a program that was never going to
+// appear. A path that exists is not a program that runs.
+//
+// Empty means the example is not part of this build — ckVision is built here as
+// a dependency, with its examples off by default — and the caller skips.
+std::filesystem::path ckvision_hello_path() {
+#if defined(CKMUX_CKVISION_HELLO_PATH)
+    {
+        const std::filesystem::path built = CKMUX_CKVISION_HELLO_PATH;
+        std::error_code ignored;
+        if (std::filesystem::exists(built, ignored)) return built;
+    }
+#endif
+    // An explicit override, for a reader who has the example built elsewhere and
+    // wants these two rows to run. Opt-in on purpose: nothing is inferred.
+    if (const char* const from_environment = std::getenv("CKMUX_CKVISION_HELLO");
+        from_environment != nullptr && *from_environment != '\0') {
+        std::error_code ignored;
+        if (std::filesystem::exists(from_environment, ignored)) return from_environment;
+    }
+    return {};
+}
+
 CK_TEST(every_prefix_command_a_reader_can_press_does_what_it_says) {
     // One client, one pass through the keys on the footer and in the menus. Each
     // step asserts something a reader would SEE, because that is the only thing
@@ -627,9 +656,8 @@ CK_TEST(a_mouse_click_reaches_a_real_child_apps_own_button) {
     // this drives a second real process (ckVision's own `hello` example,
     // chosen for its one-button message box) inside a ckmux pane and clicks
     // its OK button for real.
-    const std::filesystem::path hello =
-        "/Volumes/PRO-BLADE/git/ckvision/build/examples/ckvision_hello";
-    if (!std::filesystem::exists(hello)) return;  // built from a sibling checkout; not everywhere
+    const std::filesystem::path hello = ckvision_hello_path();
+    if (hello.empty()) return;  // ckVision's examples are not part of this build
 
     const std::filesystem::path socket = private_socket("mouseclick2");
     forget(socket);
@@ -685,9 +713,8 @@ CK_TEST(a_shift_click_into_a_pane_is_reserved_for_selection_not_forwarded) {
     // clicked and nothing happened," regardless of whether the Shift was a
     // deliberate drag-to-select or a modifier the terminal/input path added
     // on its own.
-    const std::filesystem::path hello =
-        "/Volumes/PRO-BLADE/git/ckvision/build/examples/ckvision_hello";
-    if (!std::filesystem::exists(hello)) return;
+    const std::filesystem::path hello = ckvision_hello_path();
+    if (hello.empty()) return;  // ckVision's examples are not part of this build
 
     const std::filesystem::path socket = private_socket("shiftclick2");
     forget(socket);

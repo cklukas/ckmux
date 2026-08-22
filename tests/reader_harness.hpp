@@ -76,8 +76,36 @@ inline ::pid_t start_server(const std::filesystem::path& socket) {
     char* const argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>("--server"),
                           const_cast<char*>(path.c_str()), const_cast<char*>("--foreground"),
                           nullptr};
-    const int null_fd = ::open("/dev/null", O_WRONLY);
+    // The SERVER is what launches Terminal 1's shell, so the server's
+    // environment decides which shell that is. Inherited, it is the environment
+    // of whoever ran ctest — and on Debian that resolves to a LOGIN /bin/bash,
+    // whose stock ~/.bashrc builds a PS1 containing an OSC 0 title sequence.
+    // ckmux honours that title, renames the terminal, and every assertion in
+    // this suite that names "Terminal 1" then looks for a string the screen no
+    // longer holds. Six failures across four tests on Linux, none on macOS,
+    // from a shell nobody chose.
+    //
+    // Reader::start already pins exactly these values for the CLIENT half of
+    // the rig. Pinning them here too means both halves agree on shell, home and
+    // locale instead of one of them inheriting the developer's login.
+    (void)::setenv("SHELL", "/bin/sh", 1);
+    (void)::setenv("HOME", "/tmp", 1);
+    (void)::setenv("LC_ALL", "C", 1);
+    // STDOUT as well as STDERR, and this is not tidiness — it is why the suite
+    // could pass when run by hand and time out under CTest on the same machine
+    // in the same second. CTest does not wait for the test PROCESS; it waits for
+    // the test's output pipe to reach end-of-file. A server forked here inherits
+    // that pipe, and so does the shell the server forks for the terminal. One
+    // server outliving its test therefore holds the pipe open forever, and CTest
+    // reports a timeout for a binary that finished long ago — a report about the
+    // plumbing that reads exactly like a report about the code.
+    //
+    // Pointing both at /dev/null severs that entirely: nothing this server or
+    // its descendants inherit can hold the runner's pipe. Nothing is lost, since
+    // the server's own diagnostics were already going to /dev/null.
+    const int null_fd = ::open("/dev/null", O_RDWR);
     if (null_fd >= 0) {
+        (void)::dup2(null_fd, STDOUT_FILENO);
         (void)::dup2(null_fd, STDERR_FILENO);
         (void)::close(null_fd);
     }

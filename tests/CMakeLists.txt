@@ -58,6 +58,17 @@ target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
 # test never finds a stale one from another build directory.
 if(TARGET ckmux)
     target_compile_definitions(ckmux_tests PRIVATE CKMUX_BINARY_PATH="$<TARGET_FILE:ckmux>")
+    # Two mouse tests drive ckVision's own `hello` example inside a ckmux pane,
+    # to prove a click crosses the wire into a SEPARATE process's Application.
+    # They need that example's binary, and the only honest way to know where it
+    # is, is to ask the build that produced it — same reason and same mechanism
+    # as CKMUX_BINARY_PATH above. When ckVision is built here with examples off
+    # (the default for a dependency) the target does not exist, the definition
+    # is absent, and the tests say so and skip rather than guess at a path.
+    if(TARGET ckvision_hello)
+        target_compile_definitions(ckmux_tests PRIVATE
+            CKMUX_CKVISION_HELLO_PATH="$<TARGET_FILE:ckvision_hello>")
+    endif()
     add_dependencies(ckmux_tests ckmux)
 endif()
 ckmux_strict(ckmux_tests)
