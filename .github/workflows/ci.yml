@@ -30,12 +30,12 @@ jobs:
     # The Linux port is M5 work; report it without blocking until then.
     continue-on-error: ${{ matrix.name == 'linux' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: ckmux
 
       - name: Check out ckVision
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/ckvision
           # Private sibling: the default GITHUB_TOKEN is scoped to this repo
