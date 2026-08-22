@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "common/config.hpp"
+#include "common/version.hpp"
 #include "common/shell.hpp"
 #include "platform/paths.hpp"
 #include "platform/process_stats.hpp"
@@ -29,10 +30,10 @@ namespace {
 namespace w = ckv::widgets;
 namespace u = ckv::ui;
 
-// The version string children see, and the About box shows. ckmux is
-// pre-release; the number is deliberately the plan's own milestone number
-// rather than a marketing version.
-constexpr const char* kVersion = "0.0.1 (M1)";
+// The version string children see, and the About box shows — stamped by
+// CMake from project(ckmux VERSION ...), the one place the version is
+// stated, so this can never disagree with the package or `--version`.
+constexpr const char* kVersion = CKMUX_VERSION_STRING;
 
 // How much of a child's own title a dialog will quote. The wire lets a
 // caption be four kilobytes; a dialog note is ONE ROW, clipped rather than

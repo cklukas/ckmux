@@ -1,11 +1,18 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
-cmake_minimum_required(VERSION 3.25)
-project(ckmux VERSION 0.0.1 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.28)
+project(ckmux VERSION 0.1.0 LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
 include(GNUInstallDirs)
+
+# The ckVision release this ckmux is developed and released against. The
+# co-development checkout below tracks HEAD by design; every other way of
+# getting the library -- an installed package, or the FetchContent clone an
+# adopter's build makes -- must satisfy exactly this version. Bumping it is a
+# deliberate act that follows a ckVision release, never a side effect.
+set(CKMUX_CKVISION_VERSION 0.1.0)
 
 # Said once, plainly: ckmux builds on POSIX only. The server forks, opens
 # PTYs, polls file descriptors and speaks over a unix-domain socket, and
@@ -53,43 +60,44 @@ if(CKMUX_PREFER_CKVISION_SOURCE AND NOT ckmux_ckvision_source_available)
         "CKMUX_PREFER_CKVISION_SOURCE is ON but no ckVision checkout is at "
         "${CKMUX_CKVISION_SOURCE_DIR} (its CMakeLists.txt was expected there). "
         "Point -DCKMUX_CKVISION_SOURCE_DIR at one, or set "
-        "-DCKMUX_PREFER_CKVISION_SOURCE=OFF to use an installed package.")
+        "-DCKMUX_PREFER_CKVISION_SOURCE=OFF to use an installed ckVision "
+        "package or the pinned v${CKMUX_CKVISION_VERSION} release fetch.")
+endif()
+
+# A sanitizer setting that reaches only half of a statically linked binary
+# is worse than none: ASan's container annotations disagree across an
+# instrumented/uninstrumented boundary and report container-overflow on
+# correct code, while the uninstrumented half's real bugs stay invisible —
+# so the reader learns to distrust the tool. CKMUX_SANITIZE is the knob
+# AGENTS.md documents, so it decides for both projects; the FORCE is
+# required because ckVision's own `set(CKVISION_SANITIZE "" CACHE ...)`
+# runs inside add_subdirectory below and a plain cache set there would not
+# overwrite an existing entry, nor this one overwrite the user's.
+# CKMUX_FORWARDED_SANITIZE remembers what we forwarded last time, so the
+# warning fires on a real disagreement and not on our own value coming
+# back around on the next configure.
+if(CKMUX_SANITIZE)
+    if(DEFINED CACHE{CKVISION_SANITIZE}
+       AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_SANITIZE}"
+       AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_FORWARDED_SANITIZE}")
+        message(WARNING
+            "CKVISION_SANITIZE='${CKVISION_SANITIZE}' disagrees with "
+            "CKMUX_SANITIZE='${CKMUX_SANITIZE}'; using CKMUX_SANITIZE for both. "
+            "A half-instrumented binary reports findings that are not bugs and "
+            "misses bugs that are.")
+    endif()
+    set(CKVISION_SANITIZE "${CKMUX_SANITIZE}" CACHE STRING
+        "Sanitizers for the ckVision subproject (forwarded from CKMUX_SANITIZE)" FORCE)
+    set(CKMUX_FORWARDED_SANITIZE "${CKMUX_SANITIZE}" CACHE INTERNAL
+        "Last CKVISION_SANITIZE value forwarded from CKMUX_SANITIZE")
+elseif(CKVISION_SANITIZE)
+    message(WARNING
+        "CKVISION_SANITIZE='${CKVISION_SANITIZE}' is set while CKMUX_SANITIZE is "
+        "empty: only the library half of the binary would be instrumented. Use "
+        "-DCKMUX_SANITIZE='${CKVISION_SANITIZE}' to instrument both, or clear both.")
 endif()
 
 if(CKMUX_PREFER_CKVISION_SOURCE)
-    # A sanitizer setting that reaches only half of a statically linked binary
-    # is worse than none: ASan's container annotations disagree across an
-    # instrumented/uninstrumented boundary and report container-overflow on
-    # correct code, while the uninstrumented half's real bugs stay invisible —
-    # so the reader learns to distrust the tool. CKMUX_SANITIZE is the knob
-    # AGENTS.md documents, so it decides for both projects; the FORCE is
-    # required because ckVision's own `set(CKVISION_SANITIZE "" CACHE ...)`
-    # runs inside add_subdirectory below and a plain cache set there would not
-    # overwrite an existing entry, nor this one overwrite the user's.
-    # CKMUX_FORWARDED_SANITIZE remembers what we forwarded last time, so the
-    # warning fires on a real disagreement and not on our own value coming
-    # back around on the next configure.
-    if(CKMUX_SANITIZE)
-        if(DEFINED CACHE{CKVISION_SANITIZE}
-           AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_SANITIZE}"
-           AND NOT "${CKVISION_SANITIZE}" STREQUAL "${CKMUX_FORWARDED_SANITIZE}")
-            message(WARNING
-                "CKVISION_SANITIZE='${CKVISION_SANITIZE}' disagrees with "
-                "CKMUX_SANITIZE='${CKMUX_SANITIZE}'; using CKMUX_SANITIZE for both. "
-                "A half-instrumented binary reports findings that are not bugs and "
-                "misses bugs that are.")
-        endif()
-        set(CKVISION_SANITIZE "${CKMUX_SANITIZE}" CACHE STRING
-            "Sanitizers for the ckVision subproject (forwarded from CKMUX_SANITIZE)" FORCE)
-        set(CKMUX_FORWARDED_SANITIZE "${CKMUX_SANITIZE}" CACHE INTERNAL
-            "Last CKVISION_SANITIZE value forwarded from CKMUX_SANITIZE")
-    elseif(CKVISION_SANITIZE)
-        message(WARNING
-            "CKVISION_SANITIZE='${CKVISION_SANITIZE}' is set while CKMUX_SANITIZE is "
-            "empty: only the library half of the binary would be instrumented. Use "
-            "-DCKMUX_SANITIZE='${CKVISION_SANITIZE}' to instrument both, or clear both.")
-    endif()
-
     message(STATUS "ckmux: building ckVision from ${CKMUX_CKVISION_SOURCE_DIR}")
     # EXCLUDE_FROM_ALL is here for the install rules and nothing else. CMake's
     # directory property of that name has three documented effects: the
@@ -114,13 +122,25 @@ if(CKMUX_PREFER_CKVISION_SOURCE)
     add_subdirectory("${CKMUX_CKVISION_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ckvision"
         EXCLUDE_FROM_ALL)
 else()
-    find_package(ckvision CONFIG QUIET)
-    if(NOT ckvision_FOUND)
-        message(FATAL_ERROR
-            "ckVision not found. Install it, or check out ../ckvision (looked in "
-            "${CKMUX_CKVISION_SOURCE_DIR}) and configure with "
-            "-DCKMUX_PREFER_CKVISION_SOURCE=ON.")
-    endif()
+    # An adopter's build: no co-development checkout. One declaration states
+    # the whole policy (CMake >= 3.24): try find_package first, so a ckVision
+    # already installed at the pinned version is used rather than downloaded;
+    # otherwise clone exactly the v${CKMUX_CKVISION_VERSION} release tag and
+    # build it as part of this build -- same compiler, same flags, same
+    # sanitizers. EXCLUDE_FROM_ALL keeps ckVision's install rules out of
+    # ckmux's prefix, for the same reason as the add_subdirectory above.
+    #
+    # CI supplies the sources locally through the standard
+    # FETCHCONTENT_SOURCE_DIR_CKVISION override, checked out at the same tag;
+    # this declaration stays the single statement of the pinned version.
+    include(FetchContent)
+    FetchContent_Declare(ckvision
+        GIT_REPOSITORY https://github.com/cklukas/ckVision.git
+        GIT_TAG        v${CKMUX_CKVISION_VERSION}
+        GIT_SHALLOW    TRUE
+        EXCLUDE_FROM_ALL
+        FIND_PACKAGE_ARGS ${CKMUX_CKVISION_VERSION} CONFIG)
+    FetchContent_MakeAvailable(ckvision)
 endif()
 
 # The OS seam as a real target. AGENTS.md and plans/02 both list `platform`
@@ -157,13 +177,21 @@ ckmux_strict(ckmux_platform)
 #
 # Nothing here may touch ckVision's `ui`, `widgets` or `scene`, for the same
 # reason the server may not: this is what the server is built out of.
+# The version, stamped from project() above into a generated header so the
+# binary can never report a number the package disagrees with. Generated into
+# the build tree; the `generated` dir rides ckmux_common's PUBLIC includes.
+configure_file(src/common/version.hpp.in
+    "${CMAKE_BINARY_DIR}/generated/common/version.hpp" @ONLY)
+
 add_library(ckmux_common STATIC
     src/common/config.cpp
     src/common/grid_delta.cpp
     src/common/keymap.cpp
     src/common/proto.cpp
     src/common/shell.cpp)
-target_include_directories(ckmux_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ckmux_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(ckmux_common PUBLIC ckmux_platform)
 ckmux_strict(ckmux_common)
 # GCC 13 raises -Wmaybe-uninitialized from inside libstdc++'s vector reallocation
@@ -296,4 +324,29 @@ endif()
 # drivers, which is what a fuzzing campaign wants and a test run does not.
 if(CKMUX_BUILD_FUZZERS)
     add_subdirectory(fuzz)
+endif()
+
+# Packaging. `cpack -G TGZ` (any platform) or `cpack -G "TGZ;DEB"` (Linux)
+# from a Release build directory produces the installable packages that
+# .github/workflows/release.yml attaches to a GitHub release -- the workflow
+# runs exactly these commands, so any published package can be reproduced
+# locally. Top-level only: nobody packages ckmux from inside another build.
+if(PROJECT_IS_TOP_LEVEL)
+    set(CPACK_PACKAGE_NAME "ckmux")
+    set(CPACK_PACKAGE_VENDOR "Dr. Christian Klukas")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+        "Terminal multiplexer with a visible interface: menus, windows, mouse")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/cklukas/ckmux")
+    set(CPACK_PACKAGE_CONTACT "Dr. Christian Klukas <christian.klukas@gmail.com>")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+    set(CPACK_PACKAGE_CHECKSUM SHA256)
+    set(CPACK_STRIP_FILES TRUE)
+    # Name the architecture: the default file name says only "Darwin"/"Linux",
+    # which cannot tell an arm64 mac package from an x86_64 one.
+    set(CPACK_PACKAGE_FILE_NAME
+        "${PROJECT_NAME}-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    include(CPack)
 endif()

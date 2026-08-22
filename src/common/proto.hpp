@@ -35,6 +35,8 @@
 #include <variant>
 #include <vector>
 
+#include "common/version.hpp"
+
 #include "cvision/core/cell.hpp"
 #include "cvision/core/cursor.hpp"
 #include "cvision/core/geometry.hpp"
@@ -108,7 +110,7 @@ inline constexpr std::uint32_t kProtocolVersion = 3;
 // `kProtocolVersion` is the only thing that decides whether two ends can talk —
 // but a reader diagnosing a refusal wants to know which two builds met, and a
 // log line naming them is the difference between a bug report and a shrug.
-inline constexpr std::string_view kBuildIdentity = "ckmux 0.0.1";
+inline constexpr std::string_view kBuildIdentity = "ckmux " CKMUX_VERSION_STRING;
 
 // u32 payload_len, u16 type, u16 flags.
 inline constexpr std::size_t kHeaderBytes = 8;

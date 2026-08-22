@@ -22,6 +22,7 @@
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
+#include "common/version.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/ui/standard_roles.hpp"
 #include "cvision/widgets/common_components.hpp"
@@ -358,7 +359,7 @@ CK_TEST(the_about_box_names_the_program_its_version_and_who_it_belongs_to) {
     CK_CHECK(screen.find("(c) 2026 by Dr. Christian Klukas") != std::string::npos);
     // The identity it is an attribution FOR, in the same box: an author line
     // over an unnamed program would pass the check above and say nothing.
-    CK_CHECK(screen.find("ckmux 0.0.1 (M1)") != std::string::npos);
+    CK_CHECK(screen.find("ckmux " CKMUX_VERSION_STRING) != std::string::npos);
 }
 
 CK_TEST(the_menu_bar_carries_the_clock_at_its_right_end_and_keeps_it_there) {

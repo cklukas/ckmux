@@ -1,0 +1,102 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+#
+# Pushing a tag v<version> builds ckmux in Release against the pinned ckVision
+# release, runs the full test suite, packages the result (TGZ everywhere, plus
+# a Debian package on Linux), and publishes a GitHub release with the packages
+# attached. The tag must match project(ckmux VERSION ...) — a release whose
+# binary reports a different version than its tag is checked here, not
+# discovered by a user.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            generators: "TGZ;DEB"
+            name: linux-x86_64
+          - os: macos-latest
+            generators: "TGZ"
+            name: macos-arm64
+    name: package-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ckmux
+
+      - name: Check the tag matches the project version
+        run: |
+          grep -Fq "project(ckmux VERSION ${GITHUB_REF_NAME#v} " ckmux/CMakeLists.txt || {
+            echo "Tag $GITHUB_REF_NAME does not match project(ckmux VERSION ...) in CMakeLists.txt" >&2
+            exit 1
+          }
+
+      - name: Resolve the pinned ckVision version
+        id: ckvision
+        run: |
+          version=$(sed -n 's/^set(CKMUX_CKVISION_VERSION \([0-9.]*\))$/\1/p' ckmux/CMakeLists.txt)
+          test -n "$version"
+          echo "ref=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check out ckVision (pinned release)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/ckVision
+          ref: ${{ steps.ckvision.outputs.ref }}
+          # See ci.yml: needed only while ckVision is private.
+          token: ${{ secrets.CKVISION_TOKEN || github.token }}
+          path: ckvision
+
+      - name: Configure
+        run: >
+          cmake -S ckmux -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCKMUX_PREFER_CKVISION_SOURCE=OFF
+          -DFETCHCONTENT_SOURCE_DIR_CKVISION=$GITHUB_WORKSPACE/ckvision
+
+      - name: Build
+        run: cmake --build build -j
+
+      # The full suite, in the build type being shipped: Release verdicts have
+      # differed from Debug ones here before (dead-code check), so a release
+      # is gated on its own build type, never on Debug's word.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cpack -G "${{ matrix.generators }}" --config build/CPackConfig.cmake -B "$GITHUB_WORKSPACE/packages"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.name }}
+          path: packages/ckmux*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" packages/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "ckmux ${GITHUB_REF_NAME#v}"
+          --verify-tag
+          --generate-notes
