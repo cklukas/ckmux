@@ -1,11 +1,14 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 #
-# Every gating lane builds ckmux against the PINNED ckVision release — the
-# version stated once in CMakeLists.txt as CKMUX_CKVISION_VERSION, checked out
-# here by its tag. That is exactly what an adopter's FetchContent build gets,
-# so it is what the gate must test. One advisory lane builds against
-# ckVision's published HEAD instead, as an early warning for the next ckVision
-# release; it may fail without blocking anything.
+# Every gating lane builds ckmux against the PINNED ckVision release. The pin
+# is stated exactly once — CKMUX_CKVISION_VERSION in CMakeLists.txt — and the
+# build itself fetches that tag from GitHub via FetchContent, the same way an
+# adopter's build does. No second checkout, no token, no secrets: the lanes
+# run whatever `cmake && cmake --build && ctest` runs on any machine.
+# Requires ckVision to be a public repository (it is published as one).
+#
+# One advisory lane builds against ckVision's published HEAD instead, as an
+# early warning for the next ckVision release; it may fail without blocking.
 name: ci
 
 on:
@@ -21,65 +24,47 @@ jobs:
         include:
           - os: macos-latest
             sanitize: ""
-            ckvision_ref: pinned
+            ckvision: pinned
             name: macos
           - os: macos-latest
             sanitize: "address,undefined"
-            ckvision_ref: pinned
+            ckvision: pinned
             name: macos-asan-ubsan
           - os: ubuntu-latest
             sanitize: ""
-            ckvision_ref: pinned
+            ckvision: pinned
             name: linux
           - os: ubuntu-latest
             sanitize: ""
-            ckvision_ref: main
+            ckvision: head
             name: linux-ckvision-head
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     # Only the early-warning lane is advisory.
-    continue-on-error: ${{ matrix.ckvision_ref == 'main' }}
+    continue-on-error: ${{ matrix.ckvision == 'head' }}
     steps:
       - uses: actions/checkout@v5
         with:
           path: ckmux
 
-      - name: Resolve the ckVision ref
-        id: ckvision
-        run: |
-          version=$(sed -n 's/^set(CKMUX_CKVISION_VERSION \([0-9.]*\))$/\1/p' ckmux/CMakeLists.txt)
-          test -n "$version"
-          if [ "${{ matrix.ckvision_ref }}" = "pinned" ]; then
-            echo "ref=v$version" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${{ matrix.ckvision_ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check out ckVision
+      # The advisory lane provides ckVision HEAD through CMake's standard
+      # FETCHCONTENT_SOURCE_DIR override; the pinned lanes provide nothing —
+      # FetchContent clones the pinned tag itself.
+      - name: Check out ckVision HEAD (advisory lane only)
+        if: matrix.ckvision == 'head'
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/ckVision
-          ref: ${{ steps.ckvision.outputs.ref }}
-          # While ckVision is private, the default GITHUB_TOKEN is scoped to
-          # this repo only and cannot clone it; CKVISION_TOKEN is a
-          # fine-grained PAT with read access. Once both repos are public this
-          # line can go — and so could the whole step, since CMake's
-          # FetchContent clones the tag itself; the explicit checkout stays
-          # because it caches, authenticates properly, and names the ref in
-          # the build log.
-          token: ${{ secrets.CKVISION_TOKEN || github.token }}
           path: ckvision
 
       - name: Configure
-        # FETCHCONTENT_SOURCE_DIR_CKVISION is CMake's standard "the sources
-        # are already here" override for the ckvision FetchContent dependency;
-        # the pinned version itself is stated only in CMakeLists.txt.
         run: >
           cmake -S ckmux -B build
           -DCMAKE_BUILD_TYPE=Debug
-          -DCKMUX_PREFER_CKVISION_SOURCE=OFF
-          -DFETCHCONTENT_SOURCE_DIR_CKVISION=$GITHUB_WORKSPACE/ckvision
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
+          ${{ matrix.ckvision == 'head'
+              && format('-DCKMUX_PREFER_CKVISION_SOURCE=OFF -DFETCHCONTENT_SOURCE_DIR_CKVISION={0}/ckvision', github.workspace)
+              || '' }}
 
       # Warnings are errors in both projects, so a clean build is part of the
       # gate rather than something to read the log for.

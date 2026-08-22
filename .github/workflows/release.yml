@@ -1,11 +1,12 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 #
-# Pushing a tag v<version> builds ckmux in Release against the pinned ckVision
-# release, runs the full test suite, packages the result (TGZ everywhere, plus
-# a Debian package on Linux), and publishes a GitHub release with the packages
-# attached. The tag must match project(ckmux VERSION ...) — a release whose
-# binary reports a different version than its tag is checked here, not
-# discovered by a user.
+# Pushing a tag v<version> builds ckmux in Release, runs the full test suite
+# in Release, packages the result (TGZ everywhere, plus a Debian package on
+# Linux), and publishes a GitHub release with the packages attached.
+#
+# The ckVision the release builds against is decided by CMakeLists.txt alone:
+# FetchContent clones the tag named by CKMUX_CKVISION_VERSION. No second
+# checkout, no token — the release job runs exactly what an adopter runs.
 name: release
 
 on:
@@ -34,6 +35,8 @@ jobs:
         with:
           path: ckmux
 
+      # A release whose binary reports a different version than its tag is
+      # caught here, not discovered by a user.
       - name: Check the tag matches the project version
         run: |
           grep -Fq "project(ckmux VERSION ${GITHUB_REF_NAME#v} " ckmux/CMakeLists.txt || {
@@ -41,28 +44,8 @@ jobs:
             exit 1
           }
 
-      - name: Resolve the pinned ckVision version
-        id: ckvision
-        run: |
-          version=$(sed -n 's/^set(CKMUX_CKVISION_VERSION \([0-9.]*\))$/\1/p' ckmux/CMakeLists.txt)
-          test -n "$version"
-          echo "ref=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Check out ckVision (pinned release)
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ github.repository_owner }}/ckVision
-          ref: ${{ steps.ckvision.outputs.ref }}
-          # See ci.yml: needed only while ckVision is private.
-          token: ${{ secrets.CKVISION_TOKEN || github.token }}
-          path: ckvision
-
       - name: Configure
-        run: >
-          cmake -S ckmux -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DCKMUX_PREFER_CKVISION_SOURCE=OFF
-          -DFETCHCONTENT_SOURCE_DIR_CKVISION=$GITHUB_WORKSPACE/ckvision
+        run: cmake -S ckmux -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build -j
