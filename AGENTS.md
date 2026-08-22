@@ -61,6 +61,25 @@ ckVision is found as an installed package, or built from `../ckvision`
 cmake -S . -B build-asan -DCKMUX_SANITIZE=address,undefined -DCKVISION_SANITIZE=address,undefined
 ```
 
+## The Linux gate (2026-08-22)
+
+A macOS build is blind to a class of defects that only a second platform can
+see: glibc marks `write()`/`read()` `warn_unused_result` and Apple's headers
+do not; GCC raises `-Wshadow`, `-Wreturn-type`, `-Wmaybe-uninitialized` and
+`-Wformat-truncation` where Apple Clang is silent; `(void)` silences Clang and
+MSVC but not GCC. The first public CI run found eleven ignored writes, three
+of them losing terminal output, after weeks of clean builds here.
+
+So "builds clean" is a claim about a platform, and the platform is named. A
+Debian 13 VM on this Mac is the local Linux compiler: `tools/linux/ckdev.yaml`
+defines it, `tools/linux/linux-test.sh` drives it (HEAD of both repos, Release,
+GCC by default; `--clang`, `--debug`, `--sanitize`, `--worktree`, `--only`),
+and `limactl shell ckdev` opens it interactively from your own terminal so
+Sixel and mouse survive. `tools/linux/README.md` has the rest. Anything that
+touches `src/platform`, a syscall, a format string, or a header compiled by
+more than one TU runs there before it is called done — and a Linux verdict is
+reported with its compiler, because GCC and Clang disagree on the same bytes.
+
 ## The tester role (when one is active)
 
 Several sessions work these two repositories at once. When one of them is

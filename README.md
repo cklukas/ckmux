@@ -88,8 +88,10 @@ edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are supported. Windows is a design target — `src/platform` is
-written against a seam that ConPTY can fill — but it is not yet a claim.
+macOS is where ckmux is developed and verified. Linux builds with Clang and
+the server runs there; the GCC build is not yet warning-clean, and the Linux
+port is open work rather than a claim. Windows is a design target —
+`src/platform` is written against a seam that ConPTY can fill — and no more.
 
 ## Provenance
 
