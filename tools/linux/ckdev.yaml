@@ -49,7 +49,11 @@ mountType: virtiofs
 
 provision:
   # The toolchain both repositories need, and nothing else. GCC and Clang
-  # both, because CI runs both and they disagree about what to warn on.
+  # both, because CI runs both and they disagree about what to warn on. GCC 13
+# is pinned explicitly because GitHub's ubuntu-latest ships 13.3 and its
+# -Wdangling-reference / -Wmaybe-uninitialized fire where the newer GCC 14
+# (the distro default here) has learned not to — the version gap IS the bug
+# class this VM exists to catch, so the CI compiler must be present by name.
   # libclang-rt-dev is libFuzzer, for the -DCKVISION_BUILD_FUZZERS=ON lane.
   - mode: system
     script: |
@@ -59,6 +63,7 @@ provision:
       apt-get update
       apt-get install -y --no-install-recommends \
         build-essential g++ gcc \
+        g++-13 gcc-13 \
         clang lld libclang-rt-dev \
         cmake ninja-build \
         python3 \

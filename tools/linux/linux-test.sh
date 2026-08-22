@@ -39,7 +39,9 @@ while [ $# -gt 0 ]; do
         --debug) build_type=Debug; shift ;;
         --release) build_type=Release; shift ;;
         --clang) compiler=clang; shift ;;
-        --gcc|--gnu) compiler=gnu; shift ;;
+        --gcc|--gnu|--gcc13) compiler=gnu13; shift ;;
+        --gcc14) compiler=gnu14; shift ;;
+        --hard) compiler=hard; shift ;;
         --worktree) source=worktree; shift ;;
         --head) source=head; shift ;;
         --sanitize) sanitize=address,undefined; build_type=Debug; shift ;;
@@ -59,10 +61,32 @@ if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$vm R
     }
 fi
 
+# GCC 13 is the default, not GCC 14: GitHub's ubuntu-latest runs 13.3, and a
+# gate that builds on a newer compiler than CI is a gate that reports green on
+# code CI will reject (a -Wdangling-reference false positive GCC 14 dropped hit
+# exactly this way). --hard sweeps every compiler CI can use, so the union of
+# their diagnostics is seen here before a push, never first on a runner.
 case $compiler in
-    gnu)   cxx=g++;     cc=gcc ;;
+    gnu13) cxx=g++-13;  cc=gcc-13 ;;
+    gnu14) cxx=g++-14;  cc=gcc-14 ;;
     clang) cxx=clang++; cc=clang ;;
+    hard)  cxx=g++-13;  cc=gcc-13 ;;   # first pass; the sweep runs the rest
 esac
+
+# --hard: the union of every compiler CI can reach, so nothing waits for a
+# runner to be found. Re-invokes this script once per compiler in the chosen
+# build type; exit status is the number of configurations that failed.
+if [ "$compiler" = hard ]; then
+    bt_flag=--release; [ "$build_type" = Debug ] && bt_flag=--debug
+    extra=""; [ -n "$only" ] && extra="--only $only"
+    failed=0
+    for c in --gcc13 --gcc14 --clang; do
+        echo "================ hard sweep: $c $bt_flag ================"
+        sh "$0" $c "$bt_flag" $extra || failed=$((failed + 1))
+    done
+    echo "linux-test --hard: $failed of 3 compilers reported failures"
+    exit $failed
+fi
 
 # Everything below runs inside the VM. The script is passed on stdin so that
 # quoting stays sane; the variables it needs travel as env arguments, each one

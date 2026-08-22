@@ -872,7 +872,7 @@ CK_TEST(the_whole_client_ui_drives_a_terminal_it_does_not_own) {
     std::string screen;
     for (int y = 0; y < 24; ++y)
         for (int x = 0; x < 80; ++x) {
-            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            const ckv::Cell cell = display.frame().at(ckv::Point{x, y});
             if (!cell.is_continuation()) screen += cell.grapheme();
         }
     CK_CHECK(screen.find("a program in another process") != std::string::npos);

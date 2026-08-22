@@ -583,10 +583,18 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     // unbounded still fails either way.
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     constexpr double kWorstBudgetMs = 5000.0;
-#elif defined(__has_feature) && \
-    (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
-     __has_feature(undefined_behavior_sanitizer))
+#elif defined(__has_feature)
+    // __has_feature must be nested, not combined with `defined(__has_feature) &&`
+    // in one #if: a compiler that lacks it (GCC 13) still has to PARSE the tokens
+    // after macro replacement, and `__has_feature(x)` becomes `0(x)` — a syntax
+    // error the && short-circuit cannot rescue. GCC 14 defines __has_feature and
+    // took the combined form; GCC 13 does not and did not.
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+      __has_feature(undefined_behavior_sanitizer)
     constexpr double kWorstBudgetMs = 5000.0;
+#  else
+    constexpr double kWorstBudgetMs = 1000.0;
+#  endif
 #else
     constexpr double kWorstBudgetMs = 1000.0;
 #endif

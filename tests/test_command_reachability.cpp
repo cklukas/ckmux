@@ -220,7 +220,7 @@ CK_TEST(the_window_list_shows_the_windows_and_not_an_empty_box) {
     for (int y = area.y + 1; y < area.y + area.height - 1 && y < 30; ++y) {
         std::string row;
         for (int x = area.x + 1; x < area.x + area.width - 1 && x < 100; ++x) {
-            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            const ckv::Cell cell = display.frame().at(ckv::Point{x, y});
             if (!cell.is_continuation()) row += cell.grapheme();
         }
         if (row.find("Terminal") != std::string::npos) ++rows_naming_a_terminal;
@@ -290,7 +290,7 @@ CK_TEST(the_print_output_window_shows_the_jobs_and_not_an_empty_box) {
     std::string inside;
     for (int y = area.y + 1; y < area.y + area.height - 1 && y < 30; ++y) {
         for (int x = area.x + 1; x < area.x + area.width - 1 && x < 100; ++x) {
-            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            const ckv::Cell cell = display.frame().at(ckv::Point{x, y});
             if (!cell.is_continuation()) inside += cell.grapheme();
         }
         inside += '\n';
@@ -349,7 +349,7 @@ CK_TEST(terminal_report_shows_the_hosts_evidence_with_the_decoded_count) {
     for (int y = area.y + 1; y < area.y + area.height - 1 && y < 30; ++y) {
         std::string row;
         for (int x = area.x + 1; x < area.x + area.width - 1 && x < 100; ++x) {
-            const ckv::Cell& cell = display.frame().at(ckv::Point{x, y});
+            const ckv::Cell cell = display.frame().at(ckv::Point{x, y});
             if (!cell.is_continuation()) row += cell.grapheme();
         }
         if (row.find("Mouse reports decoded") != std::string::npos &&

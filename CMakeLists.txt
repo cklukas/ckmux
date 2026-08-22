@@ -166,6 +166,19 @@ add_library(ckmux_common STATIC
 target_include_directories(ckmux_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_common PUBLIC ckmux_platform)
 ckmux_strict(ckmux_common)
+# GCC 13 raises -Wmaybe-uninitialized from inside libstdc++'s vector reallocation
+# (vector.tcc, stl_vector.h, basic_string.h) when grid_delta.cpp's
+# `ops.push_back(CursorOp{...})` / `push_back(ModesOp{...})` are inlined under
+# -O3 — 15 reports, every one against a fully brace-initialised aggregate where
+# no member is left uninitialised. It is the same post-inlining false positive
+# ckVision documents and suppresses for its own files; GCC 14 no longer emits
+# it, and Debug, the sanitiser lanes and Clang are all clean. Narrowed to this
+# one file and to GNU rather than dropped into ckmux_strict, so the warning
+# keeps catching real defects everywhere else.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(src/common/grid_delta.cpp
+        PROPERTIES COMPILE_OPTIONS -Wno-maybe-uninitialized)
+endif()
 
 # The client object graph is a plain library so every part of it is reachable
 # from headless tests; only the thin terminal host needs a real backend. This
