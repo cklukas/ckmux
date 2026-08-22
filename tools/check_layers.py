@@ -133,8 +133,18 @@ def check_root(root: Path) -> int:
                       f"{head}/", file=sys.stderr)
                 violations += 1
                 continue
+            # A header CMake generates into the build tree (configure_file)
+            # is invisible to a static source scan, but its template is not:
+            # `src/<target>.in` is the source tree's witness that the header
+            # exists and of which module it belongs to — the template lives in
+            # the module directory, so the direction rules above have already
+            # applied to it. A target with neither file nor template is still
+            # a violation, and the self-test holds both directions.
             target_file = source_root / target
             if not target_file.is_file():
+                template = source_root / (target + ".in")
+                if template.is_file():
+                    continue
                 print(f"{relative}:{lineno}: include target does not exist: "
                       f"{target}", file=sys.stderr)
                 violations += 1
@@ -223,6 +233,14 @@ def self_test() -> int:
         (source_root / "common" / "missing.hpp").write_text(
             '#include "common/absent.hpp"\n', encoding="utf-8")
         expected_violations += 1
+        # The positive partner of the missing-target case: a header that
+        # exists only as a configure_file template must resolve — this is how
+        # the generated common/version.hpp is seen — while `absent.hpp` above,
+        # with neither file nor template, keeps failing.
+        (source_root / "common" / "generated.hpp.in").write_text(
+            "// fixture template\n", encoding="utf-8")
+        (source_root / "common" / "uses_generated.hpp").write_text(
+            '#include "common/generated.hpp"\n', encoding="utf-8")
         (source_root / "stray").mkdir(parents=True, exist_ok=True)
         (source_root / "stray" / "orphan.hpp").write_text(
             "// fixture\n", encoding="utf-8")
