@@ -57,6 +57,17 @@ function(ckmux_strict target)
         # warning that forces every caller to enumerate every field would
         # dismantle it one -Werror build at a time.
         target_compile_options(${target} PRIVATE -Wno-missing-designated-field-initializers)
+    else()
+        # The same decision in the older spelling. A Clang without the
+        # designated-specific flag — and GCC, which has no such flag at all —
+        # folds the identical diagnostic into -Wmissing-field-initializers,
+        # which -Wextra turns on. So the suppression was silently absent on
+        # exactly the compilers that emit the warning (GCC found 18 sites in
+        # client_app.cpp the first time ckmux met a Linux compiler) and present
+        # on the ones that do not. Narrowed to this fallback rather than dropped
+        # everywhere, so ordinary aggregate init keeps its warning where the
+        # specific flag exists.
+        target_compile_options(${target} PRIVATE -Wno-missing-field-initializers)
     endif()
     if(CKMUX_WCONVERSION)
         target_compile_options(${target} PRIVATE -Wconversion)

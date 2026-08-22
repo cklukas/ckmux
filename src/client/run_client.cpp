@@ -71,7 +71,7 @@ std::uint16_t tile_fixed(double share) {
 
 }  // namespace
 
-int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOptions options) {
+int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions options) {
     ServerConnection connection =
         connect_to_server(options.socket, options.executable, proto::ClientKind::Ui);
     if (!connection.ok()) {
@@ -96,7 +96,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // the session this reader chose to share — at the moment they are least
     // able to tell why it happened.
     session.set_share(options.share_session);
-    ckv::ui::Application app(terminal, clock);
+    ckv::ui::Application app(host, clock);
     // Pace against the reader's own terminal (ckVision's ARCHITECTURE.md §4,
     // docs/graphics.md "Knowing the terminal took it"). Writing a frame proves
     // its bytes left this process and nothing more; a host that accepts Sixel
@@ -130,7 +130,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // parameter 4 on a host that has it). The handler keeps this live for
     // every terminal opened from here on; this first call is only the
     // fallback for whatever opens before the first reply does.
-    session.set_host_sixel(terminal.capabilities().sixel_graphics);
+    session.set_host_sixel(host.capabilities().sixel_graphics);
     // Whether the host has answered the capability probe at all yet. The
     // fallback above is a guess made before the evidence exists, and the FIRST
     // terminal — the one a reader actually lands in — was being opened against
@@ -141,8 +141,8 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // made this survive: the bug was invisible to anyone who opened a second
     // terminal before looking.
     bool host_caps_answered = false;
-    app.set_capability_changed_handler([&session, &terminal, &host_caps_answered] {
-        session.set_host_sixel(terminal.capabilities().sixel_graphics);
+    app.set_capability_changed_handler([&session, &host, &host_caps_answered] {
+        session.set_host_sixel(host.capabilities().sixel_graphics);
         host_caps_answered = true;
     });
     // Where the bytes are reassembled into frames. Declared here rather than
@@ -278,7 +278,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     // server needs no `Detach`: an `Attach` to another session IS the switch,
     // and it leaves the one being left with its programs running and nobody
     // watching — which is exactly the state ckmux exists to keep (plans/03).
-    const auto switch_to = [&session, &client, &terminal, &ensure_connected](std::uint64_t id) {
+    const auto switch_to = [&session, &client, &host, &ensure_connected](std::uint64_t id) {
         if (session.attached() && session.session() == id) return;
         if (!ensure_connected()) return;
         if (client != nullptr) {
@@ -290,7 +290,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
             // reader gets an empty desktop over running programs (C4).
             session.windows_forgotten();
         }
-        session.attach(id, terminal.size(), terminal.capabilities().cell_pixels);
+        session.attach(id, host.size(), host.capabilities().cell_pixels);
     };
     options.client.attach_to_session = switch_to;
     // Creating a session means going to it: a reader who typed a name and
@@ -539,7 +539,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
     options.client.printer_save_problem = [&save_problem]() { return save_problem; };
 
     // And the host's own bell, when the reader asked for one.
-    options.client.ring_host_bell = [&terminal] { terminal.bell(); };
+    options.client.ring_host_bell = [&host] { host.bell(); };
     // The one message that changes a session's coordinate space (WP-40). Sent
     // only when a reader asks for it; `ClientResize`, which goes out whenever
     // this client's own window changes size, deliberately does not.
@@ -981,7 +981,7 @@ int run_attached_client(ckv::term::Terminal& terminal, ckv::Clock& clock, RunOpt
         // SIGWINCH handling and a client watching the same fact twice would
         // have two sizes to keep in step. The call sends nothing unless the
         // size actually moved.
-        session.desktop_resized(terminal.size(), terminal.capabilities().cell_pixels);
+        session.desktop_resized(host.size(), host.capabilities().cell_pixels);
         open_one_if_the_session_is_empty();
         // Every window whose terminal has news repaints, which is the same
         // notification a local terminal raises — the client does not care where

@@ -484,7 +484,9 @@ CK_TEST(random_valid_messages_survive_the_wire) {
                                                     static_cast<std::uint8_t>(random() % 2),
                                                     static_cast<std::uint8_t>(random() % 2)});
                     break;
-                case 3: delta.ops.emplace_back(ModesOp{random(), random()}); break;
+                case 3: delta.ops.emplace_back(ModesOp{
+                    static_cast<std::uint32_t>(random()),
+                    static_cast<std::uint32_t>(random())}); break;
                 case 4: {
                     std::string title;
                     const int length = static_cast<int>(random() % 64);

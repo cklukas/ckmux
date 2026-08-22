@@ -18,6 +18,7 @@
 // reader's terminal is actually given: ckVision's own raw-output capture
 // (CKVISION_OUTPUT_CAPTURE) records them from inside the real client process,
 // which is the only place they exist.
+#include <tuple>  // std::ignore
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -141,6 +142,6 @@ CK_TEST(the_client_asks_the_readers_terminal_whether_it_took_the_frame) {
     // multiplexer is), so it is ended by hand rather than left behind.
     const std::string kill_server = binary_path().string() + " kill-server >/dev/null 2>&1";
     std::string command = "CKMUX_SOCKET='" + socket.string() + "' " + kill_server;
-    (void)std::system(command.c_str());
+    std::ignore = std::system(command.c_str());
     std::filesystem::remove_all(directory, ignored);
 }

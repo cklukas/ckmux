@@ -13,6 +13,7 @@
 // it. The lazier assertion is always easier to write and always passes against
 // the defect — a status line matched anywhere passes against one stranded at
 // the old row after a failed reflow, which IS the defect.
+#include <tuple>  // std::ignore
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -117,7 +118,7 @@ inline std::filesystem::path oracle_socket(const std::filesystem::path& near) {
 
 inline void kill_oracle(const std::string& tmux, const std::filesystem::path& oracle) {
     const std::string command = tmux + " -S " + oracle.string() + " kill-server >/dev/null 2>&1";
-    (void)std::system(command.c_str());
+    std::ignore = std::system(command.c_str());
     std::error_code ignored;
     std::filesystem::remove(oracle, ignored);
 }

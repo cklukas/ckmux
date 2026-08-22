@@ -265,7 +265,11 @@ ProcessTable ProcessTable::snapshot() {
     DIR* const proc = ::opendir("/proc");
     if (proc == nullptr) return table;
     std::string text;
-    char path[64];
+    // "/proc/" + a directory name (NAME_MAX = 255) + "/stat" + NUL.
+    // GCC's -Wformat-truncation reasons from d_name's full width, not
+    // from the fact that these names are short pids, so the buffer is
+    // sized for the worst case it can prove rather than the one we know.
+    char path[6 + 255 + 5 + 1];
     while (const dirent* entry = ::readdir(proc)) {
         // Pids are the only entries whose names start with a digit; the
         // parse validates the rest.

@@ -2534,18 +2534,18 @@ void ClientApp::show_printer_settings_dialog(ckv::term::TerminalSubsession* term
                                                               nullptr, 10));
             };
             const int chosen_mode = selected(mode_field, 0);
-            const PrinterMode mode = chosen_mode == 0   ? PrinterMode::Ask
+            const PrinterMode chosen_printer_mode = chosen_mode == 0   ? PrinterMode::Ask
                                      : chosen_mode == 1 ? PrinterMode::Capture
                                                         : PrinterMode::Off;
             const int chosen_scope = selected(scope_field, 1);
-            const proto::PrinterScope scope = chosen_scope == 0   ? proto::PrinterScope::Terminal
+            const proto::PrinterScope chosen_printer_scope = chosen_scope == 0   ? proto::PrinterScope::Terminal
                                               : chosen_scope == 1 ? proto::PrinterScope::Session
                                                                   : proto::PrinterScope::Global;
             // KB in the dialog, bytes everywhere else. A reader types 256, not
             // 262144; the conversion belongs here, once, rather than in each
             // place that reads the setting.
-            const std::uint32_t ask_cache = number(ask_cache_field, 256) * 1024U;
-            const std::uint32_t spool = number(spool_field, 1024) * 1024U;
+            const std::uint32_t ask_cache_bytes = number(ask_cache_field, 256) * 1024U;
+            const std::uint32_t spool_bytes = number(spool_field, 1024) * 1024U;
 
             options_.settings.printer_save_format =
                 selected(format_field, 0) == 1 ? PrinterSaveFormat::Ansi : PrinterSaveFormat::Text;
@@ -2555,11 +2555,11 @@ void ClientApp::show_printer_settings_dialog(ckv::term::TerminalSubsession* term
                 options_.settings.printer_save_ask_name = result.checked[ask_name_field];
 
             if (options_.set_printer_policy) {
-                options_.set_printer_policy(0, target, scope, mode, ask_cache, spool);
+                options_.set_printer_policy(0, target, chosen_printer_scope, chosen_printer_mode, ask_cache_bytes, spool_bytes);
             } else {
-                options_.settings.printer_mode = mode;
-                options_.settings.printer_ask_cache_bytes = ask_cache;
-                options_.settings.printer_spool_limit_bytes = spool;
+                options_.settings.printer_mode = chosen_printer_mode;
+                options_.settings.printer_ask_cache_bytes = ask_cache_bytes;
+                options_.settings.printer_spool_limit_bytes = spool_bytes;
             }
         });
     retain_dialog(presentation);

@@ -17,6 +17,7 @@
 // A program that is not installed is reported as NOT EXERCISED and the row is
 // skipped loudly. A matrix that quietly reports green for rows it never ran is
 // worth less than no matrix, because it is believed.
+#include <tuple>  // std::ignore
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
@@ -45,7 +46,7 @@ using ckmtest::wait_for_socket;
 // Looked up rather than assumed: the harness gives the client a PATH of
 // `/usr/bin:/bin`, and half the matrix lives in Homebrew's prefix.
 std::string program_path(const std::string& name) {
-    for (const std::string& prefix : {"/usr/bin/", "/bin/", "/opt/homebrew/bin/", "/usr/local/bin/"}) {
+    for (const char* const prefix : {"/usr/bin/", "/bin/", "/opt/homebrew/bin/", "/usr/local/bin/"}) {
         const std::string candidate = prefix + name;
         if (::access(candidate.c_str(), X_OK) == 0) return candidate;
     }
@@ -202,7 +203,7 @@ CK_TEST(a_child_that_draws_sixel_without_asking_cannot_garble_a_host_that_has_no
         "open('/tmp/ckmux-ref-tiny.png','wb').write(b'\\\\x89PNG\\\\r\\\\n\\\\x1a\\\\n'"
         "+c(b'IHDR',struct.pack('>IIBBBBB',4,4,8,2,0,0,0))+c(b'IDAT',zlib.compress(raw))"
         "+c(b'IEND',b''))\"";
-    (void)std::system(make_png);
+    std::ignore = std::system(make_png);
 
     const std::filesystem::path socket = private_socket("refsixel");
     forget(socket);
@@ -626,7 +627,7 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
     // Its own repository, made here: lazygit shows nothing useful outside one,
     // and pointing the row at whatever repository the machine happens to have
     // would make the assertions depend on somebody's working tree.
-    (void)std::system("rm -rf /tmp/ckmux-ref-git && mkdir -p /tmp/ckmux-ref-git && "
+    std::ignore = std::system("rm -rf /tmp/ckmux-ref-git && mkdir -p /tmp/ckmux-ref-git && "
                       "cd /tmp/ckmux-ref-git && git init -q && "
                       "echo LAZYFILECONTENT > LAZYTRACKEDFILE && git add . && "
                       "git -c user.email=t@e -c user.name=t commit -qm 'LAZYCOMMITSUBJECT' && "
@@ -706,7 +707,7 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
     reader.quit();
     end_process(server);
     forget(socket);
-    (void)std::system("rm -rf /tmp/ckmux-ref-git");
+    std::ignore = std::system("rm -rf /tmp/ckmux-ref-git");
 }
 
 CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
