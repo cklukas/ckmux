@@ -38,6 +38,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/ckvision
+          # Private sibling: the default GITHUB_TOKEN is scoped to this repo
+          # only and cannot clone it (checkout fails Not Found). Add a
+          # fine-grained PAT with read access to ckVision as the secret
+          # CKVISION_TOKEN; absent, it falls back and this lane cannot build.
+          token: ${{ secrets.CKVISION_TOKEN || github.token }}
           path: ckvision
 
       - name: Configure
