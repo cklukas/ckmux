@@ -21,6 +21,8 @@
 // And the negatives are established by OBSERVING THE PROCESS, never by
 // reading the source. "We grepped for `lpr`" is a statement about the code its
 // author remembered writing, not about a run.
+#include <unistd.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -44,6 +46,24 @@ using ckmtest::private_socket;
 using ckmtest::Reader;
 using ckmtest::start_server;
 using ckmtest::wait_for_socket;
+
+// Where an instrument lives is not the same question on two systems: lsof is
+// /usr/sbin/lsof on macOS and /usr/bin/lsof on most Linux distributions, and a
+// hardcoded macOS path simply found nothing on Linux — descriptors_seen stayed
+// 0 and this file's own positive-partner assertions failed, which is precisely
+// the failure the comment above Observation warns about, arriving exactly as
+// predicted. Still an absolute path, because a test that shells out should not
+// be steered by an inherited PATH; but chosen from the known locations at run
+// time rather than assumed. An empty answer means the tool is genuinely absent,
+// and the positive-partner assertions then fail loudly instead of the two
+// emptiness checks passing vacuously on a machine that could not look.
+std::string tool_path(const std::string& name) {
+    for (const char* directory : {"/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/", "/usr/local/bin/"}) {
+        std::string candidate = std::string(directory) + name;
+        if (::access(candidate.c_str(), X_OK) == 0) return candidate;
+    }
+    return {};
+}
 
 std::string run_and_read(const std::string& command) {
     std::string output;
@@ -80,8 +100,11 @@ struct Observation {
 
 void observe_into(Observation& seen, ::pid_t pid) {
     if (pid <= 0) return;
-    const std::string fds = run_and_read("/usr/sbin/lsof -p " + std::to_string(pid) +
-                                         " 2>/dev/null | awk '{print $NF}'");
+    const std::string lsof = tool_path("lsof");
+    const std::string fds =
+        lsof.empty() ? std::string()
+                     : run_and_read(lsof + " -p " + std::to_string(pid) +
+                                    " 2>/dev/null | awk '{print $NF}'");
     std::size_t at = 0;
     while (at < fds.size()) {
         const std::size_t end = fds.find('\n', at);
@@ -97,9 +120,11 @@ void observe_into(Observation& seen, ::pid_t pid) {
         if (end == std::string::npos) break;
         at = end + 1;
     }
+    const std::string pgrep = tool_path("pgrep");
     const std::string kids =
-        run_and_read("/usr/bin/pgrep -P " + std::to_string(pid) +
-                     " 2>/dev/null | while read p; do ps -o comm= -p $p; done");
+        pgrep.empty() ? std::string()
+                      : run_and_read(pgrep + " -P " + std::to_string(pid) +
+                                     " 2>/dev/null | while read p; do ps -o comm= -p $p; done");
     at = 0;
     while (at < kids.size()) {
         const std::size_t end = kids.find('\n', at);
