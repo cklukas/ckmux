@@ -31,6 +31,7 @@
 
 #include "reader_harness.hpp"
 
+#include "cvision/term/terminal_emulator.hpp"
 #include "cvision/testing/cktest.hpp"
 
 namespace {
@@ -84,6 +85,22 @@ std::optional<int> interior_vertical(Reader& reader) {
         if (entry.first > 8 && entry.first < widest - 8 && entry.second >= 5) return entry.first;
     }
     return std::nullopt;
+}
+
+// Whether the ckVision this binary links reads a CSI's private marker before
+// its final byte (ckVision 45a995e, D-062). ckmux's gating builds fetch
+// ckVision at the pinned release, and that dispatch landed after v0.1.0 was
+// tagged; against the older emulator the modifyOtherKeys row below would
+// assert a behaviour the library cannot provide, and a published tag does not
+// move. So the row states its precondition and is NOT EXERCISED without it,
+// exactly as a row whose program is not installed is — asked of the emulator
+// itself rather than of a version number, because ckVision's version moves at
+// release time, not at the commit. Once the pin is at or past the fix this is
+// always true, and the row runs everywhere.
+bool linked_ckvision_reads_the_private_marker_first() {
+    ckv::term::TerminalEmulator emulator;
+    emulator.feed_output("\x1b[>4m");
+    return emulator.diagnostics().empty();
 }
 
 int probe_counter = 0;
@@ -772,6 +789,11 @@ CK_TEST(a_child_resetting_modifyotherkeys_on_its_way_out_leaves_no_complaint_in_
     // server, the wire, and the client's TerminalView; vim and neovim write
     // the same reset.
     if (binary_path().empty()) return;
+    if (!linked_ckvision_reads_the_private_marker_first()) {
+        std::printf("  [D-062] linked ckVision predates the marker-first CSI dispatch "
+                    "(ckVision 45a995e); modifyOtherKeys row NOT EXERCISED\n");
+        return;
+    }
 
     const std::filesystem::path socket = private_socket("refmodkeys");
     forget(socket);
