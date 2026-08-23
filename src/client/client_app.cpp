@@ -678,6 +678,25 @@ void ClientApp::build_chrome() {
     // guard of ckmux's own is needed here.
     desktop_->set_maximize_follows_active(true);
 
+    // And the keyboard never stays in a window that has been put away (U4-j).
+    // There are four routes to that transition and ckmux owns two of them —
+    // the switcher's minimize action and its row menu, which both call
+    // `focus_active_terminal()` afterwards. The `↓` on the window's own top
+    // border and the standard Minimize command reach `Window::set_minimized`
+    // through ckVision without ckmux hearing a word, and `focus_active_
+    // terminal()` is in any case silent about the case that has no active
+    // terminal to name: every terminal minimized, and the focus left sitting
+    // on one that is no longer on the screen.
+    //
+    // Ridden off the desktop's own notification instead, which every route
+    // ends in, so all four end the same way.
+    desktop_->subscribe_window_change(
+        [this](w::Desktop::WindowChange change, w::Window&) {
+            if (change == w::Desktop::WindowChange::Minimized)
+                keep_keyboard_off_hidden_terminals();
+        },
+        alive_);
+
     // The bottom chrome, in one piece: the window switcher bar over the footer
     // (WP-32 / U4-a).
     //
@@ -2917,6 +2936,22 @@ void ClientApp::apply_layout(const std::vector<WindowPlacement>& arrangement) {
 
 void ClientApp::focus_active_terminal() {
     if (w::TerminalView* const view = terminal_view_of(active_terminal())) app_.set_focus(view);
+}
+
+void ClientApp::keep_keyboard_off_hidden_terminals() {
+    // Only a keyboard that is IN a terminal moves. A reader answering a
+    // dialog, or reading history in copy mode, or part-way through a menu is
+    // not somebody whose focus a window leaving the desktop may take — the
+    // same rule `apply_layout` states about arrangements.
+    w::TerminalView* const focused = dynamic_cast<w::TerminalView*>(app_.focused());
+    if (focused == nullptr || app_.is_modal() || focused->visible_in_tree()) return;
+    // Whatever the desktop activated in its place — and NOTHING when every
+    // terminal is now minimized, which is a state ckmux already has: a client
+    // started without a session focuses nothing, and the prefix key still
+    // reaches the command table from there (see the kArmPrefix binding). The
+    // alternative is a shell being typed into blind behind a bar.
+    app_.set_focus(terminal_view_of(active_terminal()));
+    refresh_footer();
 }
 
 void ClientApp::focus_terminal_number(int number) {

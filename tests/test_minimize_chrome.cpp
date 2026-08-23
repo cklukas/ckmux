@@ -310,6 +310,72 @@ CK_TEST(a_second_terminal_leaves_the_bar_where_it_already_was) {
     CK_CHECK(f.client.window_switcher().visible());
 }
 
+// --- What leaves the screen with the window --------------------------------
+
+CK_TEST(minimizing_the_only_terminal_takes_the_cursor_and_the_keyboard_with_it) {
+    // A reader's report: "when I minimize a window the cursor does not
+    // disappear, it appears as a bright cell on the background". The window
+    // is hidden, but nothing had taken the keyboard away from the view inside
+    // it — with every terminal minimized there is nothing to hand it to — and
+    // a focused terminal publishes its cursor in ABSOLUTE cells, so the host
+    // was still being told to park the cursor in a cell that now shows the
+    // desktop.
+    Fixture f;
+    f.settle();
+    ckv::widgets::Window* const only = f.client.desktop().windows()[0];
+    CK_CHECK(f.app.current_cursor().visible);
+    const ckv::Point where = f.app.current_cursor().position;
+    CK_CHECK(f.terminal.display().cursor().visible);
+
+    CK_CHECK(f.app.execute_command(id_of(f.app, ckv::ui::std_command_keys::kMinimize)));
+    f.settle();
+    CK_CHECK(only->minimized());
+    CK_CHECK(!f.app.current_cursor().visible);
+    // On the wire, not merely in the compositor: the host was TOLD to hide
+    // the cursor. A frame that only stopped addressing it would leave the
+    // bright cell exactly where the reader reported it, because a terminal
+    // keeps drawing a cursor it was never asked to hide.
+    CK_CHECK(!f.terminal.display().cursor().visible);
+    // The other half, and the reason the cursor was there at all: the
+    // keyboard does not stay in a terminal that is off the screen. Nothing
+    // is focused, which is the state a client started without a session is
+    // already in — `^B` reaches the command table from there.
+    CK_CHECK(f.app.focused() == nullptr);
+
+    // Back from the bar, and the cursor comes back to the cell it left.
+    CK_CHECK(switcher_click(f, 0));
+    f.settle();
+    CK_CHECK(f.app.current_cursor().visible);
+    CK_CHECK(f.app.current_cursor().position == where);
+    CK_CHECK(f.terminal.display().cursor().visible);
+    CK_CHECK(f.terminal.display().cursor().position == where);
+}
+
+CK_TEST(a_window_put_away_from_its_own_frame_hands_the_keyboard_on) {
+    // The `↓` on the window's own top border is `Window::set_minimized`
+    // itself: it never passes through ckmux, which is why the bar's minimize
+    // action re-homing the keyboard was not enough. The library route is what
+    // this test takes, and the rule is the same whichever of the four routes
+    // a reader used — the keys belong in whatever is still on the screen.
+    Fixture f;
+    f.settle();
+    open_second_terminal(f);
+    ckv::widgets::Window* const first = f.client.desktop().windows()[0];
+    ckv::widgets::Window* const second = f.client.desktop().windows()[1];
+    CK_CHECK(f.app.focused() ==
+             dynamic_cast<ckv::widgets::TerminalView*>(second->content()));
+
+    second->set_minimized(true);
+    f.settle();
+
+    CK_CHECK(f.client.desktop().active_window() == first);
+    CK_CHECK(f.app.focused() == dynamic_cast<ckv::widgets::TerminalView*>(first->content()));
+    // And the cursor is in the terminal the reader can see, rather than in
+    // the rectangle the hidden one used to occupy.
+    CK_CHECK(f.app.current_cursor().visible);
+    CK_CHECK(first->absolute_bounds().contains(f.app.current_cursor().position));
+}
+
 // --- WP-35: collapsing the chrome ------------------------------------------
 
 CK_TEST(collapsing_hides_the_footer_and_puts_the_bar_on_the_last_row) {

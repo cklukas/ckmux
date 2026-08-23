@@ -832,6 +832,11 @@ private:
     // caller gets back exactly the pointer open_terminal stored.
     ckv::term::TerminalSubsession* terminal_shown_by(ckv::widgets::Window* window) const;
     void focus_active_terminal();
+    // The keyboard leaves a terminal that has left the screen — to whatever
+    // the desktop activated in its place, or to nothing when every terminal
+    // is now minimized. Called for every minimize the desktop reports,
+    // whichever of the four routes into it the reader took.
+    void keep_keyboard_off_hidden_terminals();
     // The window a digit chord means. The caption's number first, because that
     // is the number a reader can see; the desktop's own 1-9 convention when no
     // window carries it (plans/06: "1-9 focus window").
