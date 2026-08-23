@@ -762,3 +762,44 @@ CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
     end_process(server);
     forget(socket);
 }
+
+CK_TEST(a_child_resetting_modifyotherkeys_on_its_way_out_leaves_no_complaint_in_the_window) {
+    // Claude Code's teardown — `ESC [ < u`, `ESC [ ? 1049 l`, `ESC [ > 4 m` —
+    // left "[terminal: malformed child SGR sequence]" at the bottom of every
+    // ckmux window it had run in: xterm's XTMODKEYS shares SGR's final byte,
+    // and ckVision's emulator once chose the handler from the final byte
+    // alone (ckVision D-062). This is the bytes themselves, through a real
+    // server, the wire, and the client's TerminalView; vim and neovim write
+    // the same reset.
+    if (binary_path().empty()) return;
+
+    const std::filesystem::path socket = private_socket("refmodkeys");
+    forget(socket);
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket, ckv::Size{100, 30}));
+    CK_CHECK(reader.sees("new term"));
+    CK_CHECK(shell_is_ready(reader));
+
+    // The set form on the way in and the exact teardown on the way out, then
+    // a marker line so "nothing appeared" is asserted after the bytes landed.
+    reader.press("printf '\\033[?1049h\\033[>4;2m\\033[<u\\033[?1049l\\033[>4m'; echo MODKEYS\"\"-DONE\r");
+    CK_CHECK(reader.sees("MODKEYS-DONE", 8000));
+    reader.settle(800);
+    CK_CHECK(!reader.sees("[terminal:", 1200));
+    CK_CHECK(!reader.sees("malformed", 600));
+
+    // The positive partner, so the absence above is not the complaint having
+    // gone missing somewhere between the emulator and the screen: an SGR that
+    // IS malformed still travels the whole way and is shown.
+    reader.press("printf '\\033[1;2 m'; echo BADSGR\"\"-DONE\r");
+    CK_CHECK(reader.sees("BADSGR-DONE", 8000));
+    CK_CHECK(reader.sees("[terminal: malformed child SGR sequence]", 8000));
+
+    CK_CHECK(shell_is_ready(reader));
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}

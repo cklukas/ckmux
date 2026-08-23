@@ -308,6 +308,14 @@ architecture review ([13](13-architecture-review.md) R7/R2c):
 | U6-b | **`on_attached()` stops overruling its host** — the focus policy is set in the constructor instead. It was set to `TabStop` on every attach, so a host that had said this centre must NOT be a focus stop had its decision undone when the view was added, and again on any re-attach. Default unchanged. ckVision `6bd14b8`. | ckmux lays toasts over a terminal, where a notification is news rather than something to answer: a focus stop there puts the reader's Tab in a message about something that already happened instead of in the program they are typing into. [12](12-work-packages.md) WP-14. |
 | U6-c | **Wanted, not yet built: `DialogDescriptor::help_context`.** A descriptor dialog cannot name a help page, so F1 inside one answers with whatever the surface behind it says. One field on the descriptor, materialized onto the dialog window as `set_help_context_key`. | WP-14 gave every ckmux surface a help page except the ones built from descriptors — the session picker, Settings, the rename and move prompts — because there is nowhere to say which page they mean. [12](12-work-packages.md) WP-14. |
 
+### Landed (a private marker is read before the final byte)
+
+ckVision `45a995e`, 2026-08-23, from a user report against ckmux:
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-63 | **`TerminalEmulator::handle_csi` reads ECMA-48's private parameter bytes (`<` `=` `>` `?`) first** and hands a marked sequence to `handle_private_csi`, where every marked form the emulator honours lives and anything else marked is a diagnostic; no public handler is reachable with a marker. XTMODKEYS/XTFMTKEYS (`CSI > Pp ; Pv m` / `f`) are consumed without effect or diagnostic and XTQMODKEYS (`CSI ? Pp m`) is answered truthfully — `0` for modifyOtherKeys, which is not implemented, `2` for the cursor and function keys, which already travel in xterm's level-2 forms (ckVision D-062). Siblings fixed by the same dispatch: XTSAVE/XTRESTORE no longer overwrite the saved cursor or set a scrolling region, XTRMTITLE no longer scrolls, DECXCPR (`CSI ? 6 n`) is answered as `CSI ? r ; c R`. | Exiting `claude` in a ckmux window left "[terminal: malformed child SGR sequence]" at the bottom of the window: Claude Code's teardown writes `ESC[<u ESC[?1049l ESC[>4m`, and the last of those reached the SGR parser. Vim and neovim write the same reset. `tests/test_reference_apps.cpp` now plays the exact bytes through a real server, the wire and the client's `TerminalView`, paired with a malformed SGR that still complains. Claude Code also sends `CSI ? 6 n`, whose answer it reads only in the DEC form. |
+
 ### Open
 
 | # | Item | For |
