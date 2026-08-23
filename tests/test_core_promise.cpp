@@ -512,6 +512,39 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     double total_ms = 0.0;
     double idle_worst = 0.0;
     double idle_total = 0.0;
+    // The budget, decided before the loop because the answer deadline derives
+    // from it (below). Generous on purpose: what is being asserted is that
+    // the server never stops answering, not how fast a machine is. The plain
+    // figure is calibrated to GitHub's shared runners — a plain Release lane
+    // measured worst 1012.6ms against the old 1000ms budget, failing the
+    // gate by 12.6ms of scheduler tail: exactly the marginal case this test
+    // exists NOT to catch. 3000ms is three times that observation, and a
+    // server that stopped answering still fails every configuration.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    constexpr double kWorstBudgetMs = 5000.0;
+#elif defined(__has_feature)
+    // __has_feature must be nested, not combined with `defined(__has_feature) &&`
+    // in one #if: a compiler that lacks it (GCC 13) still has to PARSE the tokens
+    // after macro replacement, and `__has_feature(x)` becomes `0(x)` — a syntax
+    // error the && short-circuit cannot rescue. GCC 14 defines __has_feature and
+    // took the combined form; GCC 13 does not and did not.
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+      __has_feature(undefined_behavior_sanitizer)
+    constexpr double kWorstBudgetMs = 5000.0;
+#  else
+    constexpr double kWorstBudgetMs = 3000.0;
+#  endif
+#else
+    constexpr double kWorstBudgetMs = 3000.0;
+#endif
+    // Twice the budget, deliberately (ckmux-04's design): a wait SHORTER than
+    // the budget cannot observe the latencies the budget accepts. The old
+    // fixed 2000ms deadline made the 5000ms sanitizer budget DEAD CODE — an
+    // answer at 2500ms, comfortably inside the budget, failed here first as a
+    // bare `answered` with no number in it. Outlasting the budget lets the
+    // budget assertion be the one that speaks, and it reports the figure.
+    const std::chrono::milliseconds kAnswerDeadline(
+        static_cast<long>(kWorstBudgetMs * 2.0));
     for (std::uint64_t attempt = 1; attempt <= 10; ++attempt) {
         // The attached client: the server's answer PLUS this client's decode of
         // the flood standing in front of it.
@@ -521,7 +554,7 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
         client.session.request(ping);
         (void)client.stream.flush();
         bool answered = false;
-        const clock_type::time_point deadline = sent + std::chrono::milliseconds(2000);
+        const clock_type::time_point deadline = sent + kAnswerDeadline;
         while (!answered && clock_type::now() < deadline) {
             client.pump();
             answered = client.last_pong_nonce_ == attempt;
@@ -543,7 +576,7 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
         idle.session.request(idle_ping);
         (void)idle.stream.flush();
         bool idle_answered = false;
-        const clock_type::time_point idle_deadline = idle_sent + std::chrono::milliseconds(2000);
+        const clock_type::time_point idle_deadline = idle_sent + kAnswerDeadline;
         while (!idle_answered && clock_type::now() < idle_deadline) {
             idle.pump();
             idle_answered = idle.last_pong_nonce_ == 100 + attempt;
@@ -574,30 +607,11 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     std::printf("  [flood bytes] %zu bytes to the attached client over %.1f ms (%.2f MB/s)\n",
                 flood_bytes, window_ms,
                 (static_cast<double>(flood_bytes) / (1024.0 * 1024.0)) / (window_ms / 1000.0));
-    // Generous on purpose: what is being asserted is that the server never stops
-    // answering, not how fast this machine is. A server that read without a
-    // budget, or wrote to a slow client without a queue, would not answer at all
-    // — the failure this gate catches is unbounded, not marginal. Sanitizer
-    // builds run the whole flood several times slower for the same behaviour,
-    // so the budget scales with the build rather than the assertion weakening:
-    // unbounded still fails either way.
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-    constexpr double kWorstBudgetMs = 5000.0;
-#elif defined(__has_feature)
-    // __has_feature must be nested, not combined with `defined(__has_feature) &&`
-    // in one #if: a compiler that lacks it (GCC 13) still has to PARSE the tokens
-    // after macro replacement, and `__has_feature(x)` becomes `0(x)` — a syntax
-    // error the && short-circuit cannot rescue. GCC 14 defines __has_feature and
-    // took the combined form; GCC 13 does not and did not.
-#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
-      __has_feature(undefined_behavior_sanitizer)
-    constexpr double kWorstBudgetMs = 5000.0;
-#  else
-    constexpr double kWorstBudgetMs = 1000.0;
-#  endif
-#else
-    constexpr double kWorstBudgetMs = 1000.0;
-#endif
+    // The budget and its reasoning live above the loop, where the answer
+    // deadline derives from it. A server that read without a budget, or wrote
+    // to a slow client without a queue, would not answer at all — the failure
+    // this gate catches is unbounded, not marginal, and unbounded still fails:
+    // nothing answers, the deadline trips, and CK_CHECK(answered) says so.
     CK_CHECK(worst_ms < kWorstBudgetMs);
 
     ckm::proto::KillServer kill;
