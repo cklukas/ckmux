@@ -81,9 +81,18 @@ inline void forget(const std::filesystem::path& socket) {
 // Reaped at process exit rather than between tests: at exit nothing can still
 // be in use, so this cannot kill a server a running test is talking to. It ends
 // the accumulation ACROSS runs, which is what actually poisoned the results.
+// Deliberately leaked, never destroyed: retire_harness_servers() runs from
+// std::atexit, and remember_harness_server() registered that handler BEFORE
+// this function was first called — so with an ordinary function-local static
+// the vector was constructed after the handler was registered and therefore
+// destroyed before the handler ran, and the reaper read a freed vector at
+// every exit. glibc's allocator finally noticed ("free(): double free
+// detected in tcache 2", suite_test_minimize_chrome on the Linux lane; Linux
+// ASan: heap-use-after-free in retire_harness_servers); macOS never did.
+// Exit-time state belongs in an object that exit cannot destroy.
 inline std::vector<::pid_t>& harness_servers() {
-    static std::vector<::pid_t> servers;
-    return servers;
+    static std::vector<::pid_t>* const servers = new std::vector<::pid_t>;
+    return *servers;
 }
 
 inline void retire_harness_servers() {
