@@ -348,14 +348,25 @@ CK_TEST(the_window_bar_page_describes_the_bar_as_it_now_behaves) {
     CK_CHECK(body.find("Minimize or Show") != std::string::npos);
     CK_CHECK(body.find("Rename") != std::string::npos);
     CK_CHECK(body.find("status bar") != std::string::npos);
-    // The three marks are named from the widget's own table rather than
-    // spelled again here, so a glyph change cannot leave the page lying.
+    // The marks are named from the widget's own table rather than spelled
+    // again here, so a glyph change cannot leave the page lying.
     for (const auto status : {ckv::widgets::WindowSwitcherBar::Status::Active,
                               ckv::widgets::WindowSwitcherBar::Status::Visible,
                               ckv::widgets::WindowSwitcherBar::Status::Minimized}) {
         CK_CHECK(body.find(std::string(
                      ckv::widgets::WindowSwitcherBar::status_glyph(status))) != std::string::npos);
     }
+    // And it says the half a reader cannot get from the marks alone. Since
+    // ckVision D-063 the same mark stands for the terminal you are in and
+    // for the ones behind it, and what tells them apart is the colour the
+    // frame already uses on its own controls — a page that listed the marks
+    // and stopped would describe a distinction the bar no longer draws.
+    // Named here, not composed: the `_` mark is one character wide and would
+    // be found in any sentence with an underscore in it, so this pair is
+    // what actually holds the paragraph in place.
+    CK_CHECK(body.find("window control as a mark") != std::string::npos);
+    CK_CHECK(body.find("lit in the control colour") != std::string::npos);
+    CK_CHECK(body.find("behind it draw the same mark plainly") != std::string::npos);
 }
 
 CK_TEST(help_all_keybindings_is_in_the_help_menu_and_opens_the_listing) {

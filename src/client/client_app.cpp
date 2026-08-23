@@ -709,6 +709,14 @@ void ClientApp::build_chrome() {
                                      // Column rather than a second dock.
                                      .always_dock_status_line = false});
     desktop_ = &shell.desktop();
+    // ckmux lists its own windows, so ckVision must not list them a second
+    // time. Its default (ckVision D-064) parks a minimized window on the
+    // desktop's bottom edge as a one-row stub — the right answer for an
+    // application that has built no listing, and one row of duplication for
+    // this one, which puts every window on the switcher bar directly below.
+    // `HostListed` is D-056's plain hiding, which is what this client has
+    // always been written against.
+    desktop_->set_minimized_window_placement(w::MinimizedWindowPlacement::HostListed);
     // Panning follows the focused window (WP-43): a reader who switches to a
     // terminal off the visible region means to see it, and `pan_to_show`
     // moves the least it can — nothing at all for a window already in view,
@@ -4027,16 +4035,19 @@ void ClientApp::populate_help() {
             "The row above the footer lists every open terminal by its caption. It is on "
             "screen while more than one terminal is open, and also whenever any terminal is "
             "put away — with one terminal hidden and none showing, this row is the only way "
-            "back to it.\n\nEach entry carries a mark saying where its terminal is: " +
-                std::string(w::WindowSwitcherBar::status_glyph(
-                    w::WindowSwitcherBar::Status::Active)) +
-                " the one you are working in, " +
+            "back to it.\n\nEach entry carries the terminal's own window control as a mark, "
+            "so a row and the window it stands for wear the same chrome: " +
                 std::string(w::WindowSwitcherBar::status_glyph(
                     w::WindowSwitcherBar::Status::Visible)) +
-                " one behind it, " +
+                " for a terminal that is on the desktop, and " +
                 std::string(w::WindowSwitcherBar::status_glyph(
                     w::WindowSwitcherBar::Status::Minimized)) +
-                " one that has been put away.\n\nClicking does what the mark says: the "
+                " — the mark on a window's minimize button — for one that has been put "
+                "away.\n\nWhich one you are working in is shown the way the windows "
+                "themselves show it: that entry's mark is lit in the control colour and its "
+                "row is highlighted, exactly as the frame of the terminal you are in lights "
+                "its own controls. The ones behind it draw the same mark plainly.\n\nClicking "
+                "does what the mark says: the "
                 "terminal you are in is put away, one behind comes forward and takes the "
                 "keyboard, and one that was put away comes back in front. Right-click an entry "
                 "for the rest — Minimize or Show, Maximize or Restore, Move / Resize, Rename…, "
