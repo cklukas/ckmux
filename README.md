@@ -4,6 +4,9 @@
 terminal sessions, and the programs running inside them, alive when you
 disconnect, and lets you reattach later exactly where you left off.
 
+**Documentation:** [cklukas.github.io/ckmux](https://cklukas.github.io/ckmux/) —
+getting started, the command line, keys, and configuration.
+
 Unlike tmux, its interface is visible. There is a permanent menu bar, a
 permanent footer showing the keys that work right now, and every terminal
 lives in a movable, resizable window on a desktop. Everything works by mouse
