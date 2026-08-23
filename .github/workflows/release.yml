@@ -1,0 +1,85 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+#
+# Pushing a tag v<version> builds ckmux in Release, runs the full test suite
+# in Release, packages the result (TGZ everywhere, plus a Debian package on
+# Linux), and publishes a GitHub release with the packages attached.
+#
+# The ckVision the release builds against is decided by CMakeLists.txt alone:
+# FetchContent clones the tag named by CKMUX_CKVISION_VERSION. No second
+# checkout, no token — the release job runs exactly what an adopter runs.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            generators: "TGZ;DEB"
+            name: linux-x86_64
+          - os: macos-latest
+            generators: "TGZ"
+            name: macos-arm64
+    name: package-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ckmux
+
+      # A release whose binary reports a different version than its tag is
+      # caught here, not discovered by a user.
+      - name: Check the tag matches the project version
+        run: |
+          grep -Fq "project(ckmux VERSION ${GITHUB_REF_NAME#v} " ckmux/CMakeLists.txt || {
+            echo "Tag $GITHUB_REF_NAME does not match project(ckmux VERSION ...) in CMakeLists.txt" >&2
+            exit 1
+          }
+
+      - name: Configure
+        run: cmake -S ckmux -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      # The full suite, in the build type being shipped: Release verdicts have
+      # differed from Debug ones here before (dead-code check), so a release
+      # is gated on its own build type, never on Debug's word.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cpack -G "${{ matrix.generators }}" --config build/CPackConfig.cmake -B "$GITHUB_WORKSPACE/packages"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.name }}
+          path: packages/ckmux*
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" packages/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "ckmux ${GITHUB_REF_NAME#v}"
+          --verify-tag
+          --generate-notes

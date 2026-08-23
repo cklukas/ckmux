@@ -1,0 +1,107 @@
+# ckmux
+
+**ckmux** is a terminal multiplexer — like tmux — with a face. It keeps your
+terminal sessions, and the programs running inside them, alive when you
+disconnect, and lets you reattach later exactly where you left off.
+
+Unlike tmux, its interface is visible. There is a permanent menu bar, a
+permanent footer showing the keys that work right now, and every terminal
+lives in a movable, resizable window on a desktop. Everything works by mouse
+or by keyboard, and nothing has to be memorized before it can be found.
+
+```
+ Session  Terminal  Window  View  Help
+░░╔═[■]═══════════════════ Terminal 1 ═══════════════════[↑]═╗░░░
+░░║ $ vim notes.md                                           ║░░░
+░░║                          ┌─ ^B … ──────────────────────┐ ║░░░
+░░║                          │ c   new term   t   tile     │ ║░░░
+░░║                          │ n   next       m   menu     │ ║░░░
+░░║                          │ w   windows    d   detach   │ ║░░░
+░░║                          └─────────────────────────────┘ ║░░░
+░░╚══════════════════════════════════════════════════════════╝░░░
+ ^B m menu  ^B c new term  ^B d detach  ^B n next  ^B ? keys
+```
+
+Inside each window you can run any terminal program — a shell, vim, htop, mc —
+with full color, mouse support, and Sixel graphics.
+
+## How it works
+
+A detached server owns the terminals and their PTYs; it keeps running with no
+client attached. A client connects over a local socket, receives a snapshot,
+and then receives only what changed. Closing the client — or losing the
+connection — does not touch the programs. Reattaching replays the current
+state, so you come back to what is there now, not to what you left.
+
+The interface is built on [ckVision](https://github.com/cklukas/ckVision), a
+windowed terminal-UI framework, which the two projects develop together.
+
+## Keys
+
+One key is taken from the program you are running: the prefix, `Ctrl+B`. Press
+it and a popup shows what the next key does — `c` for a new terminal, `n` and
+`p` to move between them, `d` to detach, `?` for the full list. Every command
+is also in the menu bar, and every menu entry shows its key, so the popup is a
+shortcut rather than the only way in. Press `Ctrl+B` twice to send a literal
+`Ctrl+B` through to the program.
+
+Everything else — function keys, Alt combinations, the mouse — belongs to the
+program in the window, exactly as it would without ckmux.
+
+## Build
+
+Needs a C++20 compiler, CMake 3.25+, and a ckVision checkout beside this one
+(or an installed ckVision package).
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j8
+./build/ckmux
+```
+
+Run the suite:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+## Status
+
+Early. The core promise works and is proven by a test that forks a real
+server, kills the client mid-run, and shows the program kept going unwatched.
+Sessions are plural, named and killable. The interface is real and usable:
+menu bar with clock and calendar, footer, floating terminal windows, the
+prefix and its popup, scrollback with a frame scrollbar, Sixel graphics, and
+themes under `Settings ▸ General…`.
+
+It is not finished software, and there is no tagged release yet. Expect rough
+edges, and expect the interface to move.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `src/common/` | Wire protocol, configuration, keymap, grid deltas — shared by both ends |
+| `src/server/` | The detached server: terminals, PTYs, the diff engine |
+| `src/client/` | The attaching client: the ckVision interface, commands, copy mode |
+| `src/platform/` | The OS seam — sockets, processes, polling, clipboard, paths |
+| `tests/` | The suite; behavior here lands with a test that fails without it |
+| `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
+
+macOS is where ckmux is developed and verified. Linux builds with Clang and
+the server runs there; the GCC build is not yet warning-clean, and the Linux
+port is open work rather than a claim. Windows is a design target —
+`src/platform` is written against a seam that ConPTY can fill — and no more.
+
+## Provenance
+
+ckmux shares no code with tmux, GNU screen, zellij, dtach/abduco, mtm, Twin,
+Turbo Vision, or any port or derivative of them. Its behavior is derived from
+published standards — ECMA-48, xterm ctlseqs, the kitty protocol specs,
+Unicode UAX #11/#29, terminfo(5), POSIX — from ckVision's own documentation,
+and from documented black-box observation of terminals. Contributions are held
+to the same rule; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Dr. Christian Klukas.
