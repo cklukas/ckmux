@@ -235,7 +235,13 @@ struct Rig {
 
 Rig make_rig(const std::string& name, const std::string& format) {
     Rig rig;
-    rig.root = std::filesystem::temp_directory_path() / ("ckmux-print-" + name);
+    // Per process, exactly as private_socket() does. Without the pid two runs on
+    // one machine share this directory, only_file_in() finds two files where it
+    // requires one, and saved.has_value() fails for a reason that has nothing to
+    // do with printing — which is what made this suite unmeasurable on a shared
+    // machine and sent three sessions after the wrong defect.
+    rig.root = std::filesystem::temp_directory_path() /
+               ("ckmux-print-" + name + "-" + std::to_string(static_cast<unsigned long>(::getpid())));
     std::error_code ignored;
     std::filesystem::remove_all(rig.root, ignored);
     std::filesystem::create_directories(rig.root, ignored);
@@ -258,7 +264,7 @@ Rig make_rig(const std::string& name, const std::string& format) {
 
 CK_TEST(a_child_that_prints_gets_a_saved_file_and_ckmux_opens_no_device) {
     if (binary_path().empty()) return;
-    const Rig rig = make_rig("txt", "text");
+    const Rig rig = make_rig("txt", "txt");
     const std::filesystem::path socket = private_socket("print5");
     forget(socket);
     const ::pid_t server = start_server(socket);
@@ -432,7 +438,7 @@ CK_TEST(a_printer_left_open_costs_the_ask_cache_and_spawns_nothing) {
     // `CSI 5 i` and never closes it. It must cost the ask cache and not one
     // byte more, the screen must resume on `CSI 4 i`, and nothing may be
     // spawned to "flush" anything.
-    const Rig rig = make_rig("open", "text");
+    const Rig rig = make_rig("open", "txt");
     const std::filesystem::path socket = private_socket("print5open");
     forget(socket);
     const ::pid_t server = start_server(socket);
