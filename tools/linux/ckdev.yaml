@@ -50,6 +50,12 @@ mountType: virtiofs
 provision:
   # The toolchain both repositories need, and nothing else. GCC and Clang
   # both, because CI runs both and they disagree about what to warn on. GCC 13
+# clang-tools supplies clang-scan-deps. Without it a Clang + Ninja configure
+# fails every translation unit at C++20 module scanning before compiling a
+# line — CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS-NOTFOUND — which reads as 43 of 49
+# tests failing and is a missing tool, not a defect. Neither project uses
+# modules; the scan runs anyway because the standard is C++20.
+# GCC 13
 # is pinned explicitly because GitHub's ubuntu-latest ships 13.3 and its
 # -Wdangling-reference / -Wmaybe-uninitialized fire where the newer GCC 14
 # (the distro default here) has learned not to — the version gap IS the bug
@@ -64,7 +70,7 @@ provision:
       apt-get install -y --no-install-recommends \
         build-essential g++ gcc \
         g++-13 gcc-13 \
-        clang lld libclang-rt-dev \
+        clang lld libclang-rt-dev clang-tools \
         cmake ninja-build \
         python3 \
         git rsync binutils pkg-config \
