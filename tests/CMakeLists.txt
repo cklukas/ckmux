@@ -35,6 +35,8 @@ set(CKMUX_TEST_SOURCES
     test_process_stats.cpp
     test_paths.cpp
     test_proto.cpp
+    test_reader_modes.cpp
+    test_reader_modes_client.cpp
     test_reference_apps.cpp
     test_remote_terminal.cpp
     test_rename_terminal.cpp
@@ -179,6 +181,7 @@ set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 set(CKMUX_LABELS_test_stats_display "pty")
 set(CKMUX_LABELS_test_session_desktop_client "pty")
+set(CKMUX_LABELS_test_reader_modes_client "pty")
 set(CKMUX_LABELS_test_attach_flags "unit")
 set(CKMUX_LABELS_test_session_names "unit")
 # test_process_stats forks bare children of its own (fork, no exec, no PTY) —

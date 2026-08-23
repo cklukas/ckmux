@@ -41,7 +41,7 @@ void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size c
     request.pixel_height =
         static_cast<std::uint16_t>(std::max(0, desktop.height) * std::max(0, cell_pixels.height));
     request.host_sixel = host_sixel_ ? 1 : 0;
-    request.share = share_ ? 1 : 0;
+    request.mode = static_cast<std::uint8_t>(mode_);
     send_(request);
 }
 
@@ -335,6 +335,20 @@ bool ServerSession::handle(const proto::Message& message) {
         (void)ack;
         if (paste_in_flight_ > 0) --paste_in_flight_;
         pump_paste();
+        return true;
+    }
+    if (const auto* told = std::get_if<proto::ReaderMode>(&message)) {
+        // The server's word outranks this client's belief: it is what actually
+        // decides whether the next keystroke reaches a PTY, and a client that
+        // kept its own answer would grey nothing while being refused
+        // everything. Only the modes that mean something here are taken —
+        // `TakeOver` is not a state a reader can be left IN, and a reader who
+        // was taken over learns it from `Detached`.
+        const auto arrived = static_cast<proto::AttachMode>(told->mode);
+        if (arrived == proto::AttachMode::Join || arrived == proto::AttachMode::Watch) {
+            mode_ = arrived;
+            if (on_reader_mode) on_reader_mode(arrived);
+        }
         return true;
     }
     if (const auto* detached = std::get_if<proto::Detached>(&message)) {

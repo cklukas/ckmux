@@ -249,7 +249,9 @@ D-OPEN-1; version 1.0 acceptance audit against
 
 ~~Simultaneous multi-client attach~~ — **left the parking lot 2026-08-20**,
 reader-directed: designed in [03](03-session-model.md) "Two clients at once"
-and scheduled as WP-40…WP-44 plus U7-a. Takeover stays the specified default;
+and scheduled as WP-40…WP-44 plus U7-a, extended the same day with WP-48…WP-50
+— the fan-out WP-44 declared but did not finish, a read-only reader mode, and
+the picker that lets a reader choose between joining and taking over. Takeover stays the specified default;
 the flag sits beside it. Three of those packages are latent defects in the
 single-client design rather than new work — the session does not own its
 desktop, four pieces of a reader's own state live on the session, and two

@@ -144,6 +144,9 @@ take first.
 | 58 | **WP-45** — One name, one session | ckmux | 0.5 d | **Done** (2026-08-20, owner ruling) | — |
 | 59 | **WP-46** — `kill-terminal`, and the refusal that told the truth | ckmux | 1 d | **Done** (2026-08-20) | — |
 | 60 | **WP-47** — A test that leaks a server has not finished | ckmux | 0.5 d | **Done** (2026-08-20) | — |
+| 61 | **WP-48** — What the second reader is never told | ckmux | 1–1.5 d | **Done** (2026-08-23, working tree; awaiting the tester session's gate) — three defects fixed, two more found and fixed in the fixing | WP-44 ✓ |
+| 62 | **WP-49** — A reader who may only look | ckmux | 2–3 d | **Done** (2026-08-23, working tree; awaiting the gate) | WP-48 ✓ |
+| 63 | **WP-50** — Join, take over, or watch: the choice on screen | ckmux | 2–3 d | **Done** (2026-08-23, working tree; awaiting the gate) — the picker's shape changed from the spec, and [06](06-ui-design.md) says why | WP-49 ✓, WP-48 ✓ |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -2183,9 +2186,154 @@ belongs, in [05-protocol.md](05-protocol.md): every wire FIELD needs a producer
 in `src/` and a test that names it, and `grep` returning only a declaration is
 the cheap version of that check.
 
-The parking lot in [10-roadmap.md](10-roadmap.md) — simultaneous multi-client
-attach, tiled pane mode, control mode, resurrect, Windows/ConPTY, kitty
-keyboard passthrough and graphics, hyperlink activation, scrollback reflow,
-per-terminal palette re-theming, session groups, PDF export (PRINT-7). Nothing
-there gets a row until a plan edit moves it, because R5 binds: an addition
-edits the plan first.
+**WP-48 — What the second reader is never told** *(ckmux)*. Three defects
+behind one sentence, and WP-44's own *Done when* claimed the first of them:
+"a gesture by either reaches the other through the existing
+`SetLayout`/`LayoutDelta` path".
+
+*It does not.* `announce_layout` resolves ONE recipient — `client_attached_to`,
+which returns the first attached client — and then calls
+`note_layout_announced()` on **every** terminal, so the announce edge is
+consumed by a message only one reader received. A window moved by the second
+reader is announced to the first; a window moved by the first is echoed back
+to the first and the second is never told. WP-44 converted twelve broadcast
+sites from `client_attached_to` to `for_each_attached` and this one was
+missed, which is the shape worth naming: **the sites that were fixed all SEND
+something, and this one sends something and also CLEARS a flag.** A partial
+fan-out that leaves the flag down is worse than no fan-out, because the fact
+that a window moved is now gone.
+
+*Second, the reader count is stale the moment it matters.* `SessionInfo`
+carries a count rather than a flag — WP-44 changed it precisely because
+"busy" cannot say "two of you are in here" — and `send_session_list` is
+broadcast on session create, rename, kill, terminal close and terminal move,
+and on **neither attach nor detach**. So the one number that reports
+simultaneity is refreshed by everything except the events that change it.
+[05-protocol.md](05-protocol.md)'s own row is what hid it: "sent whenever the
+set changes" is true, and an attach does not change the set.
+
+*Third, the client throws the count away on arrival* — `info.attached != 0`
+narrows it to a bool at the edge, so the picker could not say "2 readers" even
+once the first two are fixed.
+
+*Done when*: two shared clients each see the other's window moves, in both
+directions, with a test that asserts the direction WP-44 did not have (drag
+reported by the FIRST-attached client, observed by the second); the count a
+reader's picker shows changes within one tick of somebody attaching or
+detaching, asserted over the wire; `SessionRow` carries the number. The
+announce edge needs care rather than a wider loop: the flag may only fall once
+every watcher has been sent the arrangement.
+
+**WP-49 — A reader who may only look** *(ckmux)*. The wire and the server half
+of read-only, specified in [03-session-model.md](03-session-model.md) "Reader
+modes". `Attach.share` becomes `Attach.mode` — the same byte, values 0 and 1
+keeping exactly the meaning WP-44 shipped, and `2` meaning watch. Plus
+`SetReaderMode{scope, mode}`, which changes a mode without the full snapshot a
+re-attach would cost, and out of whose table "disconnect the others" falls as
+`{others, take over}` rather than needing a verb of its own.
+
+**Enforced at the server.** A client that greys its own views has adopted a
+convention; a mode a stale or modified client can ignore is not a mode. The
+refusal list and the still-allowed list are both in
+[03](03-session-model.md) and the second matters as much as the first —
+scrollback, copy mode, selection, pan, chrome collapse and focus are a
+reader's OWN (WP-41, WP-43) and a watcher keeps every one of them.
+
+*A note on the silence.* This server answers unimplemented and impossible
+requests rather than dropping them, because an unanswered request looks to a
+reader exactly like a server that has hung. A watcher's refused `Input` is the
+one deliberate exception: the client asked for the mode and already knows, and
+an `Error` per keystroke is a flood on the hot path. The client refuses
+locally and says so once; the server's silent drop is the backstop, not the
+reader-facing behaviour. Written down because it reads like the bug the rest
+of the handler exists to avoid.
+
+*Done when*: a watcher's `Input` and `PasteChunk` reach no PTY, asserted by
+reading the child's output rather than by counting messages; every entry in
+the refusal table is refused and every entry in the allowed table works;
+`{me, take over}` is refused at the wire; a watcher may send `{me, join}` and
+nothing else; a reader put on watch by another is pushed `ReaderMode` and a
+reader who changed their own is not; the `Attach.mode` catalogue gains its
+third value **with a producer in `src/` and a test that names it** — the rule
+[05-protocol.md](05-protocol.md) grew out of `Attach.share` shipping
+round-tripped, server-handled and set by no line in the client.
+
+**WP-50 — Join, take over, or watch: the choice on screen** *(ckmux)*. The
+reader-facing half, drawn in [06-ui-design.md](06-ui-design.md): the picker's
+Join / Take Over buttons with the Watch-only checkbox, rows that state the
+reader count, the three Session-menu items, the toasts, and the two footer
+items. `--watch` in the CLI beside WP-44's `--share`; no `--take-over` and no
+setting, both refused on the record so neither is re-proposed.
+
+*Two shapes decided rather than discovered, and both are in
+[06](06-ui-design.md) with their reasoning*: Join and Take Over are BUTTONS
+because they differ in what they do to a third party, and Watch-only is a
+CHECKBOX because it differs only in what it does to you. And every message
+says "another reader" rather than naming a tty, which is a deliberate
+departure from the picker sketch that has promised a name since M0.
+
+*Done when*: a row nobody holds still offers one `Attach`; a row another
+reader holds offers Join as the default action and Take Over as a separate
+one, both honouring the checkbox; `Others Read-Only` unticks itself when the
+last other reader leaves; the footer says `2 readers` while there are two and
+`read-only` while this client is watching; the toast table is covered; and
+`docs/cli.md` and `docs/getting-started.md` gain `--watch` **in this
+package's commit and not before** — the docs describe what is built.
+
+**What WP-48 turned up in the fixing, both of them mine and both caught by a
+test rather than by review.** They are recorded because each is a general shape
+rather than a slip.
+
+*A list published from the middle of a change.* The obvious home for "a detach
+changed the reader count, so say so" is `detach` — and `forget_session`
+detaches every reader of a session and only THEN erases it, so a broadcast from
+there describes a world halfway through: the session gone as far as its readers
+are concerned, still present in `sessions_`. A corrected list followed a
+moment later and nothing showed — **except on the one path where nothing
+follows**, ending the last session, which stops the server. Every picker was
+left offering a session that had just ended. The repair is not a reordering but
+a deferral: the flag is set where the change happens and flushed on the tick,
+so there is no moment mid-mutation at which anything is published. **Anything
+that broadcasts state belongs at a quiescent point, not at the point the state
+changed.**
+
+*A new frame is a new way into an old loop.* Making an attach produce a
+`SessionList` one tick later put an ordinary frame on the wire at precisely the
+moment the client that just attached is least able to take one — mid-drain of
+its four-megabyte attach snapshot. Queueing any ordinary frame over the
+high-water mark sets `dirty_snapshot`, so the list asked for a second copy of
+the snapshot already in flight: the M-S5 re-snapshot loop, reached from a
+direction the existing guard did not cover, because that guard reasons about
+the SNAPSHOT path and this frame was not on it. A `SessionList` is pure current
+state, so the fix is to skip a backed-up reader and leave the flag up —
+deferred, not dropped, and a later list is strictly better than this one.
+`a_snapshot_that_fills_the_queue_is_not_asked_for_twice` caught it, having been
+written for a different cause entirely.
+
+*And the reason the second one is worth a paragraph rather than a line:* the
+first defect's fix CREATED the second. Deferring the broadcast to the tick is
+what moved it into the drain window. A repair is a change like any other and
+gets no dispensation from the reasoning that would have been applied to it as a
+feature.
+
+*A third, from fixing the second.* Narrowing the broadcast to UI clients is
+right for the unsolicited push and wrong for the answering path, and doing it
+in one function did both: `ckmux new` is a CLI client whose entire output is
+the `SessionList` the server sends after `NewSession`, so it hung and exited
+non-zero. The two are now separate functions — `broadcast_session_list` answers
+and reaches everybody, `flush_reader_counts` pushes and is narrowed — because
+they are separate questions wearing one name. **The narrowing that is obviously
+correct for a push is obviously wrong for a reply**, and a single function
+serving both had no way to say which it was doing.
+
+Worth naming what caught each of the three: the first, an end-to-end PTY case
+about ending a session; the second, `a_snapshot_that_fills_the_queue_is_not_
+asked_for_twice`, written years-of-packages earlier for an unrelated cause; the
+third, `test_cli`, which had passed standalone twenty minutes before. None was
+found by reading the diff.
+
+The parking lot in [10-roadmap.md](10-roadmap.md) — tiled pane mode, control
+mode, resurrect, Windows/ConPTY, kitty keyboard passthrough and graphics,
+hyperlink activation, scrollback reflow, per-terminal palette re-theming,
+session groups, PDF export (PRINT-7). Nothing there gets a row until a plan
+edit moves it, because R5 binds: an addition edits the plan first.

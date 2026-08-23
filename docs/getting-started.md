@@ -73,8 +73,19 @@ ckmux attach work          # straight into it
 ```
 
 `^B s` opens the session picker from inside; `^B S` creates a session, `^B R`
-renames one, `^B K` ends one. Two people (or two terminals) can watch the
-same session with `ckmux attach --share`.
+renames one, `^B K` ends one.
+
+Two people — or two of your own terminals — can watch one session at the same
+time. `ckmux attach --share` joins a session instead of taking it over, and
+`ckmux attach --watch` joins it read-only: you see everything and nothing you
+type reaches it. From the picker, a session somebody else is watching offers
+the same three answers, and the footer says `2 readers` while you have company.
+
+Once you are in, the Session menu carries the rest: **Watch Only** puts you
+read-only and takes you back out, **Others Read-Only** does it to everybody
+else, and **Take Session Over** drops them to their pickers. Any reader can do
+any of these to any other — there is no owner, so whatever one of you does,
+the other can undo.
 
 Quitting entirely: `^B q` quits the client; `ckmux kill-server` ends the
 server and every terminal in it.

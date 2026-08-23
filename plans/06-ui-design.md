@@ -381,12 +381,62 @@ asking is killed after `kill-grace-seconds`. Third, the Session menu holds
 no New Terminal: a terminal is the Terminal menu's to make, and the same
 item under two titles is a reader wondering which one they used — the
 Session menu is New Session…, Sessions…, Rename Session…, End Session…,
-then Detach and Quit. The Terminal menu is New Terminal, Close Terminal,
+then Detach and Quit, with WP-50's three reader-mode items sitting between
+End Session… and Detach (below). The Terminal menu is New Terminal, Close Terminal,
 Rename Terminal…, Move to Session…, then Next/Previous, then Copy Mode, Paste
 and Send Prefix — naming a terminal sits with the other things done TO one,
 above the separator that divides them from moving between them. A row somebody else holds says so inline: "(in use —
 attaching takes it over)"; the row this client holds says "(this client)".
 Created/last-used columns wait for the wall-clock question they raise.
+
+**What WP-50 changes about the two paragraphs above.** The inline text stops
+guessing and states the number, because the wire has carried a reader COUNT
+since WP-44 and the client throws it away on arrival — `(2 readers —
+attaching joins them)` rather than `(in use)`. And a row somebody else holds
+grows a second action, because "attach" is now a question with two answers:
+
+```
+┌ Sessions ──────────────────────────────────────────────────┐
+│  Session                                                   │
+│   ( ) build — 2 terminals   (this client)                  │
+│   (•) ops   — 3 terminals   (3 readers — attaching…)       │
+│   ( ) logs  — 1 terminal    (1 reader — attaching takes…)  │
+│                                                            │
+│  If somebody is already watching it                        │
+│   (•) Join them — you both see one session                 │
+│   ( ) Take it over — the others are dropped to their…      │
+│   ( ) Join and only watch — nothing you type reaches it    │
+│                                                            │
+│              [ Attach ]      [ Cancel ]                    │
+└────────────────────────────────────────────────────────────┘
+```
+
+**A second radio group, not a pair of buttons.** The first draft of this
+package specified `[ Join ] [ Take Over ]` beside a `Watch only` checkbox, on
+the argument that Join and Take Over differ in what they do to a THIRD PARTY
+and so should not be a modifier on one action. That argument survives; the
+shape did not, and the reason is the widget contract rather than taste. A
+`DialogDescriptor` has **at most one Accept**, and a second acting button is a
+`Dismiss` whose `on_press` runs with no access to the fields — so it could not
+know which session row was selected. The three-way group keeps every property
+that mattered and reads better than the buttons would have:
+
+- The destructive answer is **chosen, never defaulted** — Join is the initial
+  selection, so Enter lands on the answer that costs a colleague nothing.
+- All three consequences are **on screen at once**, in words, rather than two
+  on buttons and the third hidden in a checkbox nobody reads.
+- Watching becomes a **first-class answer** rather than a modifier, which is
+  what it is: it is not "Join, but…", it is a different thing to be.
+
+Offered only when somebody OTHER than this client is watching something. On the
+ordinary machine — one reader, several sessions — there is nobody to displace,
+so the group is absent and the dialog is exactly what it was. A reader who is
+already watching and switches sessions keeps watching: they were never asked,
+and the picker must not quietly promote a watcher into somebody who can type.
+
+No prompt and no confirmation on Take Over, which is D-07 and is not softened
+here: the reader chose the option that says what it does, and the displaced
+reader can take it straight back.
 
 The original sketch, kept for the columns and CLI rows still to come:
 
@@ -416,6 +466,57 @@ ckVision dialog:
 - Startup with zero sessions: same dialog, list empty, `[ New… ]` focused,
   orientation paragraph shown.
 - `ckmux attach <name>` / `ckmux new` CLI bypasses the picker for scripting.
+  `--share` joins, `--watch` joins read-only, neither takes over. There is no
+  `--take-over`: bare attach already does it, and with no stored policy
+  setting ([03](03-session-model.md): the setting was designed and dropped)
+  there is nothing for an explicit opposite to disambiguate against.
+
+## Reader modes on screen (WP-50)
+
+Three Session-menu items, between End Session… and Detach, each acting on the
+session this client is attached to:
+
+| Item | Shape | Enabled when | What it sends |
+|---|---|---|---|
+| `Take Session Over` | action | attached, and `attached > 1` | `SetReaderMode{others, take over}` — every other reader is dropped to their picker with the notice they already get |
+| `Others Read-Only` | checkable | attached, and `attached > 1` | `SetReaderMode{others, watch}` when ticked, `{others, join}` when cleared |
+| `Watch Only` | checkable | attached | `SetReaderMode{me, watch}` / `{me, join}` — the self-restriction, and the only one of the three a watcher may use |
+
+`Others Read-Only` unticks itself when the last other reader leaves, because a
+checked box describing nobody is a lie the reader has to reason about. It is
+not remembered across attaches: a mode is a fact about the readers in a
+session right now, not a preference.
+
+**Deliberately without prefix chords.** These are rare, deliberate acts, and
+three more rows in the which-key popup buys a reader nothing they will reach
+for — the same reasoning that keeps `ckmux.help.all-keys` out of the keymap
+table. Menu and which-key discoverability only.
+
+**What a reader is told, and when.** `NotificationCenter` toasts (WP-14),
+because each of these changes what the reader may do and none of them is
+visible in the grid:
+
+| Event | Toast |
+|---|---|
+| The count goes 1 → 2+ | *"Another reader joined this session"* |
+| The count returns to 1 | *"You have this session to yourself again"* |
+| This reader is put on watch by another | *"Another reader made this session read-only for you"* |
+| This reader is given typing back | *"You can type in this session again"* |
+| This reader takes the session over | *"Took over 'ops' — 2 readers were dropped"* |
+| This reader is taken over | already built (`Detached{takeover}`, WP-14) |
+
+**And two footer items, because a toast expires and the fact does not**: a
+`2 readers` item whenever the count exceeds one, and a `read-only` item
+whenever this client is watching. Both high in the status line's priority
+order, for the reason the bell and activity marks are — a fact dropped when
+the window narrows is a fact the reader does not have.
+
+Every message says *another reader* and never a tty or a host.
+[03-session-model.md](03-session-model.md) records why: an identity field is
+the first half of an owner model that was refused, and a tty name identifies
+nobody when both clients are one person's two windows. This is a deliberate
+departure from the original sketch above, which promised *"Took over 'build'
+from ttys004"*.
 
 ## Mouse rules
 

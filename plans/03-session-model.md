@@ -167,6 +167,103 @@ mapping wrote so a reader's own drag invalidates rather than snapping back.
 The rule to state plainly is **a client never reports a change it did not
 originate**: fitting is local, gestures are reported.
 
+### Reader modes (WP-49, WP-50)
+
+WP-44 built the opt-in as a boolean: take the session, or join it. That is one
+bit for a question a reader asks in three ways, and the missing third is the
+one that makes sharing comfortable — **watch without being able to type**.
+`Attach.share` becomes `Attach.mode`, the same byte with a third value:
+
+| Mode | Value | What it does to the readers already there | What this reader may do |
+|---|---|---|---|
+| Take over | 0 | Every one of them is detached (`Detached{takeover}`), exactly as today | Everything |
+| Join | 1 | Nothing; they stay | Everything |
+| Watch | 2 | Nothing; they stay | Read the session, and nothing that changes it |
+
+Values 0 and 1 keep the meaning WP-44 shipped, so the widening is additive on
+the wire and no client is misread by an older server. The default with no flag
+is still 0, which is D-07 and is not up for revision here.
+
+**Read-only is enforced by the server, not by the client.** A client that
+greys its own views has adopted a convention; a reader mode that a stale or
+modified client can ignore is not a mode. The client greys as well, and that
+is courtesy rather than the mechanism.
+
+What "read-only" means precisely — and it means read-only *to the session*,
+not a crippled interface:
+
+| Refused from a watcher | Why |
+|---|---|
+| `Input`, `PasteChunk` | The point of the mode |
+| `NewTerminal`, `CloseTerminal`, `KillTerminal`, `MoveTerminal` | A reader who can end a program is not read-only in any sense worth having |
+| `RenameSession`, `KillSession`, `SetDesktopSize` | Change the session for everybody watching it |
+| `SetLayout` | Window arrangement is session state; a watcher rearranging it moves the other reader's windows |
+
+| Still theirs | Why |
+|---|---|
+| Scrollback, copy mode, selection, clipboard | Client-local; no wire message at all |
+| Pan offset, chrome collapse, window focus, terminal focus | WP-41 and WP-43 already made these a reader's own |
+| `ListSessions`, `WatchStats`, `Attach` (resnapshot), `Detach` | Questions and self-repair, not changes |
+
+A watcher's own drags are not blocked at the client — ckVision windows stay
+draggable — so a watcher may arrange their desktop locally, nothing is
+reported, and the next `LayoutDelta` from the session overwrites it. That is
+the same contract a client that fell behind already has, and it is honest. The
+nicer version, where the windows of a watched session are simply not draggable,
+is a ckVision capability and belongs in
+[07-ckvision-integration.md](07-ckvision-integration.md) as a `U-` item if it
+is ever wanted; it is deliberately not a blocker here.
+
+### Changing a mode after the attach, and doing it TO somebody
+
+Re-attaching to change a mode would work — the eviction is keyed off `Attach`
+— and it is the wrong shape: it costs a full snapshot to change a fact that
+alters nothing on screen. One message carries both directions instead:
+
+`SetReaderMode { scope, mode }`, where `scope` is **me** or **every other
+reader of this session**, and `mode` is the same three values.
+
+Four of the six combinations are things a reader actually wants, and
+"disconnect the others" falls out of the table rather than needing a verb of
+its own:
+
+| scope | mode | What the reader asked for |
+|---|---|---|
+| others | take over | "I want this session to myself" — evicts, reusing the `Detached{takeover}` path |
+| others | watch | "Look, but don't touch" |
+| others | join | Hands typing back to the readers put on watch |
+| me | watch | "I'm only here to look" — the self-restriction, after the fact |
+| me | join | Undoes the above |
+| me | take over | Rejected at the wire: attaching is how a session is taken, and a scope of *me* cannot evict me |
+
+A reader whose mode was changed **by somebody else** is told — `ReaderMode` is
+pushed to them, and their client says so. A reader who changed their OWN mode
+is not told anything, because they just did it.
+
+**Any attached reader may do this to any other. There is no owner.** That is a
+decision and not an omission. The socket is already the trust boundary — it is
+uid-private, and every reader on it is the same human or somebody that human
+invited to their machine — so an owner among readers would be a permission
+system with exactly one user in it, and the first thing it would do is
+reintroduce the lockout that D-07 exists to forbid. Symmetric also means
+recoverable: whatever one reader does, the other can undo.
+
+**No identity, deliberately.** [06-ui-design.md](06-ui-design.md)'s original
+picker sketch promised *"Took over 'build' from ttys004"*, and nothing on the
+wire carries a client name to fill that in. It stays unfilled: a tty name is
+not an identity anybody recognises when both clients are one person's two
+windows, and adding a name field is the first half of the owner model just
+refused. Messages say "another reader".
+
+**No setting.** A `[general] attach-policy` default was designed and dropped,
+on the reader's ruling, and it is recorded here so it is not re-proposed: the
+choice is made in the picker where the consequence is visible and the reader
+count is on screen, and a stored default would silently change what a bare
+`ckmux attach <name>` does to a colleague. The CLI keeps explicit flags —
+`--share` (join, shipped with WP-44) and `--watch` (join read-only) — and
+takes over when given neither, which needs no flag of its own precisely
+because there is no setting for it to disambiguate against.
+
 ## Multi-client policy: latest client wins (specified behavior)
 
 Attaching to a session is **always granted, immediately, to the newest
@@ -198,10 +295,12 @@ Rules that follow:
 - Takeover also settles desktop sizing: the session's desktop is always
   sized by its one current client (a fresh `resize-desktop` accompanies
   every attach).
-- **Simultaneous shared attach** (tmux-style mirrored clients) stays in the
-  parking lot and would be **opt-in via an explicit flag if ever built** —
-  takeover-by-default is the contract. The protocol already broadcasts
-  state updates, so that future needs no wire change.
+- **Simultaneous shared attach** is built and is opt-in (WP-44, landed
+  2026-08-20): takeover-by-default remains the contract, and a client that
+  asks to join gets to join. What each of the three modes means, and what a
+  reader may do to the readers already there, is "Reader modes" above. The
+  step-by-step transfer here describes mode **take over** only; under **join**
+  and **watch** step 2 does not happen at all.
 
 ## Identity, ordering, uniqueness — quick rules
 
@@ -225,8 +324,11 @@ Rules that follow:
 
 ## Explicitly deferred
 
-- Simultaneous multi-client attach (protocol-ready; would be opt-in via an
-  explicit flag — automatic takeover remains the default contract).
+- ~~Simultaneous multi-client attach~~ — **built** (WP-44), opt-in, with
+  automatic takeover remaining the default contract. What is still deferred is
+  narrower: an *identity* for a reader (a tty or host name shown to the
+  others), and a privileged owner among readers. Both are refused rather than
+  postponed, for reasons recorded in "Reader modes".
 - Linking one terminal into two sessions (tmux `link-window`): **rejected**
   for now — it complicates layout ownership for marginal value; `move` covers
   the stated need.
