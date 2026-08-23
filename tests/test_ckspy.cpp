@@ -212,22 +212,80 @@ CK_TEST(the_interposer_follows_a_child_across_fork_and_exec) {
     forget(socket);
 }
 
+// What this host's System Integrity Protection actually is. Three answers,
+// not two: GitHub's macOS runners boot with SIP DISABLED (which failed both
+// macOS CI lanes the first time a runner ever compiled this suite), a
+// developer machine may run a partial "Custom Configuration", and `enabled.`
+// with the period is the only spelling that means the full default policy.
+enum class SipState { Enforcing, Disabled, Unknown };
+
+SipState sip_state() {
+    FILE* pipe = ::popen("csrutil status 2>/dev/null", "r");
+    if (pipe == nullptr) return SipState::Unknown;
+    std::string output;
+    char buffer[256];
+    while (std::fgets(buffer, sizeof buffer, pipe) != nullptr) output += buffer;
+    ::pclose(pipe);
+    if (output.find("status: enabled.") != std::string::npos) return SipState::Enforcing;
+    if (output.find("status: disabled.") != std::string::npos) return SipState::Disabled;
+    return SipState::Unknown;
+}
+
 CK_TEST(a_protected_binary_is_immune_and_that_is_why_a_zero_needs_a_witness) {
-    if (spy_dylib().empty()) return;
-    // The limit, executable. macOS strips `DYLD_INSERT_LIBRARIES` for
-    // SIP-protected binaries, so pointing ckspy at `/bin/sh` records NOTHING
-    // — and that empty log is indistinguishable from a run in which nothing
-    // happened.
+    if (spy_dylib().empty() || binary_path().empty()) return;
+    // The limit, executable. With SIP enforcing, macOS strips
+    // `DYLD_INSERT_LIBRARIES` for protected binaries, so pointing ckspy at
+    // `/bin/sh` records NOTHING — and that empty log is indistinguishable
+    // from a run in which nothing happened.
     //
     // This is the case that makes the rule non-negotiable: every other test
     // that trusts ckspy must assert something it expects to FIND, or it is
-    // asserting nothing. Recorded here so the next reader who gets an empty
-    // log knows to suspect the target before suspecting the code.
-    const std::filesystem::path log = std::filesystem::temp_directory_path() / "ckspy-sip.log";
+    // asserting nothing. So this case must not itself become the exception:
+    // before drawing any conclusion from an empty log, it PROVES the
+    // instrument is alive in the same run, against the one binary that is
+    // injectable on every host — ckmux itself, which we built and signed.
+    // (A COPY of /bin/sh is NOT that binary: the Apple platform signature
+    // travels with the copy and dyld ignores insertion for platform-signed
+    // images wherever they sit — measured here, 0 bytes recorded from a
+    // /tmp copy on an enforcing host.) Without the witness, an interposer
+    // that broke completely reads as perfect immunity.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path();
+    const std::filesystem::path witness_log = dir / "ckspy-sip-witness.log";
+    const std::filesystem::path witness_socket = private_socket("ckspysip");
+    forget(witness_socket);
+    const std::string witness = spy_on(
+        {binary_path().string(), "ls", "--socket", witness_socket.string()}, witness_log);
+    std::printf("  [ckspy] instrument witness (ckmux ls) recorded %zu bytes (expected: some)\n",
+                witness.size());
+    CK_CHECK(!witness.empty());
+
+    // Only now the immunity claim, and only where its premise holds. On a
+    // SIP-disabled host the witness INVERTS rather than evaporates: the same
+    // probe must SEE inside the real /bin/sh. Under a custom or unreadable
+    // SIP configuration neither direction is a safe claim — stripping may or
+    // may not apply — so no assertion is made about the protected path, and
+    // the instrument witness above is what keeps that branch honest.
+    const std::filesystem::path log = dir / "ckspy-sip.log";
     const std::string recorded = spy_on({"/bin/sh", "-c", "cat /etc/hosts >/dev/null"}, log);
-    std::printf("  [ckspy] SIP-protected /bin/sh recorded %zu bytes (expected: none)\n",
-                recorded.size());
-    CK_CHECK(recorded.empty());
+    switch (sip_state()) {
+    case SipState::Enforcing:
+        std::printf("  [ckspy] SIP enforcing: /bin/sh recorded %zu bytes (expected: none)\n",
+                    recorded.size());
+        CK_CHECK(recorded.empty());
+        break;
+    case SipState::Disabled:
+        std::printf("  [ckspy] SIP disabled: /bin/sh recorded %zu bytes (expected: some)\n",
+                    recorded.size());
+        CK_CHECK(!recorded.empty());
+        break;
+    case SipState::Unknown:
+        std::printf("  [ckspy] SIP state unknown (custom configuration?): /bin/sh recorded "
+                    "%zu bytes; no immunity claim made\n",
+                    recorded.size());
+        break;
+    }
     std::error_code ignored;
     std::filesystem::remove(log, ignored);
+    std::filesystem::remove(witness_log, ignored);
+    forget(witness_socket);
 }
