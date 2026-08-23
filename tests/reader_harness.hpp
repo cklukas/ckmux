@@ -68,9 +68,47 @@ inline void forget(const std::filesystem::path& socket) {
     std::filesystem::remove(socket.parent_path(), ignored);
 }
 
+// Every server this harness forks, so none of them can outlive the run.
+//
+// A test that returns early after starting a server — `if (!frame.has_value())
+// return;` and its several siblings — never reaches its end_process(), and the
+// server stays. They accumulated: dozens of them were still running from
+// earlier ctest invocations, and because these are end-to-end PTY tests with
+// millisecond budgets, that load made later runs fail assertions that pass on
+// an idle machine. A timing test measures the machine as much as the code, and
+// a machine littered by previous runs is a different machine.
+//
+// Reaped at process exit rather than between tests: at exit nothing can still
+// be in use, so this cannot kill a server a running test is talking to. It ends
+// the accumulation ACROSS runs, which is what actually poisoned the results.
+inline std::vector<::pid_t>& harness_servers() {
+    static std::vector<::pid_t> servers;
+    return servers;
+}
+
+inline void retire_harness_servers() {
+    for (const ::pid_t pid : harness_servers()) {
+        if (pid <= 0) continue;
+        int status = 0;
+        if (::waitpid(pid, &status, WNOHANG) == pid) continue;  // ended properly
+        (void)::kill(pid, SIGKILL);
+        (void)::waitpid(pid, &status, 0);
+    }
+    harness_servers().clear();
+}
+
+inline void remember_harness_server(::pid_t pid) {
+    static const bool reaper_installed = [] { return std::atexit(&retire_harness_servers) == 0; }();
+    (void)reaper_installed;
+    if (pid > 0) harness_servers().push_back(pid);
+}
+
 inline ::pid_t start_server(const std::filesystem::path& socket) {
     const ::pid_t child = ::fork();
-    if (child != 0) return child;
+    if (child != 0) {
+        remember_harness_server(child);
+        return child;
+    }
     const std::string program = binary_path().string();
     const std::string path = socket.string();
     char* const argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>("--server"),
