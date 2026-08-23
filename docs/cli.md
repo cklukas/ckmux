@@ -11,7 +11,7 @@ title: Command line
 | `ckmux` | Attach: your terminal windows, starting the server if none is listening. Quitting the client leaves the server and every program in it running; run `ckmux` again to return to them. |
 | `ckmux ls` | The sessions a server holds, one per line. Says so rather than starting one when none is running. |
 | `ckmux new [-s name] [command]` | A session, made without attaching to it. Prints its name; the server names it when you do not. A command runs in its first terminal, through your shell. |
-| `ckmux attach [--share] [--adopt-size] <name\|id>` | Straight to one session, past the picker. Takes the name `ckmux ls` prints, or an id. |
+| `ckmux attach [--share] [--watch] [--adopt-size] <name\|id>` | Straight to one session, past the picker. Takes the name `ckmux ls` prints, or an id. |
 | `ckmux kill-session <name\|id>` | Ask every program in one session to end, then drop it. |
 | `ckmux check-config` | Parse the configuration and report, starting nothing. Exits non-zero when the file has problems. |
 | `ckmux kill-server` | End the server and every terminal in it. |
@@ -22,6 +22,14 @@ title: Command line
 
 - `--share` — join a session someone may already be watching, rather than
   taking it over.
+- `--watch` — join it and only look. Nothing you type reaches the session and
+  nothing you do changes it: no new terminals, no closing, no renaming, no
+  moving windows. Scrollback, copy mode and your own view are unaffected.
+  Implies `--share`. Leave with `Session ▸ Watch Only`.
+
+With none of these, attaching **takes the session over**: whoever was watching
+it is dropped to their own picker. That is the default and there is no flag to
+ask for it — it is what `ckmux attach <name>` already does.
 - `--adopt-size` — make the session's desktop this screen, once, on arrival.
   Reflows every window and resizes every child, for everyone watching.
 

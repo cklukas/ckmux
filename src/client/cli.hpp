@@ -47,6 +47,16 @@ struct CliRequest {
     // is what every reader before this flag got, and a shared session is a
     // different thing to be in — what one reader types, both see.
     bool share = false;
+    // `ckmux attach --watch`: join it and only look (WP-49). Implies `--share`,
+    // because watching IS a way of joining — the two together are redundant
+    // rather than contradictory, and are accepted as such.
+    //
+    // There is deliberately no `--take-over`. Bare `attach` already takes over,
+    // and with no stored policy setting (the session model records that one was designed
+    // and dropped) there is nothing for an explicit opposite to disambiguate
+    // against — a flag whose only effect is to restate the default is a flag a
+    // reader has to wonder about.
+    bool watch = false;
     // `ckmux attach --adopt-size`: make the session's desktop this client's
     // screen, once, on arrival (WP-40). Opt-in for the same reason the menu
     // item has no chord: it reflows every window and resizes every child, for

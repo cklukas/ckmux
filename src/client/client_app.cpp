@@ -474,6 +474,62 @@ void ClientApp::register_commands() {
     // items sharing a mnemonic means the second one cannot be typed at all.
     declare(commands::kAllKeys, "A&ll Keybindings…", "Help", [this] { show_all_keys(); });
 
+    // The three reader-mode acts (WP-50), declared here rather than off the
+    // keymap table because they have no chords — see `commands.hpp`.
+    //
+    // Every one of them is gated on there being somebody to act on or
+    // something to stop doing, and greying is right where hiding would be
+    // wrong: a reader who has heard of "Take Session Over" should find it in
+    // the menu, greyed, and learn from that that nobody else is in here.
+    {
+        const u::CommandId take_over =
+            declare(commands::kTakeSessionOver, "&Take Session Over", "Session", [this] {
+                if (!options_.set_reader_mode) return;
+                options_.set_reader_mode(proto::ReaderScope::Others, proto::AttachMode::TakeOver);
+                const int others = readers_here() - 1;
+                notify(others == 1 ? "The other reader was dropped to their picker"
+                                   : "The other " + std::to_string(others) +
+                                         " readers were dropped to their pickers");
+            });
+        registry.set_enabled_predicate(take_over, [this] {
+            return options_.set_reader_mode && attached_session_ != 0 && readers_here() > 1 &&
+                   !watching();
+        });
+
+        const u::CommandId others_read_only =
+            declare(commands::kOthersReadOnly, "Others &Read-Only", "Session", [this] {
+                if (!options_.set_reader_mode) return;
+                others_read_only_ = !others_read_only_;
+                options_.set_reader_mode(proto::ReaderScope::Others,
+                                         others_read_only_ ? proto::AttachMode::Watch
+                                                           : proto::AttachMode::Join);
+                // A checkmark is a value in the bar's items, so the bar gets
+                // fresh ones — the same way the View toggles refresh theirs.
+                refresh_menu_marks();
+            });
+        registry.set_enabled_predicate(others_read_only, [this] {
+            return options_.set_reader_mode && attached_session_ != 0 && readers_here() > 1 &&
+                   !watching();
+        });
+
+        const u::CommandId watch_only =
+            declare(commands::kWatchOnly, "&Watch Only", "Session", [this] {
+                if (!options_.set_reader_mode) return;
+                const bool now_watching = !watching();
+                options_.set_reader_mode(proto::ReaderScope::Me, now_watching
+                                                                     ? proto::AttachMode::Watch
+                                                                     : proto::AttachMode::Join);
+                // Believed at once rather than awaited: the server sends no
+                // `ReaderMode` back for a mode this reader asked for, so
+                // nothing else will ever tell this client what it just did.
+                set_reader_mode(now_watching ? proto::AttachMode::Watch : proto::AttachMode::Join,
+                                /*told=*/false);
+                refresh_menu_marks();
+            });
+        registry.set_enabled_predicate(
+            watch_only, [this] { return options_.set_reader_mode && attached_session_ != 0; });
+    }
+
     // Quitting an attached client DETACHES it.
     //
     // ckVision's standard quit sweeps the windows first and lets any of them
@@ -546,6 +602,10 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
     };
     const w::MenuItem separator = w::MenuItem::separator();
 
+    const auto checkable = [&](std::string_view key, bool on) {
+        return item(key).with_mark(on ? w::MenuMark::Checked : w::MenuMark::Unchecked);
+    };
+
     // No New Terminal here: a terminal is the Terminal menu's to make, and the
     // same item under two titles is a reader wondering which one they used.
     // This menu holds what happens to SESSIONS.
@@ -553,6 +613,8 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
         "&Session",
         {item(commands::kNewSession), item(commands::kSessions),
          item(commands::kRenameSession), item(commands::kKillSession), separator,
+         item(commands::kTakeSessionOver), checkable(commands::kOthersReadOnly, others_read_only_),
+         checkable(commands::kWatchOnly, watching()), separator,
          item(commands::kDetach), item(u::std_command_keys::kQuit)}};
     // Rule 2 of the interface spec: everything is in the menu, with the chord that
     // reaches it beside it. Copy Mode, Paste and Send Prefix live here — the
@@ -574,9 +636,6 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
     // `[general]` keys the moment they change, and applied to every open
     // terminal window at once (`apply_stats_toggles`). The checkmark is a
     // value in the item, which is why a toggle rebuilds the menus.
-    const auto checkable = [&](std::string_view key, bool on) {
-        return item(key).with_mark(on ? w::MenuMark::Checked : w::MenuMark::Unchecked);
-    };
     w::MenuBarItem view_menu{
         "&View",
         {checkable(commands::kShowCpuUsage, options_.settings.show_cpu),
@@ -1006,9 +1065,37 @@ void ClientApp::report_detached(proto::DetachReason reason, const std::string& t
     notify(std::move(line), w::NotificationSeverity::Warning, /*persistent=*/true);
 }
 
+int ClientApp::readers_here() const {
+    if (attached_session_ == 0) return 0;
+    for (const SessionRow& row : last_sessions_)
+        if (row.id == attached_session_) return row.readers;
+    // Not in the list yet — an attach whose `SessionList` has not arrived. One
+    // rather than zero: this client is attached, so it is a reader, and
+    // answering zero would hide the footer count and grey the menu items for
+    // the moment between attaching and being told about it.
+    return 1;
+}
+
+void ClientApp::set_reader_mode(proto::AttachMode mode, bool told) {
+    const bool was_watching = watching();
+    reader_mode_ = mode;
+    // The footer carries "read-only" while it is true, because a toast expires
+    // and the fact does not.
+    refresh_footer();
+    if (!told) return;
+    // Somebody ELSE did this, so it needs saying. A reader who ticked the box
+    // themselves is not told, which is why `told` is a parameter rather than a
+    // comparison: the two calls are indistinguishable from the state alone.
+    if (mode == proto::AttachMode::Watch)
+        notify("Another reader made this session read-only for you",
+               w::NotificationSeverity::Warning);
+    else if (was_watching)
+        notify("You can type in this session again", w::NotificationSeverity::Info);
+}
+
 bool ClientApp::session_shows_attached(std::uint64_t id) const {
     for (const SessionRow& row : last_sessions_)
-        if (row.id == id) return row.attached;
+        if (row.id == id) return row.readers > 0;
     return false;
 }
 
@@ -1274,6 +1361,33 @@ void ClientApp::show_kill_session_dialog() {
     });
 }
 
+std::string session_row_label(const SessionRow& row, std::uint64_t watched) {
+    std::string line = row.name.empty() ? "session " + std::to_string(row.id) : row.name;
+    line += row.terminals == 1 ? " — 1 terminal"
+                               : " — " + std::to_string(row.terminals) + " terminals";
+    // Three states, and a reader picking a row needs to tell them apart: the
+    // one they are already watching, one somebody else is watching — where
+    // attaching takes it from them — and one nobody holds.
+    //
+    // The NUMBER, not "in use" (WP-48). The wire has carried a count since
+    // WP-44 and this line could only say that a session was busy, which is the
+    // one thing a reader already assumes; what they cannot guess is whether
+    // joining puts them in a room with one person or three.
+    if (watched != 0 && row.id == watched) {
+        // This client is one of the readers the server counted, so the row it
+        // holds subtracts itself rather than reporting itself as company.
+        const int others = row.readers > 1 ? row.readers - 1 : 0;
+        if (others == 0) line += "  (this client)";
+        else if (others == 1) line += "  (this client, and 1 other reader)";
+        else line += "  (this client, and " + std::to_string(others) + " other readers)";
+    } else if (row.readers == 1) {
+        line += "  (1 reader — attaching takes it over)";
+    } else if (row.readers > 1) {
+        line += "  (" + std::to_string(row.readers) + " readers — attaching takes it over)";
+    }
+    return line;
+}
+
 void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
     last_sessions_ = rows;
     // The name of the session being watched can have changed under this client
@@ -1292,19 +1406,8 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
     // No mnemonic: a group label is not a control, and ckVision renders a '&'
     // in one literally — its mnemonics live on the options themselves.
     choice.label = rows.empty() ? "" : "Session";
-    for (const SessionRow& row : rows) {
-        std::string line = row.name.empty() ? "session " + std::to_string(row.id) : row.name;
-        line += row.terminals == 1 ? " — 1 terminal"
-                                   : " — " + std::to_string(row.terminals) + " terminals";
-        // Three states, and a reader picking a row needs to tell them apart:
-        // the one they are already watching, one somebody else is watching —
-        // where attaching takes it from them — and one nobody holds.
-        if (row.id == attached_session_ && attached_session_ != 0)
-            line += "  (this client)";
-        else if (row.attached)
-            line += "  (in use — attaching takes it over)";
-        choice.options.push_back(std::move(line));
-    }
+    for (const SessionRow& row : rows)
+        choice.options.push_back(session_row_label(row, attached_session_));
     if (!rows.empty()) {
         // The one this client is already watching, if any; otherwise the first.
         choice.initial_selection = 0;
@@ -1318,6 +1421,42 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         empty.label = "No sessions are running yet. ckmux keeps programs running after you "
                       "leave — Session \u25b8 New Session\u2026 starts one.";
         descriptor.fields.push_back(std::move(empty));
+    }
+
+    // And, when there is somebody to arrive AMONG, what arriving should do to
+    // them (WP-50). Three answers rather than two, because the third — join and
+    // only watch — is what makes sharing comfortable and is not a modifier of
+    // either other one.
+    //
+    // A radio group rather than a Join button beside a Take Over button, and
+    // the reason is the widget contract rather than taste: a dialog has at most
+    // one Accept, and a second acting button is a `Dismiss` whose handler runs
+    // with no access to the fields — so it could not know which session row was
+    // selected. The property that mattered survives the change intact, and
+    // arguably reads better: the destructive answer must be deliberately
+    // chosen, it is never the default, and all three say what they do.
+    //
+    // Offered only when somebody other than this client is actually watching
+    // something. On the ordinary machine — one reader, several sessions —
+    // there is nobody to displace and no question to ask.
+    bool anybody_else_is_watching = false;
+    for (const SessionRow& row : rows) {
+        const int others = row.id == attached_session_ ? row.readers - 1 : row.readers;
+        if (others > 0) anybody_else_is_watching = true;
+    }
+    mode_choice_offered_ = anybody_else_is_watching;
+    if (anybody_else_is_watching) {
+        w::FieldDescriptor mode;
+        mode.kind = w::FieldKind::Radio;
+        mode.label = "If somebody is already watching it";
+        mode.options.push_back("&Join them — you both see one session");
+        mode.options.push_back("Take it &over — the others are dropped to their pickers");
+        mode.options.push_back("Join and only &watch — nothing you type reaches it");
+        // Joining is the default because it is the answer that costs a
+        // colleague nothing. Taking over stays one keystroke away, which is
+        // D-07: no reader can be locked out of their own session.
+        mode.initial_selection = 0;
+        descriptor.fields.push_back(std::move(mode));
     }
 
     // Attaching to a different session is a detach and an attach, which is what
@@ -1343,7 +1482,28 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         if (!result.accepted || result.selected.empty()) return;
         const int index = result.selected.front();
         if (index < 0 || static_cast<std::size_t>(index) >= attach_choice_.size()) return;
-        if (options_.attach_to_session) options_.attach_to_session(attach_choice_[static_cast<std::size_t>(index)]);
+        // `selected` is parallel to the FIELDS, so the mode is at index 1 — and
+        // only when it was offered. Read by position rather than searched for,
+        // which is safe here for the reason the session row is: this dialog
+        // builds its own fields a dozen lines above, in this function.
+        //
+        // With no group offered there is nobody to displace, so take-over and
+        // join differ in nothing — but WATCHING is a real difference, and a
+        // reader who is watching and switches sessions was never asked whether
+        // they wanted to stop. Preserved rather than reset, so the picker
+        // cannot quietly promote a watcher into somebody who can type.
+        proto::AttachMode mode =
+            watching() ? proto::AttachMode::Watch : proto::AttachMode::TakeOver;
+        if (mode_choice_offered_ && result.selected.size() > 1) {
+            switch (result.selected[1]) {
+                case 0: mode = proto::AttachMode::Join; break;
+                case 1: mode = proto::AttachMode::TakeOver; break;
+                case 2: mode = proto::AttachMode::Watch; break;
+                default: break;
+            }
+        }
+        if (options_.attach_to_session)
+            options_.attach_to_session(attach_choice_[static_cast<std::size_t>(index)], mode);
     });
 }
 
@@ -1426,8 +1586,38 @@ void ClientApp::close_window_for_terminal(const ckv::term::TerminalSubsession& t
 }
 
 void ClientApp::remember_sessions(std::vector<SessionRow> rows) {
+    const int before = readers_here();
     last_sessions_ = std::move(rows);
     if (attached_session_ != 0) attached_session_name_ = session_name(attached_session_);
+    const int now = readers_here();
+    if (now == before) return;
+
+    // Somebody arrived or left, and the reader needs telling: nothing in the
+    // grid says so, and what they may do — and who else may type into what they
+    // are looking at — has just changed. WP-48 is what makes this reachable at
+    // all; before it, an attach and a detach were the two events that did NOT
+    // refresh this count.
+    //
+    // Only for the session this client is in. A reader joining some other
+    // session on this machine is news about a row in a picker, not about the
+    // terminal in front of them.
+    if (attached_session_ != 0 && before > 0) {
+        if (now > before)
+            notify(now == 2 ? "Another reader joined this session"
+                            : "Another reader joined — " + std::to_string(now) + " are watching");
+        else if (now == 1)
+            notify("You have this session to yourself again");
+    }
+    // A box describing company that has gone is a box describing nothing, and a
+    // reader would have to reason about it to discover that. Cleared rather
+    // than left ticked — and the server has already forgotten it too, since the
+    // readers it applied to are the ones that left.
+    if (now <= 1 && others_read_only_) {
+        others_read_only_ = false;
+        refresh_menu_marks();
+    }
+    // The footer carries the count while there is one to carry.
+    refresh_footer();
 }
 
 std::string ClientApp::session_name(std::uint64_t id) const {
@@ -3042,6 +3232,16 @@ void ClientApp::refresh_footer() {
         if (busy > 0)
             items.emplace_back("! " + std::to_string(busy), ckv::ui::kInvalidCommand, 99);
     }
+    // Who else is in here, and whether this reader may type (WP-50). High in
+    // the order for the reason the marks above are: a toast expires and these
+    // facts do not, and a reader who cannot see that somebody else is typing
+    // into the terminal in front of them will blame the program.
+    //
+    // "read-only" outranks the count, because it is the one that changes what
+    // the next keystroke does.
+    if (watching()) items.emplace_back("read-only", ckv::ui::kInvalidCommand, 98);
+    if (const int readers = readers_here(); readers > 1)
+        items.emplace_back(std::to_string(readers) + " readers", ckv::ui::kInvalidCommand, 97);
     for (const KeyBinding* binding : keymap_.footer(current)) {
         // In the prefix context the reader has already pressed the prefix, so
         // the bare key is what they need to see next; otherwise the full
@@ -3509,6 +3709,13 @@ void ClientApp::toggle_stats_readout(bool Settings::* field, std::string_view ke
                            ckm::bool_setting(options_.settings.*field)))
         report_settings_not_saved();
     apply_stats_toggles();
+}
+
+void ClientApp::refresh_menu_marks() {
+    // A checkmark is a value in the bar's items rather than a predicate the bar
+    // asks about, so a toggle that changed one has to hand the bar fresh items
+    // — the same call `apply_stats_toggles` makes for the View menu.
+    if (w::MenuBar* const bar = menu_bar()) bar->set_menus(build_menus());
 }
 
 void ClientApp::apply_stats_toggles() {

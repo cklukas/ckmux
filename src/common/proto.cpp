@@ -439,7 +439,7 @@ void write(Writer& w, const Attach& m) {
     w.u16(m.pixel_width);
     w.u16(m.pixel_height);
     w.u8(m.host_sixel);
-    w.u8(m.share);
+    w.u8(m.mode);
 }
 void read(Reader& r, Attach& m) {
     m.session = r.u64();
@@ -448,8 +448,20 @@ void read(Reader& r, Attach& m) {
     m.pixel_width = r.u16();
     m.pixel_height = r.u16();
     m.host_sixel = r.u8();
-    m.share = r.u8();
+    m.mode = r.u8();
 }
+
+void write(Writer& w, const SetReaderMode& m) {
+    w.u8(m.scope);
+    w.u8(m.mode);
+}
+void read(Reader& r, SetReaderMode& m) {
+    m.scope = r.u8();
+    m.mode = r.u8();
+}
+
+void write(Writer& w, const ReaderMode& m) { w.u8(m.mode); }
+void read(Reader& r, ReaderMode& m) { m.mode = r.u8(); }
 
 void write(Writer& w, const ClientResize& m) {
     w.u16(m.columns);

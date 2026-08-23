@@ -68,11 +68,14 @@ void print_cli_help() {
         "                     A session, made without attaching to it. Prints its\n"
         "                     name; the server names it when you do not. A command\n"
         "                     runs in its first terminal, through your shell.\n"
-        "  ckmux attach [--share] [--adopt-size] <name|id>\n"
+        "  ckmux attach [--share] [--watch] [--adopt-size] <name|id>\n"
         "                     Straight to one session, past the picker. Takes the\n"
         "                     name `ckmux ls` prints, or an id.\n"
         "                     --share       Join a session someone may already be\n"
         "                                   watching, rather than taking it over.\n"
+        "                     --watch       Join it and only look: nothing you type\n"
+        "                                   reaches it, and nothing you do changes\n"
+        "                                   it. Implies --share.\n"
         "                     --adopt-size  Make the session's desktop this screen,\n"
         "                                   once, on arrival. Reflows every window\n"
         "                                   and resizes every child, for everyone.\n"
@@ -187,7 +190,7 @@ int main(int argc, char** argv) {
     std::uint64_t attach_to = 0;
     // `attach`'s flags, kept out here for the same reason as the id: the block
     // that parses them ends before the client is built.
-    bool attach_shared = false;
+    ckm::proto::AttachMode attach_mode = ckm::proto::AttachMode::TakeOver;
     bool attach_adopts_size = false;
     // The WP-11 subcommands. Parsed before anything connects, so a mistyped
     // flag is answered at the shell rather than after a socket round trip.
@@ -217,7 +220,9 @@ int main(int argc, char** argv) {
         if (request.subcommand == "attach") {
             attach_to = ckm::client::resolve_attach_target(socket, request);
             if (attach_to == 0) return 1;
-            attach_shared = request.share;
+            attach_mode = request.watch    ? ckm::proto::AttachMode::Watch
+                          : request.share ? ckm::proto::AttachMode::Join
+                                          : ckm::proto::AttachMode::TakeOver;
             attach_adopts_size = request.adopt_size;
         }
     }
@@ -297,7 +302,7 @@ int main(int argc, char** argv) {
     run.executable = ckm::platform::executable_path(argv[0]);
     run.client = std::move(options);
     run.preselected_session = attach_to;
-    run.share_session = attach_shared;
+    run.attach_mode = attach_mode;
     run.adopt_session_size = attach_adopts_size;
     return ckm::client::run_attached_client(terminal, clock, std::move(run));
 }

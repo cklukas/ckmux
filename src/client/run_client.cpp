@@ -95,7 +95,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // reconnection all re-attach, and one that dropped the flag would take over
     // the session this reader chose to share — at the moment they are least
     // able to tell why it happened.
-    session.set_share(options.share_session);
+    session.set_attach_mode(options.attach_mode);
     ckv::ui::Application app(host, clock);
     // Pace against the reader's own terminal (ckVision's architecture §4,
     // docs/graphics.md "Knowing the terminal took it"). Writing a frame proves
@@ -278,8 +278,18 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // server needs no `Detach`: an `Attach` to another session IS the switch,
     // and it leaves the one being left with its programs running and nobody
     // watching — which is exactly the state ckmux exists to keep (the session model).
-    const auto switch_to = [&session, &client, &host, &ensure_connected](std::uint64_t id) {
-        if (session.attached() && session.session() == id) return;
+    const auto switch_to = [&session, &client, &host, &ensure_connected](
+                               std::uint64_t id,
+                               proto::AttachMode mode = proto::AttachMode::TakeOver) {
+        // The mode travels with the attach and outlives it: a heal, a switch
+        // and a reconnection all re-`Attach`, and one that dropped it would
+        // hand a reader who asked only to look a session they can type into.
+        // Set BEFORE the early-out, so that choosing the row you already hold
+        // with a different mode is a mode change rather than nothing at all.
+        const bool mode_changed = session.attach_mode() != mode;
+        session.set_attach_mode(mode);
+        if (client != nullptr) client->set_reader_mode(mode, /*told=*/false);
+        if (session.attached() && session.session() == id && !mode_changed) return;
         if (!ensure_connected()) return;
         if (client != nullptr) {
             client->forget_terminals();
@@ -293,6 +303,22 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
         session.attach(id, host.size(), host.capabilities().cell_pixels);
     };
     options.client.attach_to_session = switch_to;
+    // What this reader may do here, and what the company may (WP-49/50). The
+    // server sends nothing back for a mode aimed at `Me`, so `ClientApp`
+    // believes its own act at once; a mode aimed at `Others` reaches them as a
+    // `ReaderMode` push and reaches this client not at all.
+    options.client.set_reader_mode = [&session](proto::ReaderScope scope,
+                                                proto::AttachMode mode) {
+        if (!session.attached()) return;
+        // The self-restriction has to stick to the SESSION as well, or the next
+        // heal re-attaches with the mode this reader has just left behind and
+        // silently undoes it.
+        if (scope == proto::ReaderScope::Me) session.set_attach_mode(mode);
+        proto::SetReaderMode wish;
+        wish.scope = static_cast<std::uint8_t>(scope);
+        wish.mode = static_cast<std::uint8_t>(mode);
+        session.request(wish);
+    };
     // Creating a session means going to it: a reader who typed a name and
     // pressed Create was not asking for a row in a list.
     bool waiting_for_a_new_session = false;
@@ -643,7 +669,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
         std::vector<SessionRow> rows;
         rows.reserve(sessions.size());
         for (const proto::SessionInfo& info : sessions)
-            rows.push_back(SessionRow{info.id, info.name, info.terminals, info.attached != 0});
+            rows.push_back(SessionRow{info.id, info.name, info.terminals, info.attached});
 
         // A session this client asked for, now that it exists. The newest is
         // the one it asked for: ids only ever go up.
@@ -682,7 +708,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
                 session.request(ask);
                 return;
             }
-            if (rows.size() == 1 && !rows.front().attached) {
+            if (rows.size() == 1 && rows.front().readers == 0) {
                 client->remember_sessions(rows);
                 switch_to(rows.front().id);
                 return;
@@ -846,6 +872,10 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // on what is already running, and only the server knows that.
     session.request(proto::ListSessions{});
 
+    session.on_reader_mode = [&client](proto::AttachMode mode) {
+        // Somebody else changed it, which is the only case the server pushes.
+        if (client != nullptr) client->set_reader_mode(mode, /*told=*/true);
+    };
     session.on_attached = [&client, &session, &asked_for_the_first_terminal](std::uint64_t id) {
         if (client == nullptr) return;
         // Asked BEFORE the state moves and before the fresh list arrives:

@@ -193,12 +193,22 @@ private:
         // dropped exactly as an ordinary mismatch would be.
         bool awaiting_kill_from_mismatched_cli = false;
         std::int64_t mismatch_kill_deadline_nanos = 0;
-        // Attached to the session, and therefore the one client being sent
-        // deltas. At most one at a time (the session model: takeover — the latest client
-        // always wins), which is also why one belief per terminal is the whole
-        // truth in the diff engine.
+        // Attached to the session, and therefore among the clients being sent
+        // deltas. Several at a time since WP-44, when a reader may ask to join
+        // rather than take over (the session model).
         bool attached = false;
         SessionId session = 0;
+        // And what this reader may DO while attached (WP-49). `Watch` refuses,
+        // at the server, every message that would change the session — the
+        // client greys its own views too, and that is courtesy rather than the
+        // mechanism, because a mode a stale or modified client can ignore is
+        // not a mode.
+        //
+        // `TakeOver` and `Join` are indistinguishable once the attach is over:
+        // the difference between them was what happened to the readers already
+        // there, which is settled by then. Only `Watch` outlives its attach.
+        proto::AttachMode mode = proto::AttachMode::TakeOver;
+        bool watching() const noexcept { return mode == proto::AttachMode::Watch; }
         // The desktop this client declared, on attach and on every host resize,
         // and what one cell of it measures. The metric is what turns a
         // terminal's grid into the pixel fields its child asks about
@@ -325,6 +335,24 @@ private:
     // folding is a locale question this has no business answering.
     const Session* session_named(std::string_view name, SessionId except_id = 0) const;
     void send_session_list(Client& client);
+    // The same list to every client that has greeted, which is what a picker
+    // anywhere on this machine is showing. One name for the loop that six
+    // sites were spelling out, and — since WP-48 — for two more that were
+    // missing: an attach and a detach change `SessionInfo::attached` without
+    // changing the set of sessions, so the count that reports simultaneity was
+    // refreshed by everything except the events that move it.
+    void broadcast_session_list();
+    // The unsolicited half of the same fact (WP-48): pushed to UI clients that
+    // are keeping up, and deferred for any that are not. See the definition —
+    // the two narrowings are wrong for `broadcast_session_list`, which answers
+    // requests and must reach whoever asked.
+    void flush_reader_counts();
+    // Set when an attach or a detach changed a session's reader count, flushed
+    // once by `flush_tick` (WP-48). A flag rather than a send, because both of
+    // those happen in the middle of larger operations — `forget_session`
+    // detaches every reader and only then erases the session — and a list sent
+    // from inside one describes a world halfway through a change.
+    bool session_list_dirty_ = false;
     // Whoever is attached to this session, or nullptr. At most one (the session model:
     // the latest client wins), which is why this can answer with one pointer.
     // The first client attached to a session, or nullptr. Kept for the one
@@ -333,6 +361,17 @@ private:
     // several readers, and a broadcast that reached the first of them would
     // leave the others looking at a screen that stopped changing.
     Client* client_attached_to(SessionId id);
+    // `Attach.mode`, read defensively: a value this build does not know reads
+    // as `TakeOver`, which is the specified default and the only safe reading
+    // of a mode it cannot honour — granting a share that was not understood
+    // would leave a reader believing they were watching while they typed.
+    static proto::AttachMode attach_mode_of(const proto::Attach& request) noexcept;
+    // Refuses one request from a watching reader, and says which (WP-49).
+    // Answers true when the message was refused, so a handler reads as
+    // `if (refuse_if_watching(client, "Input")) return;`.
+    bool refuse_if_watching(Client& client, std::string_view context);
+    // `SetReaderMode` (WP-49): what this reader may do, or what the others may.
+    void handle_set_reader_mode(Client& client, const proto::SetReaderMode& wish);
     // Every client attached to a session, in connection order. The shape every
     // broadcast site uses, so that "one reader" is nowhere assumed by
     // construction.

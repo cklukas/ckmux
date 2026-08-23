@@ -204,6 +204,7 @@ enum class MessageType : std::uint16_t {
     SetLayout = 0x020E,
     WatchStats = 0x020F,
     SetDesktopSize = 0x0210,
+    SetReaderMode = 0x0211,
 
     // --- 0x03xx state sync ---
     LayoutDelta = 0x0301,
@@ -219,6 +220,7 @@ enum class MessageType : std::uint16_t {
     ClipboardSet = 0x030B,
     TermDiagnostic = 0x030C,
     TermStats = 0x030D,
+    ReaderMode = 0x030E,
 
     // --- 0x04xx events, errors, printer ---
     Error = 0x0401,
@@ -229,6 +231,36 @@ enum class MessageType : std::uint16_t {
     PrintJobData = 0x0406,
     PrintJobDiscard = 0x0407,
 };
+
+// What a client asks of the readers already in a session, and what it may do
+// once it is there (WP-49, the session model "Reader modes").
+//
+// The values are `Attach.mode`'s, and 0 and 1 are exactly what WP-44 shipped as
+// `Attach.share` — the field is widened rather than replaced, so nothing that
+// already speaks this protocol is misread. Zero stays the default with no flag,
+// which is D-07 and is not softened here.
+enum class AttachMode : std::uint8_t {
+    // Take the session from whoever holds it, immediately and without asking.
+    TakeOver = 0,
+    // Join them. They stay, and this reader may do everything they may do.
+    Join = 1,
+    // Join them and only look. Every message that would change the session is
+    // refused at the server — a mode the client can decline to enforce is not
+    // a mode. What is refused and what is not is the session model's two tables.
+    Watch = 2,
+};
+
+// Whether a `SetReaderMode` is aimed at the reader who sent it or at the others.
+enum class ReaderScope : std::uint8_t {
+    // This client. `{Me, TakeOver}` is refused: attaching is how a session is
+    // taken, and a scope of *me* cannot evict me.
+    Me = 0,
+    // Every OTHER reader of this client's session. `{Others, TakeOver}` is how
+    // a reader asks to have the session to themselves, which is why there is no
+    // `DetachOthers` verb.
+    Others = 1,
+};
+
 
 // Which end a connection is: the server sends no state-sync messages to a
 // `cli` client beyond direct replies (the protocol spec, CLI mapping).
@@ -738,17 +770,20 @@ struct Attach {
     // XTWINOPS 14/16 replies. Zero is honest ignorance, not a size.
     std::uint16_t pixel_width = 0;
     std::uint16_t pixel_height = 0;
-    // Whether this client is willing to SHARE the session rather than take it
-    // (WP-44). Zero — the default, and what every build before this sends —
-    // is the specified contract: attaching takes the session from whoever
-    // holds it, immediately and without asking (the session model). One asks to join
-    // the readers already there instead.
+    // What this client asks of the readers already there — `AttachMode`.
     //
-    // An opt-in rather than a policy, because the two answers are wanted by
-    // the same reader at different moments: taking a session back from a
-    // laptop that slept is the ordinary case, and pairing with a colleague on
-    // one is not something a server should have to guess.
-    std::uint8_t share = 0;
+    // Zero, the default and what every build before WP-44 sends, is the
+    // specified contract: attaching takes the session from whoever holds it,
+    // immediately and without asking (the session model). One asks to join them (WP-44,
+    // `--share`). Two joins them and only watches (WP-49, `--watch`).
+    //
+    // Shipped as `share` carrying 0/1 and widened rather than replaced, so both
+    // of those values still mean what they meant. An opt-in rather than a
+    // policy, because the answers are wanted by the same reader at different
+    // moments: taking a session back from a laptop that slept is the ordinary
+    // case, and pairing with a colleague on one is not something a server
+    // should have to guess.
+    std::uint8_t mode = static_cast<std::uint8_t>(AttachMode::TakeOver);
     // Whether the client's OUTER terminal reported Sixel graphics. The
     // server folds it into the advertisement a child of this client's
     // terminals is given (the terminal-emulation spec: "ckmux decides sixel per host
@@ -943,6 +978,36 @@ struct SetDesktopSize {
     std::uint16_t columns = 0;
     std::uint16_t rows = 0;
     friend bool operator==(const SetDesktopSize&, const SetDesktopSize&) = default;
+};
+
+// Change what a reader may do, without the full snapshot a re-attach would
+// cost to state a fact that alters nothing on screen (WP-49).
+//
+// The scope is what makes one message enough for two directions: aimed at
+// yourself it is a self-restriction, and aimed at the others it is "look, but
+// don't touch" — or, with `TakeOver`, "I want this session to myself".
+struct SetReaderMode {
+    static constexpr MessageType kType = MessageType::SetReaderMode;
+    // `ReaderScope`.
+    std::uint8_t scope = static_cast<std::uint8_t>(ReaderScope::Me);
+    // `AttachMode`.
+    std::uint8_t mode = static_cast<std::uint8_t>(AttachMode::Join);
+    friend bool operator==(const SetReaderMode&, const SetReaderMode&) = default;
+};
+
+// "Somebody changed what you may do here." Pushed only to a reader whose mode
+// was changed by ANOTHER reader — a reader who changed their own just did it,
+// and a server telling them so is a round trip that teaches nothing.
+//
+// No actor name, deliberately: the session model records why readers are anonymous, and
+// the short version is that a tty identifies nobody when both clients are one
+// person's two windows.
+struct ReaderMode {
+    static constexpr MessageType kType = MessageType::ReaderMode;
+    // `AttachMode`, and never `TakeOver` — a reader who was taken over is told
+    // by `Detached`, which is a different sentence about a different event.
+    std::uint8_t mode = static_cast<std::uint8_t>(AttachMode::Join);
+    friend bool operator==(const ReaderMode&, const ReaderMode&) = default;
 };
 
 struct SessionList {
@@ -1158,6 +1223,16 @@ enum class ErrorCode : std::uint16_t {
     // this says they named something real and the answer is still no, which is
     // a different sentence and a different remedy.
     LimitReached = 5,
+    // The request was understood and refused because this reader is watching
+    // (WP-49). Its own code rather than `NotImplemented` or a bare `Unknown`,
+    // because the remedy is a specific one a reader can act on — stop watching
+    // — and a client that shows "not implemented" for it teaches the wrong
+    // thing about a build that implements it perfectly well.
+    ReadOnly = 6,
+    // Understood, and impossible as stated — `SetReaderMode{Me, TakeOver}` is
+    // the only one today. Distinct from `ReadOnly` because no change of mode
+    // makes it work.
+    InvalidRequest = 7,
 };
 
 struct Error {
@@ -1240,7 +1315,7 @@ using Message =
     std::variant<Hello, HelloAck, Refuse, Ping, Pong, ListSessions, NewSession, Attach, Detach,
                  ClientResize, RenameSession, KillSession, KillServer, SessionList, SessionsChanged,
                  Attached, Detached, NewTerminal, CloseTerminal, KillTerminal, RespawnTerminal,
-                 SetDesktopSize,
+                 SetDesktopSize, SetReaderMode, ReaderMode,
                  MoveTerminal, MoveResize, Raise, FocusTerm, ZoomTerm, SetLayout, RenameTerminal,
                  Input, PasteChunk, PasteAck, LayoutDelta, TermOpened, TermClosed, TermMeta,
                  GridDelta, ImageAddBegin, ImageChunk, ImageEnd, ImagePlace,

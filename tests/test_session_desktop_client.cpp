@@ -211,3 +211,49 @@ CK_TEST(leaving_the_session_returns_a_desktop_that_is_its_own_viewport) {
     CK_CHECK(f.client.desktop().extent() == (ckv::Size{0, 0}));
     CK_CHECK(f.client.desktop().pan() == (ckv::Point{0, 0}));
 }
+
+// --- The picker's row line: how many readers, and which of them is you ----
+
+CK_TEST(a_picker_row_says_how_many_readers_a_session_has) {
+    // WP-48's third defect, at the edge where it lived: `SessionInfo::attached`
+    // has been a COUNT since WP-44 and the client narrowed it to a bool on
+    // arrival, so this line could say a session was busy and never say how
+    // busy. "In use" is the one thing a reader can already guess; whether
+    // joining puts them in a room with one person or three is what they cannot.
+    using ckm::client::session_row_label;
+    using ckm::client::SessionRow;
+
+    // Nobody watching: no parenthetical at all, because there is nothing to say.
+    CK_CHECK(session_row_label(SessionRow{7, "build", 2, 0}, 0) == "build — 2 terminals");
+
+    // One reader, and it is not this client — attaching is a takeover, and the
+    // line says so in the same breath as the count.
+    CK_CHECK(session_row_label(SessionRow{7, "build", 1, 1}, 0) ==
+             "build — 1 terminal  (1 reader — attaching takes it over)");
+    CK_CHECK(session_row_label(SessionRow{7, "build", 3, 4}, 0) ==
+             "build — 3 terminals  (4 readers — attaching takes it over)");
+
+    // The row this client holds. The server counts THIS reader among the
+    // session's own, so a row reporting its own reader as company would tell
+    // every single-client reader that somebody else was in the room with them.
+    CK_CHECK(session_row_label(SessionRow{7, "build", 2, 1}, 7) == "build — 2 terminals  (this client)");
+    CK_CHECK(session_row_label(SessionRow{7, "build", 2, 2}, 7) ==
+             "build — 2 terminals  (this client, and 1 other reader)");
+    CK_CHECK(session_row_label(SessionRow{7, "build", 2, 3}, 7) ==
+             "build — 2 terminals  (this client, and 2 other readers)");
+
+    // A session with no name is still pointed at by something.
+    CK_CHECK(session_row_label(SessionRow{9, "", 1, 0}, 0) == "session 9 — 1 terminal");
+}
+
+CK_TEST(the_watched_row_never_reports_a_reader_it_cannot_have) {
+    // A guard on the subtraction rather than on the sentence. `readers` is what
+    // the server said and `watched` is what this client believes, and the two
+    // are separately timed: a list in flight while this client attached, or a
+    // stale row for a session it has just left, can put a 0 next to the id it
+    // holds. Saturating rather than wrapping is the difference between "(this
+    // client)" and a row claiming 4294967295 other readers.
+    using ckm::client::session_row_label;
+    using ckm::client::SessionRow;
+    CK_CHECK(session_row_label(SessionRow{7, "build", 1, 0}, 7) == "build — 1 terminal  (this client)");
+}

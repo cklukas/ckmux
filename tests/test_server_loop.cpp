@@ -96,6 +96,24 @@ bool pump(Server& server, WireClient& client, ckm::proto::Message& message, int 
 
 // Steps the server a few times and reports whether anything arrived. For the
 // cases whose claim is that nothing should.
+// The next message of a given kind, skipping `SessionList`. An attach changes
+// a session's reader count and the tick states the new one (WP-48), so a case
+// about the DELTA path now has one unrelated frame to step over. Skipping it by
+// name rather than draining everything keeps the assertion sharp: anything else
+// unexpected still lands in `out` and fails the check that follows.
+template <class Wanted>
+bool take_past_session_lists(WireClient& client, Wanted& out) {
+    ckm::proto::Message message;
+    while (client.take(message)) {
+        if (std::holds_alternative<ckm::proto::SessionList>(message)) continue;
+        const Wanted* const wanted = std::get_if<Wanted>(&message);
+        if (wanted == nullptr) return false;
+        out = *wanted;
+        return true;
+    }
+    return false;
+}
+
 bool pump_expecting_silence(Server& server, WireClient& client, int passes = 6) {
     ckm::proto::Message unwanted;
     for (int pass = 0; pass < passes; ++pass) {
@@ -186,15 +204,11 @@ CK_TEST(a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before)
     // 33 ms later at 30 fps, it is.
     clock.advance(34'000'000);
     CK_CHECK(server.step());
-    ckm::proto::Message delta_message;
-    CK_CHECK(client.take(delta_message));
-    const auto* delta = std::get_if<ckm::proto::GridDelta>(&delta_message);
-    CK_CHECK(delta != nullptr);
-    if (delta != nullptr) {
-        CK_CHECK(delta->term == terminal.id());
-        CK_CHECK(delta->seq == 1U);
-        CK_CHECK(!delta->ops.empty());
-    }
+    ckm::proto::GridDelta delta;
+    CK_CHECK(take_past_session_lists(client, delta));
+    CK_CHECK(delta.term == terminal.id());
+    CK_CHECK(delta.seq == 1U);
+    CK_CHECK(!delta.ops.empty());
 
     // And nothing further while the child stays quiet, however many ticks pass:
     // a tick with no news is not a frame with no content, it is no frame.
@@ -202,7 +216,8 @@ CK_TEST(a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before)
         clock.advance(34'000'000);
         CK_CHECK(server.step());
         ckm::proto::Message nothing;
-        CK_CHECK(!client.take(nothing));
+        while (client.take(nothing))
+            CK_CHECK(std::holds_alternative<ckm::proto::SessionList>(nothing));
     }
 
     server.terminals().close_all();
@@ -658,6 +673,20 @@ CK_TEST(a_move_reparents_the_terminal_and_the_child_never_notices) {
     ckm::proto::Error refusal;
     CK_CHECK(await_message(server, clock, client, refusal));
     CK_CHECK(refusal.code == static_cast<std::uint16_t>(ckm::proto::ErrorCode::NoSuchSession));
+
+    // Quiesced first, so that the list read below is the one this `NewSession`
+    // produced. The attach at the top of this case left a reader count to state
+    // (WP-48) and the tick states it, so there can be a `SessionList` already
+    // in flight — naming one session, correctly, and a case that took "the next
+    // list" would read that one and conclude the second session had not been
+    // made. Draining is the precondition, not a workaround: "the list after the
+    // act" is only a well-formed question once nothing is pending from before.
+    for (int pass = 0; pass < 8; ++pass) {
+        clock.advance(34'000'000);
+        CK_CHECK(server.step());
+        ckm::proto::Message settled;
+        while (client.take(settled)) { /* drained */ }
+    }
 
     ckm::proto::NewSession second;
     second.name = "two";

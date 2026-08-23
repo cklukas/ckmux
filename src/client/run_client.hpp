@@ -43,12 +43,12 @@ struct RunOptions {
     // ordinary launch, where the picker or the sole session decides (WP-11,
     // The interface spec — the CLI bypasses the picker for scripting).
     std::uint64_t preselected_session = 0;
-    // `ckmux attach --share` (WP-44): every `Attach` this client sends carries
-    // the opt-in, not only the first. A heal, a session switch and a
-    // reconnection all re-`Attach`, and one that dropped the flag would take
-    // over the session it had been sharing — silently, and at the moment a
-    // reader is least able to tell why.
-    bool share_session = false;
+    // `ckmux attach --share` (WP-44) and `--watch` (WP-49): every `Attach` this
+    // client sends carries the mode, not only the first. A heal, a session
+    // switch and a reconnection all re-`Attach`, and one that dropped it would
+    // take over the session it had been sharing — silently, and at the moment
+    // a reader is least able to tell why.
+    proto::AttachMode attach_mode = proto::AttachMode::TakeOver;
     // `ckmux attach --adopt-size` (WP-40): once, on arrival, ask the session's
     // desktop to become this screen. Once and not continuously: a client that
     // re-asserted its size would fight the next reader who asked for theirs,

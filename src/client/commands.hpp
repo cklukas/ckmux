@@ -88,6 +88,15 @@ inline constexpr std::string_view kSessions = "ckmux.session.list";
 inline constexpr std::string_view kNewSession = "ckmux.session.new";
 inline constexpr std::string_view kRenameSession = "ckmux.session.rename";
 inline constexpr std::string_view kKillSession = "ckmux.session.kill";
+// The three reader-mode acts (WP-50), all on the session this client watches.
+//
+// Deliberately without keymap rows and therefore without chords: they are rare,
+// deliberate acts, and three more lines in the which-key popup buys a reader
+// nothing they will reach for. The same reasoning that keeps `kAllKeys` out of
+// the table — menu and which-key discoverability, no chord.
+inline constexpr std::string_view kTakeSessionOver = "ckmux.session.take-over";
+inline constexpr std::string_view kOthersReadOnly = "ckmux.session.others-read-only";
+inline constexpr std::string_view kWatchOnly = "ckmux.session.watch-only";
 inline constexpr std::string_view kKeyReference = "ckmux.help.keys";
 // The whole listing, as against `kKeyReference`'s page for whatever surface
 // has the reader's attention (WP-14). Deliberately without a row in the

@@ -365,7 +365,7 @@ CK_TEST(a_resize_leaves_the_desktop_alone_once_a_second_reader_is_watching) {
     join.rows = 24;
     join.pixel_width = 80 * 9;
     join.pixel_height = 24 * 18;
-    join.share = 1;
+    join.mode = static_cast<std::uint8_t>(ckm::proto::AttachMode::Join);
     narrow.say(join);
     ckv::Size joined{0, 0};
     CK_CHECK(attached_desktop(server, narrow, joined));
@@ -492,7 +492,7 @@ bool attach_sharing(ckm::server::Server& server, WireClient& client, std::uint16
     request.session = 0;
     request.columns = columns;
     request.rows = rows;
-    request.share = 1;
+    request.mode = static_cast<std::uint8_t>(ckm::proto::AttachMode::Join);
     client.say(request);
     ckv::Size ignored{0, 0};
     return attached_desktop(server, client, ignored);
@@ -661,6 +661,424 @@ CK_TEST(both_readers_hear_about_a_terminal_that_opens) {
     CK_CHECK(second_heard);
 
     server.terminals().close_all();
+    forget(socket);
+}
+
+namespace {
+
+// Two readers, sharing, with one terminal open — the fixture the layout cases
+// below need and the thing they must not each spell out.
+struct TwoReaders {
+    ckv::ManualClock clock;
+    ckm::server::Server server;
+    WireClient first;
+    WireClient second;
+    std::uint64_t term = 0;
+
+    explicit TwoReaders(const std::filesystem::path& socket)
+        : server(ckm::server::Server::Options{socket, test_settings()}, clock) {}
+
+    bool open(const std::filesystem::path& socket) {
+        if (server.start() != ckm::server::Server::StartStatus::Listening) return false;
+        if (!first.connect(socket)) return false;
+        first.greet();
+        if (!attach_sharing(server, first, 120, 40)) return false;
+        if (!second.connect(socket)) return false;
+        second.greet();
+        if (!attach_sharing(server, second, 120, 40)) return false;
+
+        ckm::proto::NewTerminal ask;
+        ask.command = "/bin/sh";
+        first.say(ask);
+        for (int pass = 0; pass < 20 && term == 0; ++pass) {
+            tick();
+            Message message;
+            while (first.take(message))
+                if (const auto* opened = std::get_if<ckm::proto::TermOpened>(&message))
+                    term = opened->term;
+            while (second.take(message)) { /* drained, not read */ }
+        }
+        // And the arrangement the open itself produced is flushed out of both
+        // readers before a case states one of its own, so that what it then
+        // observes is its own report coming back and never the opening.
+        settle();
+        return term != 0;
+    }
+
+    // One pass of the server, with the clock moved far enough that the flush
+    // tick actually fires. `SetLayout` deliberately does NOT announce on
+    // arrival — a drag reports many times between two ticks and answering each
+    // one would put a message on the wire per intermediate frame — so a case
+    // that only calls `step()` waits for a message the server has no reason to
+    // send yet. `max_fps` is 30 here, so a tick is due every ~33 ms.
+    void tick() {
+        clock.advance(40'000'000);
+        (void)server.step();
+    }
+
+    void settle(int passes = 8) {
+        for (int pass = 0; pass < passes; ++pass) {
+            tick();
+            Message message;
+            while (first.take(message)) { /* drained */ }
+            while (second.take(message)) { /* drained */ }
+        }
+    }
+
+    // One reader states where the window is now, exactly as `ClientApp` does at
+    // the end of a gesture.
+    void report(WireClient& who, ckm::proto::Rect rect) {
+        ckm::proto::LayoutEntry entry;
+        entry.term = term;
+        entry.rect = rect;
+        ckm::proto::SetLayout report;
+        report.entries.push_back(entry);
+        who.say(report);
+    }
+
+    // Whether this reader is told about a window at that rect, within a tick or
+    // two of it being reported.
+    bool told_about(WireClient& who, ckm::proto::Rect rect, int passes = 20) {
+        for (int pass = 0; pass < passes; ++pass) {
+            tick();
+            Message message;
+            while (who.take(message)) {
+                const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+                if (layout == nullptr) continue;
+                for (const ckm::proto::LayoutEntry& entry : layout->entries)
+                    if (entry.term == term && entry.rect.x == rect.x && entry.rect.y == rect.y &&
+                        entry.rect.width == rect.width && entry.rect.height == rect.height)
+                        return true;
+            }
+        }
+        return false;
+    }
+};
+
+}  // namespace
+
+CK_TEST(a_gesture_by_the_first_reader_reaches_the_second) {
+    // WP-48, and the direction WP-44's *Done when* claimed without a test.
+    //
+    // `announce_layout` resolved ONE recipient — `client_attached_to`, the
+    // first attached client — and then marked every terminal announced. So the
+    // edge was consumed by a message only one reader received: a window moved
+    // by the SECOND reader was announced to the first (the case below, which
+    // passed all along), and a window moved by the FIRST was echoed back to the
+    // first and the second never heard about it at all.
+    //
+    // Worse than a missed message, which is why the flag is the fix rather than
+    // a wider loop: once `note_layout_announced` has run there is no record
+    // that anything moved, so no later pass can repair it. The second reader
+    // does not catch up on the next tick or the next gesture — only on a
+    // reattach.
+    const std::filesystem::path socket = private_socket("gesture-a-to-b");
+    forget(socket);
+    TwoReaders readers(socket);
+    CK_CHECK(readers.open(socket));
+
+    const ckm::proto::Rect moved{7, 3, 40, 12};
+    readers.report(readers.first, moved);
+    CK_CHECK(readers.told_about(readers.second, moved));
+
+    readers.server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_gesture_by_the_second_reader_still_reaches_the_first) {
+    // The positive partner. This direction worked before WP-48 — the one
+    // recipient `client_attached_to` resolved was the first reader — and a fix
+    // that broadcasts to everyone could plausibly break it by consuming the
+    // edge on the reporter and stopping. Asserted so that the pair states the
+    // whole rule: a gesture by EITHER reader reaches the other.
+    const std::filesystem::path socket = private_socket("gesture-b-to-a");
+    forget(socket);
+    TwoReaders readers(socket);
+    CK_CHECK(readers.open(socket));
+
+    const ckm::proto::Rect moved{11, 5, 30, 9};
+    readers.report(readers.second, moved);
+    CK_CHECK(readers.told_about(readers.first, moved));
+
+    readers.server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(one_gesture_is_announced_to_both_readers_and_not_only_the_faster_one) {
+    // The two cases above each watch one reader, so both would pass against a
+    // server that alternated recipients — told A this time, B the next. This
+    // one reads BOTH mailboxes after a single report, which is the property the
+    // fix actually has: the arrangement goes to every watcher, and only then is
+    // the edge cleared.
+    const std::filesystem::path socket = private_socket("gesture-both");
+    forget(socket);
+    TwoReaders readers(socket);
+    CK_CHECK(readers.open(socket));
+
+    const ckm::proto::Rect moved{2, 2, 55, 20};
+    readers.report(readers.first, moved);
+
+    bool first_told = false;
+    bool second_told = false;
+    for (int pass = 0; pass < 20; ++pass) {
+        readers.tick();
+        Message message;
+        while (readers.first.take(message)) {
+            const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr) continue;
+            for (const ckm::proto::LayoutEntry& entry : layout->entries)
+                if (entry.term == readers.term && entry.rect.x == moved.x) first_told = true;
+        }
+        while (readers.second.take(message)) {
+            const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr) continue;
+            for (const ckm::proto::LayoutEntry& entry : layout->entries)
+                if (entry.term == readers.term && entry.rect.x == moved.x) second_told = true;
+        }
+    }
+    CK_CHECK(first_told);
+    CK_CHECK(second_told);
+
+    readers.server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(each_reader_is_told_their_own_focus_and_the_sessions_own_desktop) {
+    // The one field that must DIFFER per reader, and the one that must not.
+    // Building the arrangement once for the session and sending it to everybody
+    // is the fix; sending the same `focused_term` with it would be WP-41's
+    // defect reintroduced by the repair, moving one reader's cursor because the
+    // other clicked.
+    const std::filesystem::path socket = private_socket("gesture-focus");
+    forget(socket);
+    TwoReaders readers(socket);
+    CK_CHECK(readers.open(socket));
+
+    // The second reader states a focus by typing; the first has never typed, so
+    // the two hold different answers.
+    ckm::proto::Input keys;
+    keys.term = readers.term;
+    keys.bytes = "x";
+    readers.second.say(keys);
+    readers.settle();
+
+    const ckm::proto::Rect moved{4, 4, 33, 11};
+    readers.report(readers.first, moved);
+
+    bool first_focus_seen = false;
+    bool second_focus_seen = false;
+    std::uint16_t first_desktop = 0;
+    std::uint16_t second_desktop = 0;
+    for (int pass = 0; pass < 20; ++pass) {
+        readers.tick();
+        Message message;
+        while (readers.first.take(message)) {
+            const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr) continue;
+            // Never typed, so this reader is in no terminal.
+            if (layout->focused_term == 0) first_focus_seen = true;
+            first_desktop = layout->desktop_columns;
+        }
+        while (readers.second.take(message)) {
+            const auto* layout = std::get_if<ckm::proto::LayoutDelta>(&message);
+            if (layout == nullptr) continue;
+            if (layout->focused_term == readers.term) second_focus_seen = true;
+            second_desktop = layout->desktop_columns;
+        }
+    }
+    CK_CHECK(first_focus_seen);
+    CK_CHECK(second_focus_seen);
+    // And the coordinate space is identical, because a rect that means two
+    // things is an arrangement neither reader can trust.
+    CK_CHECK(first_desktop == 120);
+    CK_CHECK(second_desktop == 120);
+
+    readers.server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_reader_arriving_moves_the_count_without_being_asked) {
+    // WP-48's second defect. `SessionInfo::attached` is a COUNT, and
+    // `send_session_list` was broadcast on session create, rename and kill and
+    // on terminal close and move — on everything except the two events that
+    // change the count. So a picker said "1 reader" until something unrelated
+    // happened to the session.
+    //
+    // Asserted WITHOUT sending `ListSessions`: asking produces a fresh answer
+    // whether or not the server volunteers one, which is exactly why the defect
+    // survived a suite that had a reader count in it.
+    const std::filesystem::path socket = private_socket("count-arrives");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient first;
+    CK_CHECK(first.connect(socket));
+    first.greet();
+    CK_CHECK(attach_sharing(server, first, 120, 40));
+
+    // Everything the greeting and the attach produced is drained, so that what
+    // is read below can only have been sent because the second reader arrived.
+    // The clock moves because the broadcast is deferred to the flush tick — an
+    // attach happens in the middle of a larger operation and nothing is
+    // published from there (WP-48).
+    for (int pass = 0; pass < 8; ++pass) {
+        clock.advance(40'000'000);
+        (void)server.step();
+        Message drained;
+        while (first.take(drained)) { /* drained */ }
+    }
+
+    WireClient second;
+    CK_CHECK(second.connect(socket));
+    second.greet();
+    CK_CHECK(attach_sharing(server, second, 120, 40));
+
+    std::uint8_t volunteered = 0;
+    for (int pass = 0; pass < 12; ++pass) {
+        clock.advance(40'000'000);
+        (void)server.step();
+        Message message;
+        while (first.take(message)) {
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr || list->sessions.empty()) continue;
+            volunteered = list->sessions.front().attached;
+        }
+    }
+    CK_CHECK(volunteered == 2);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_reader_leaving_moves_the_count_without_being_asked) {
+    // The other half, and it takes the commonest detach there is: a socket that
+    // closed. That path does not go through `Server::detach` at all — `drop`
+    // clears `attached` itself, because a client whose socket has gone cannot
+    // be sent the `Detached` message `detach` exists to send — so a fix applied
+    // only to `detach` would leave the count stale for every reader who quit,
+    // closed their window, or lost an SSH connection.
+    const std::filesystem::path socket = private_socket("count-leaves");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient staying;
+    CK_CHECK(staying.connect(socket));
+    staying.greet();
+    CK_CHECK(attach_sharing(server, staying, 120, 40));
+    {
+        WireClient leaving;
+        CK_CHECK(leaving.connect(socket));
+        leaving.greet();
+        CK_CHECK(attach_sharing(server, leaving, 120, 40));
+
+        for (int pass = 0; pass < 8; ++pass) {
+            clock.advance(40'000'000);
+            (void)server.step();
+            Message drained;
+            while (staying.take(drained)) { /* drained */ }
+        }
+    }  // its socket closes
+
+    std::uint8_t volunteered = 255;
+    for (int pass = 0; pass < 12; ++pass) {
+        clock.advance(40'000'000);
+        (void)server.step();
+        Message message;
+        while (staying.take(message)) {
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr || list->sessions.empty()) continue;
+            volunteered = list->sessions.front().attached;
+        }
+    }
+    CK_CHECK(volunteered == 1);
+
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_session_list_is_never_published_from_the_middle_of_a_change) {
+    // The defect WP-48's first attempt introduced, kept out by name.
+    //
+    // Broadcasting the list from inside `detach` looked obviously right: a
+    // detach changes a reader count, so say so. But `forget_session` detaches
+    // every reader of a session and only THEN erases it, so that broadcast
+    // described a world halfway through the change — the session gone as far
+    // as its readers were concerned, and still in `sessions_`. The corrected
+    // list followed a moment later and nothing showed.
+    //
+    // Except on the one path where nothing follows: ending the LAST session
+    // stops the server, so the mid-mutation list was the final word, and every
+    // picker sat offering a session that no longer existed. A reader pressing
+    // Attach on it got an error about a session they had just watched end.
+    const std::filesystem::path socket = private_socket("mid-mutation");
+    forget(socket);
+    ckv::ManualClock clock;
+    ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+
+    WireClient reader;
+    CK_CHECK(reader.connect(socket));
+    reader.greet();
+    CK_CHECK(attach_sharing(server, reader, 120, 40));
+    std::uint64_t session_id = 0;
+    reader.say(ckm::proto::ListSessions{});
+    for (int pass = 0; pass < 8 && session_id == 0; ++pass) {
+        clock.advance(40'000'000);
+        (void)server.step();
+        Message message;
+        while (reader.take(message)) {
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr || list->sessions.empty()) continue;
+            session_id = list->sessions.front().id;
+        }
+    }
+    CK_CHECK(session_id != 0);
+
+    ckm::proto::KillSession end;
+    end.session = session_id;
+    reader.say(end);
+
+    // Everything from here on, in order, so the question can be asked as a
+    // reader would ask it: what was the LAST thing I was told about what is
+    // running?
+    bool detached = false;
+    bool told_after_the_detach = false;
+    bool still_listed = false;
+    for (int pass = 0; pass < 20; ++pass) {
+        clock.advance(40'000'000);
+        (void)server.step();
+        Message message;
+        while (reader.take(message)) {
+            if (std::holds_alternative<ckm::proto::Detached>(message)) detached = true;
+            const auto* list = std::get_if<ckm::proto::SessionList>(&message);
+            if (list == nullptr) continue;
+            if (!detached) continue;
+            told_after_the_detach = true;
+            // EVERY list after the detach, not merely the last one. Checking
+            // the last was the first version of this case and it passed
+            // against the defect: the mid-mutation list was followed by a
+            // correct one, so the final word was right and the wrong word in
+            // between went unread. It only became visible where nothing
+            // followed — the last session, where the server stops. The
+            // invariant that covers both is the one stated here: a session
+            // being ended is never named to a reader who has already been told
+            // it ended.
+            for (const ckm::proto::SessionInfo& info : list->sessions)
+                if (info.id == session_id) still_listed = true;
+        }
+    }
+    CK_CHECK(detached);
+    // The positive partner: a list DID arrive after the detach, so the negative
+    // below is about its contents rather than about there being nothing to read.
+    // Without this the case would pass just as happily against a server that
+    // stopped saying anything at all.
+    CK_CHECK(told_after_the_detach);
+    CK_CHECK(!still_listed);
+
     forget(socket);
 }
 

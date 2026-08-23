@@ -78,6 +78,54 @@ CK_TEST(attach_takes_its_flags_before_the_session_and_defaults_both_off) {
     }
 }
 
+CK_TEST(watch_is_a_flag_of_its_own_and_implies_share) {
+    // WP-49. Watching IS a way of joining, so `--watch` sets both rather than
+    // leaving every reader of `share` to remember the implication — the kind of
+    // rule that holds until the one call site that forgets it turns a watcher
+    // into a takeover.
+    const ckm::client::CliRequest watching = parse({"attach", "--watch", "work"});
+    CK_CHECK(watching.ok());
+    CK_CHECK(watching.name == "work");
+    CK_CHECK(watching.watch);
+    CK_CHECK(watching.share);
+
+    // Redundant rather than contradictory, and accepted as such.
+    const ckm::client::CliRequest both = parse({"attach", "--share", "--watch", "work"});
+    CK_CHECK(both.ok());
+    CK_CHECK(both.watch && both.share);
+
+    // And the other way round: sharing is not watching. The two ride one byte
+    // on the wire, and a build that conflated them would pass everything above.
+    const ckm::client::CliRequest sharing = parse({"attach", "--share", "work"});
+    CK_CHECK(sharing.ok());
+    CK_CHECK(sharing.share && !sharing.watch);
+
+    const ckm::client::CliRequest plain = parse({"attach", "work"});
+    CK_CHECK(plain.ok());
+    CK_CHECK(!plain.share && !plain.watch);
+
+    // It composes with the other flag and in either order, like `--share`.
+    for (const std::vector<std::string>& words :
+         {std::vector<std::string>{"attach", "--watch", "--adopt-size", "17"},
+          std::vector<std::string>{"attach", "--adopt-size", "--watch", "17"}}) {
+        const ckm::client::CliRequest parsed = parse(words);
+        CK_CHECK(parsed.ok());
+        CK_CHECK(parsed.name == "17" && parsed.watch && parsed.adopt_size);
+    }
+
+    // There is deliberately no `--take-over`: bare attach already does it, and
+    // with no stored policy setting there is nothing for it to disambiguate
+    // against. Asserted rather than merely written down, because a flag added
+    // "for symmetry" is exactly the kind of thing that arrives without anybody
+    // re-reading the reasoning.
+    const ckm::client::CliRequest invented = parse({"attach", "--take-over", "work"});
+    CK_CHECK(!invented.ok());
+
+    // And it did not leak onto the neighbour that shares this parsing branch.
+    const ckm::client::CliRequest neighbour = parse({"kill-session", "--watch", "work"});
+    CK_CHECK(!neighbour.ok());
+}
+
 CK_TEST(a_misspelled_flag_is_refused_rather_than_taken_for_a_session_name) {
     // The failure this prevents is not the refusal — it is the DIAGNOSIS. A
     // reader who types `--adopt-siz` means the flag; resolving it as a session
@@ -118,11 +166,11 @@ CK_TEST(kill_session_did_not_inherit_the_flags_when_attach_grew_them) {
 CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     // The case the catalogue guard cannot state: somebody SENDS it.
     AttachRecorder shared;
-    shared.session.set_share(true);
+    shared.session.set_attach_mode(ckm::proto::AttachMode::Join);
     CK_CHECK(shared.session.shares());
     shared.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
     CK_CHECK(shared.attaches.size() == 1);
-    CK_CHECK(shared.attaches[0].share == 1);
+    CK_CHECK(shared.attaches[0].mode == static_cast<std::uint8_t>(ckm::proto::AttachMode::Join));
 
     // A heal, a session switch and a reconnection all re-`Attach`. One that
     // dropped the flag would silently convert a reader who chose to share into
@@ -131,7 +179,8 @@ CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     shared.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
     shared.session.attach(9, ckv::Size{80, 24}, ckv::Size{9, 18});
     CK_CHECK(shared.attaches.size() == 3);
-    for (const ckm::proto::Attach& attach : shared.attaches) CK_CHECK(attach.share == 1);
+    for (const ckm::proto::Attach& attach : shared.attaches)
+        CK_CHECK(attach.mode == static_cast<std::uint8_t>(ckm::proto::AttachMode::Join));
 
     // The negative half, stated exactly rather than as "not set": a client
     // that did not ask must send a 0, because the server reads this byte to
@@ -140,7 +189,38 @@ CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     CK_CHECK(!alone.session.shares());
     alone.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
     CK_CHECK(alone.attaches.size() == 1);
-    CK_CHECK(alone.attaches[0].share == 0);
+    CK_CHECK(alone.attaches[0].mode ==
+             static_cast<std::uint8_t>(ckm::proto::AttachMode::TakeOver));
+}
+
+CK_TEST(the_watch_flag_reaches_the_wire_and_never_decays_into_a_takeover) {
+    // WP-49's half of the same defect class, and the reason this suite exists:
+    // `Attach.share` shipped declared, encoded, decoded, server-handled and
+    // round-tripped by the catalogue — and set by no line in the client, so the
+    // whole opt-in was unreachable from a shell. A catalogue proves the ENCODER.
+    // This proves a producer.
+    AttachRecorder watching;
+    watching.session.set_attach_mode(ckm::proto::AttachMode::Watch);
+    CK_CHECK(watching.session.watching());
+    // Watching IS joining, so a watcher must never read as a taker anywhere
+    // that asks the coarser question.
+    CK_CHECK(watching.session.shares());
+
+    watching.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
+    watching.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
+    watching.session.attach(9, ckv::Size{80, 24}, ckv::Size{9, 18});
+    CK_CHECK(watching.attaches.size() == 3);
+    // Every one of them, because a heal that dropped the mode would hand a
+    // reader who asked only to look a session they can type into — and the
+    // server would be right to let them, having been told so.
+    for (const ckm::proto::Attach& attach : watching.attaches)
+        CK_CHECK(attach.mode == static_cast<std::uint8_t>(ckm::proto::AttachMode::Watch));
+
+    // And a joiner is not a watcher: the two share a byte, and a build that
+    // conflated them would pass every assertion above.
+    AttachRecorder joining;
+    joining.session.set_attach_mode(ckm::proto::AttachMode::Join);
+    CK_CHECK(!joining.session.watching());
 }
 
 #endif  // !defined(_WIN32)

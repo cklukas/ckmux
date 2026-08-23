@@ -78,10 +78,20 @@ struct SessionRow {
     std::uint64_t id = 0;
     std::string name;
     int terminals = 0;
-    // Whether somebody is watching it — which for the reader looking at this
-    // list is themselves, and worth saying plainly.
-    bool attached = false;
+    // HOW MANY readers are watching it, not whether — `SessionInfo::attached`
+    // has been a count since WP-44, and narrowing it to a bool at this edge
+    // was the last of the three places the second reader went unmentioned
+    // (WP-48). One of them may be this client; the picker knows which.
+    int readers = 0;
 };
+
+// One picker row's line: what is running in that session, and who is in it.
+//
+// A free function rather than dialog-building code, because it is the whole of
+// what WP-48's reader count is FOR and the dialog is an awkward place to ask a
+// question of. `watched` is the session this client holds, or 0 — the row for
+// it counts this reader among its own and must not report itself as company.
+std::string session_row_label(const SessionRow& row, std::uint64_t watched);
 
 // One window's share of a FILLED TILING — ckVision's
 // `Desktop::filled_tile_fractions()` for a single window, carried in the same
@@ -250,7 +260,12 @@ struct ClientOptions {
     std::function<void()> list_sessions;
     // Attaches to one — taking it over if somebody else has it, which is
     // granted immediately and never negotiated (the session model).
-    std::function<void(std::uint64_t session)> attach_to_session;
+    std::function<void(std::uint64_t session, proto::AttachMode mode)> attach_to_session;
+    // Change what a reader may do in the session this client is attached to
+    // (WP-49/50): `Me` is a self-restriction, `Others` is what this reader
+    // imposes on the company. Unset for a client with no server, where there is
+    // no company and nothing to restrict.
+    std::function<void(proto::ReaderScope, proto::AttachMode)> set_reader_mode;
     // Creates one under a name the reader chose, and attaches to it.
     std::function<void(const std::string& name)> create_session;
     // Renames the session this client is attached to.
@@ -677,6 +692,18 @@ public:
     // one, requested straight afterwards, will say this client is watching it
     // and answer a different question.
     bool session_shows_attached(std::uint64_t id) const;
+    // How many readers the server last said this client's session has, this
+    // client included. One is the ordinary case and the reason the reader-mode
+    // items and the footer count are hidden rather than greyed most of the time.
+    int readers_here() const;
+    // What this reader may do, and the notice when somebody else changed it
+    // (WP-49). `told` distinguishes a mode this reader asked for — which needs
+    // no announcement, they just did it — from one done TO them.
+    void set_reader_mode(proto::AttachMode mode, bool told);
+    // Hands the menu bar fresh items, for a checkmark that changed (WP-50).
+    void refresh_menu_marks();
+    proto::AttachMode reader_mode() const noexcept { return reader_mode_; }
+    bool watching() const noexcept { return reader_mode_ == proto::AttachMode::Watch; }
 
     // A request the server refused, in front of the reader who made it. Every
     // request is answered (the protocol spec's `Error`), and an answer that reaches only
@@ -901,6 +928,25 @@ private:
     bool forgetting_terminals_ = false;
     std::uint64_t attached_session_ = 0;
     std::string attached_session_name_;
+    // What this reader may do in the session they are watching (WP-49/50), kept
+    // in step with `ServerSession`'s copy by `run_client`. Held here because
+    // three surfaces need it and none of them can see the session layer: the
+    // footer says so persistently, the Session menu's items are gated on it,
+    // and the picker preserves it across a switch the reader was never asked
+    // about.
+    proto::AttachMode reader_mode_ = proto::AttachMode::TakeOver;
+    // Whether this reader has put the OTHERS on watch (WP-50). This client's
+    // own belief about a state it imposed, not a fact the server states back —
+    // there is no owner, so another reader may hand typing back at any moment
+    // and this box would then be describing something that is no longer true.
+    // Cleared whenever the company it describes goes away, which is the only
+    // moment it is certainly wrong.
+    bool others_read_only_ = false;
+    // Whether the picker's last build offered the reader-mode group (WP-50).
+    // It is offered only when somebody other than this client is watching
+    // something, so the completion handler cannot assume a second radio is
+    // there to read.
+    bool mode_choice_offered_ = false;
     // The ids behind the picker's rows, in the order it lists them, so a
     // selection index means a session.
     std::vector<std::uint64_t> attach_choice_;

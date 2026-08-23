@@ -149,6 +149,115 @@ PrinterMode wire_printer_mode_in(proto::PrinterMode mode) {
 // With every enumerator listed and no catch-all, `-Wswitch` under `-Werror`
 // breaks the build the day somebody adds a message and forgets this table. A
 // guard that cannot go stale beats a guard that was correct once.
+// Whether a message from a client would CHANGE the session it is attached to,
+// as against asking it something or telling the server about this reader alone
+// (WP-49, the session model's two tables).
+//
+// Exhaustive on purpose, with no `default:` — the same discipline `name_of`
+// below uses and for a stronger reason. A missing name is a log line that says
+// "0x0211"; a message that silently defaults to "harmless" is a watcher who can
+// do the one thing the mode exists to stop. `-Wswitch` is the guard, and it
+// cannot go stale.
+//
+// Server→client messages appear here too, because the type is one enum. They
+// answer false: a client that sends one is talking nonsense, and the ordinary
+// not-implemented refusal at the bottom of `handle` is a better answer than a
+// read-only one, which would tell a reader to stop watching in order to send a
+// message no client may send in any mode.
+bool changes_the_session(proto::MessageType type) {
+    switch (type) {
+        // Typing, pasting, and everything that ends, makes, moves or renames
+        // what the other readers are looking at.
+        case proto::MessageType::Input:
+        case proto::MessageType::PasteChunk:
+        case proto::MessageType::NewTerminal:
+        case proto::MessageType::CloseTerminal:
+        case proto::MessageType::KillTerminal:
+        case proto::MessageType::RespawnTerminal:
+        case proto::MessageType::MoveTerminal:
+        case proto::MessageType::RenameTerminal:
+        case proto::MessageType::RenameSession:
+        case proto::MessageType::KillSession:
+        case proto::MessageType::NewSession:
+        // The window arrangement is session state, so a watcher rearranging it
+        // moves the other reader's windows (the session model). Their own drags are not
+        // blocked at the client — nothing is reported, and the next
+        // `LayoutDelta` puts the windows back, which is the same contract a
+        // client that fell behind already has.
+        case proto::MessageType::SetLayout:
+        case proto::MessageType::ZoomTerm:
+        case proto::MessageType::Raise:
+        // `MoveResize` is not a window at all: that rect is the terminal's own
+        // grid and it SIZES A PTY (the protocol spec, "Two geometries"). A watcher's
+        // mirror lays out and reports one without any reader asking it to, so
+        // leaving this out would have every watcher silently resizing the
+        // children of the session they came to look at.
+        case proto::MessageType::MoveResize:
+        // The desktop is every reader's coordinate space and reflowing it
+        // SIGWINCHes every child in the session.
+        case proto::MessageType::SetDesktopSize:
+        // The printer policy answers on the CHILD's behalf, and a discarded job
+        // is a job the other reader cannot save any more.
+        case proto::MessageType::SetPrinterPolicy:
+        case proto::MessageType::PrintJobDiscard:
+        // Strictly worse than anything above it: a watcher who can end the
+        // server ends every session on the machine. Not in the session model's table
+        // because the table asks what changes THIS session, and this changes
+        // all of them.
+        case proto::MessageType::KillServer:
+            return true;
+
+        // Questions, self-repair, and what belongs to this reader alone.
+        // `Attach` is here because a resnapshot is an `Attach` (the protocol spec) and
+        // because changing your own mode by re-attaching must stay possible —
+        // it is also the one message that can take a reader OUT of watching.
+        case proto::MessageType::Hello:
+        case proto::MessageType::Ping:
+        case proto::MessageType::ListSessions:
+        case proto::MessageType::Attach:
+        case proto::MessageType::Detach:
+        case proto::MessageType::ClientResize:
+        case proto::MessageType::FocusTerm:
+        case proto::MessageType::WatchStats:
+        case proto::MessageType::PrintJobFetch:
+        case proto::MessageType::PasteAck:
+        // Its own scope check, in its own handler: `{Me, ...}` is how a reader
+        // stops watching, and `{Others, ...}` is refused there rather than
+        // here so the refusal can say which half was the problem.
+        case proto::MessageType::SetReaderMode:
+            return false;
+
+        // Server→client. See the note above.
+        case proto::MessageType::HelloAck:
+        case proto::MessageType::Refuse:
+        case proto::MessageType::Pong:
+        case proto::MessageType::SessionList:
+        case proto::MessageType::SessionsChanged:
+        case proto::MessageType::Attached:
+        case proto::MessageType::Detached:
+        case proto::MessageType::ReaderMode:
+        case proto::MessageType::LayoutDelta:
+        case proto::MessageType::TermOpened:
+        case proto::MessageType::TermClosed:
+        case proto::MessageType::TermMeta:
+        case proto::MessageType::GridDelta:
+        case proto::MessageType::ImageAddBegin:
+        case proto::MessageType::ImageChunk:
+        case proto::MessageType::ImageEnd:
+        case proto::MessageType::ImagePlace:
+        case proto::MessageType::ImageRemove:
+        case proto::MessageType::ClipboardSet:
+        case proto::MessageType::TermDiagnostic:
+        case proto::MessageType::TermStats:
+        case proto::MessageType::Error:
+        case proto::MessageType::PrintState:
+        case proto::MessageType::PrintJobAdded:
+        case proto::MessageType::PrintJobData:
+            return false;
+    }
+    return false;
+}
+
 const char* name_of(proto::MessageType type) {
     switch (type) {
         case proto::MessageType::Hello: return "Hello";
@@ -184,6 +293,8 @@ const char* name_of(proto::MessageType type) {
         case proto::MessageType::SetLayout: return "SetLayout";
         case proto::MessageType::WatchStats: return "WatchStats";
         case proto::MessageType::SetDesktopSize: return "SetDesktopSize";
+        case proto::MessageType::SetReaderMode: return "SetReaderMode";
+        case proto::MessageType::ReaderMode: return "ReaderMode";
         case proto::MessageType::LayoutDelta: return "LayoutDelta";
         case proto::MessageType::TermOpened: return "TermOpened";
         case proto::MessageType::TermClosed: return "TermClosed";
@@ -567,6 +678,42 @@ void Server::handle(Client& client, const proto::Message& message) {
         return;
     }
 
+    // A reader who asked only to look (WP-49). One gate here rather than a
+    // guard in each of fifteen handlers, and the difference is not tidiness:
+    // `changes_the_session` is an EXHAUSTIVE switch, so the day somebody adds a
+    // message the build stops until they have said which side of this line it
+    // falls on. Fifteen scattered guards are fifteen chances to forget, and the
+    // one that is forgotten is a hole in a mode whose whole value is that it
+    // has none.
+    //
+    // Enforced at the server although the client greys its own views, because a
+    // mode a stale or modified client can decline to honour is not a mode.
+    if (client.watching() && changes_the_session(type)) {
+        // `Input` is the one deliberate silence in this handler, and it reads
+        // like exactly the bug the rest of it exists to avoid — so: a client
+        // waiting on a reply that never comes cannot tell a server from a hung
+        // one, which is why everything else is answered. This client is not
+        // waiting. It asked for this mode, it knows it is watching, and it
+        // greys its own views on the strength of that; the drop here is the
+        // backstop, not the reader-facing behaviour. An `Error` per keystroke
+        // would put a frame on the hot path for every key a reader leans on.
+        if (type == proto::MessageType::Input) return;
+        // A paste is acked and discarded rather than refused, for the reason
+        // the ack already exists (WP-18): the credit is about the CLIENT'S
+        // queue, not about what happened to the bytes, and a chunk left unacked
+        // holds the rest of that paste — and every later one — in a queue
+        // nothing drains. A watcher who pastes gets nothing pasted and no
+        // wedged client.
+        if (const auto* chunk = std::get_if<proto::PasteChunk>(&message)) {
+            proto::PasteAck ack;
+            ack.seq = chunk->seq;
+            send(client, ack);
+            return;
+        }
+        (void)refuse_if_watching(client, name_of(type));
+        return;
+    }
+
     if (const auto* ping = std::get_if<proto::Ping>(&message)) {
         proto::Pong pong;
         pong.nonce = ping->nonce;
@@ -632,8 +779,7 @@ void Server::handle(Client& client, const proto::Message& message) {
                      static_cast<unsigned long long>(session.id), session.name.c_str());
         // The list, not just an id: the client that asked wants to show the
         // result, and every other client's picker is now out of date.
-        for (const std::unique_ptr<Client>& watcher : clients_)
-            if (watcher->greeted) send_session_list(*watcher);
+        broadcast_session_list();
         return;
     }
     if (const auto* request = std::get_if<proto::KillSession>(&message)) {
@@ -680,8 +826,7 @@ void Server::handle(Client& client, const proto::Message& message) {
             return;
         }
         session->name = request->name.empty() ? session->name : request->name;
-        for (const std::unique_ptr<Client>& watcher : clients_)
-            if (watcher->greeted) send_session_list(*watcher);
+        broadcast_session_list();
         return;
     }
     if (const auto* request = std::get_if<proto::RenameTerminal>(&message)) {
@@ -1164,6 +1309,10 @@ void Server::handle(Client& client, const proto::Message& message) {
         write_paste_chunk(*terminal, client, *chunk);
         return;
     }
+    if (const auto* wish = std::get_if<proto::SetReaderMode>(&message)) {
+        handle_set_reader_mode(client, *wish);
+        return;
+    }
     if (const auto* close_it = std::get_if<proto::CloseTerminal>(&message)) {
         // Asked, watched, and only then removed — the terminal keeps being
         // served while its program decides, so a goodbye it prints lands on
@@ -1221,6 +1370,33 @@ std::size_t Server::attached_count(SessionId id) {
     std::size_t watching = 0;
     for_each_attached(id, [&watching](Client&) { ++watching; });
     return watching;
+}
+
+proto::AttachMode Server::attach_mode_of(const proto::Attach& request) noexcept {
+    switch (static_cast<proto::AttachMode>(request.mode)) {
+        case proto::AttachMode::TakeOver:
+        case proto::AttachMode::Join:
+        case proto::AttachMode::Watch: return static_cast<proto::AttachMode>(request.mode);
+    }
+    // Not a mode this build knows. See the note at the call site: the safe
+    // reading is the specified default.
+    return proto::AttachMode::TakeOver;
+}
+
+bool Server::refuse_if_watching(Client& client, std::string_view context) {
+    if (!client.watching()) return false;
+    // Answered rather than dropped, and this is NOT the exception the input
+    // path makes (see `handle`). Everything routed through here is a discrete
+    // act a reader performed once — opening a terminal, renaming a session,
+    // reporting an arrangement — so one refusal per act is one refusal, and a
+    // client left waiting on a reply that never comes looks to a reader
+    // exactly like a server that has hung.
+    proto::Error error;
+    error.code = static_cast<std::uint16_t>(proto::ErrorCode::ReadOnly);
+    error.context = std::string(context);
+    error.human = "this client is watching this session; stop watching to change it";
+    send(client, error);
+    return true;
 }
 
 Server::Client* Server::client_attached_to(SessionId id) {
@@ -1346,8 +1522,7 @@ void Server::advance_kills() {
                          "kill was not enabled\n",
                          static_cast<unsigned long long>(session->id), still_running.size());
             kills_.erase(kills_.begin() + static_cast<std::ptrdiff_t>(index));
-            for (const std::unique_ptr<Client>& watcher : clients_)
-                if (watcher->greeted) send_session_list(*watcher);
+            broadcast_session_list();
             continue;
         }
         // Everything has gone, or everything that was left has been killed and
@@ -1767,46 +1942,69 @@ void Server::announce_layout(std::uint64_t force_session) {
             break;
         }
         if (!moved) continue;
-        Client* const watcher = client_attached_to(session.id);
         // No watcher, no announcement — and the flag stays down, so the
         // arrangement is stated to the next client to attach by the snapshot it
         // is given rather than lost. A session nobody is watching is exactly
         // when a layout most needs remembering.
-        if (watcher == nullptr) continue;
+        Client* const first = client_attached_to(session.id);
+        if (first == nullptr) continue;
 
-        proto::LayoutDelta layout;
-        layout.session = session.id;
-        // THIS watcher's focus, never the session's. A delta carrying another
-        // reader's focus would move this one's cursor because somebody else
-        // clicked — the marks defect, one field over. Unlike the desktop just
-        // below, which every client must be told identically or a rect means
-        // two different things, focus must NOT be shared: two readers in one
-        // terminal is nonsense (WP-41).
-        layout.focused_term = watcher->focused;
-        // The desktop this client declared, the same number the snapshot
-        // states, because a fraction of a desktop means nothing without the
-        // desktop it is a fraction of.
-        // The session's, not the watcher's — see send_snapshot. Two clients
-        // reading one arrangement have to be told the same coordinate space or
-        // the rects mean two different things.
+        // The arrangement is the SESSION's, so it is built once and every
+        // reader is told the same one. Only `focused_term` differs per reader
+        // — see below.
+        //
+        // The desktop is the session's, not any one reader's — see
+        // `send_snapshot`. Two clients reading one arrangement have to be told
+        // the same coordinate space or the rects mean two different things,
+        // which is also why the degenerate fallback reads the FIRST attached
+        // reader's screen rather than each reader's own: a session that has
+        // ever been attached has a desktop (`handle_attach` sets it), so this
+        // is only reachable for a client that declared no size at all, and
+        // handing two readers two coordinate spaces would be worse than
+        // handing both of them one arbitrary one.
         const ckv::Size desktop = session.desktop.width > 0 && session.desktop.height > 0
                                       ? session.desktop
-                                      : watcher->desktop;
-        layout.desktop_columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
-        layout.desktop_rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
+                                      : first->desktop;
+        std::vector<proto::LayoutEntry> entries;
+        entries.reserve(session.terminals.size());
         for (const TerminalId id : session.terminals) {
-            Terminal* const terminal = terminals_.find(id);
+            const Terminal* const terminal = terminals_.find(id);
             if (terminal == nullptr) continue;
             // Every window, not only the ones that moved: a `z_order` is a
             // position among the others, so a partial list is an arrangement a
             // mirror cannot apply.
             const WindowLayout& held = terminal->layout();
-            layout.entries.push_back(proto::LayoutEntry{
+            entries.push_back(proto::LayoutEntry{
                 id, held.rect, held.z_order, static_cast<std::uint8_t>(held.zoomed ? 1 : 0),
                 held.tile});
-            terminal->note_layout_announced();
         }
-        send(*watcher, layout);
+
+        for_each_attached(session.id, [&](Client& watcher) {
+            proto::LayoutDelta layout;
+            layout.session = session.id;
+            // THIS watcher's focus, never the session's. A delta carrying
+            // another reader's focus would move this one's cursor because
+            // somebody else clicked — the marks defect, one field over. Unlike
+            // the desktop, which every client must be told identically or a
+            // rect means two different things, focus must NOT be shared: two
+            // readers in one terminal is nonsense (WP-41).
+            layout.focused_term = watcher.focused;
+            layout.desktop_columns = static_cast<std::uint16_t>(std::max(0, desktop.width));
+            layout.desktop_rows = static_cast<std::uint16_t>(std::max(0, desktop.height));
+            layout.entries = entries;
+            send(watcher, layout);
+        });
+
+        // And ONLY now, once every reader has been told (WP-48). The edge and
+        // the send used to be the same loop, so a session with two readers
+        // consumed the edge with a message one of them received: a window moved
+        // by the second reader reached the first, and a window moved by the
+        // first reached nobody at all. Clearing a flag on behalf of a client
+        // that was never sent the arrangement is the general form of that bug,
+        // and it is worse than not sending — the fact that anything moved is
+        // gone, so no later pass can repair it.
+        for (const TerminalId id : session.terminals)
+            if (Terminal* const terminal = terminals_.find(id)) terminal->note_layout_announced();
     }
 }
 
@@ -1830,8 +2028,7 @@ void Server::remove_terminal(TerminalId id, bool exited) {
                           home->terminals.end());
     for_each_attached(home->id, [&](Client& watcher) { send(watcher, closed); });
     // Every client's picker counts terminals, and the count just changed.
-    for (const std::unique_ptr<Client>& watcher : clients_)
-        if (watcher->greeted) send_session_list(*watcher);
+    broadcast_session_list();
     // The reader's kill-empty-session (the session model): a session emptied by an
     // explicit close has served its purpose, and the watcher falls back to
     // the picker rather than keeping an empty desktop nobody asked for.
@@ -1960,8 +2157,7 @@ void Server::move_terminal(Client& client, const proto::MoveTerminal& request) {
     // never seen has no delta baseline — the same problem as a client that
     // fell behind, healed the same way.
     for_each_attached(target->id, [](Client& watcher) { watcher.dirty_snapshot = true; });
-    for (const std::unique_ptr<Client>& watcher : clients_)
-        if (watcher->greeted) send_session_list(*watcher);
+    broadcast_session_list();
     std::fprintf(stderr, "ckmux server: terminal %llu moved from session %llu to session %llu\n",
                  static_cast<unsigned long long>(request.term),
                  static_cast<unsigned long long>(source_id),
@@ -1978,8 +2174,7 @@ void Server::forget_session(SessionId id, proto::DetachReason reason, std::strin
     sessions_.erase(std::remove_if(sessions_.begin(), sessions_.end(),
                                    [id](const Session& session) { return session.id == id; }),
                     sessions_.end());
-    for (const std::unique_ptr<Client>& client : clients_)
-        if (client->greeted) send_session_list(*client);
+    broadcast_session_list();
     // The last session was the reason this process existed. A server with none
     // left is holding a socket, a lock and a process table entry on behalf of
     // nothing — so it goes, and the next reader who wants a session gets a
@@ -2011,6 +2206,53 @@ void Server::send_session_list(Client& client) {
         list.sessions.push_back(std::move(info));
     }
     send(client, list);
+}
+
+void Server::broadcast_session_list() {
+    // Everybody, CLI clients included — this is the ANSWER to a request. A
+    // `ckmux new` is a CLI client whose whole output is the list this produces,
+    // and the one time it was narrowed to UI clients that command hung and
+    // exited non-zero.
+    //
+    // Whatever the tick was going to say has just been said, and better: this
+    // list is current. Clearing here keeps a pending flag from putting a
+    // second, identical list behind an immediate one.
+    session_list_dirty_ = false;
+    for (const std::unique_ptr<Client>& watcher : clients_)
+        if (watcher->greeted) send_session_list(*watcher);
+}
+
+void Server::flush_reader_counts() {
+    // The unsolicited half (WP-48): an attach or a detach moved a count and
+    // nobody asked to be told. Two narrowings that the answering path above
+    // must NOT have, because they are about a push rather than a reply.
+    //
+    // UI clients only. A CLI utility asked one question and is waiting for its
+    // answer; a push tells it nothing it can use, and `ckmux ls` gets its list
+    // by asking, on the direct path.
+    //
+    // And not to a reader whose queue is backed up. A `SessionList` is pure
+    // current state, so a later one is strictly better than this one and
+    // deferring costs nothing — while sending it costs a great deal. Queueing
+    // any ordinary frame over the high-water mark sets `dirty_snapshot`, so a
+    // list landing on a client still draining its ATTACH SNAPSHOT asks for a
+    // second copy of the four megabytes it is in the middle of receiving. That
+    // is the M-S5 re-snapshot loop reached from a new direction: WP-48 made an
+    // attach produce a frame one tick later, which is exactly when the client
+    // that just attached is least able to take one.
+    //
+    // Deferred rather than dropped — the flag stays up for anyone skipped — so
+    // a reader who was busy still gets the count, a tick or two behind.
+    bool everybody_was_told = true;
+    for (const std::unique_ptr<Client>& watcher : clients_) {
+        if (!watcher->greeted || watcher->kind != proto::ClientKind::Ui) continue;
+        if (watcher->stream.over_high_water() || watcher->dirty_snapshot) {
+            everybody_was_told = false;
+            continue;
+        }
+        send_session_list(*watcher);
+    }
+    session_list_dirty_ = !everybody_was_told;
 }
 
 void Server::attach(Client& client, const proto::Attach& request) {
@@ -2068,12 +2310,19 @@ void Server::attach(Client& client, const proto::Attach& request) {
     // nominally still holding their session — which is why the previous holder
     // is told rather than asked.
     //
-    // …unless this client asked to SHARE it (WP-44). The flag is the whole of
-    // the opt-in: without it the contract is exactly what it was, and a reader
-    // whose laptop slept still cannot be kept out by the client nominally
-    // holding their session. With it, the readers already there stay, and this
-    // one joins them.
-    if (request.share == 0) {
+    // …unless this client asked to SHARE it (WP-44, WP-49). The mode is the
+    // whole of the opt-in: at `TakeOver` the contract is exactly what it was,
+    // and a reader whose laptop slept still cannot be kept out by the client
+    // nominally holding their session. At `Join` or `Watch` the readers already
+    // there stay, and this one joins them.
+    //
+    // A mode this build does not know is read as `TakeOver` — the default and
+    // the specified contract — rather than refused: a newer client asking for
+    // something this server cannot do must not be silently granted a share it
+    // did not get, and the safe reading of "I do not understand you" is the one
+    // that leaves no reader believing they are watching when they are typing.
+    const proto::AttachMode mode = attach_mode_of(request);
+    if (mode == proto::AttachMode::TakeOver) {
         if (Client* previous = client_attached_to(session->id);
             previous != nullptr && previous != &client) {
             detach(*previous, proto::DetachReason::Takeover,
@@ -2088,6 +2337,11 @@ void Server::attach(Client& client, const proto::Attach& request) {
                  static_cast<unsigned long long>(session->id), session->name.c_str());
     client.attached = true;
     client.session = session->id;
+    // And what this reader may do while they are here (WP-49). Set on every
+    // attach, including a resnapshot, so a heal cannot quietly promote a
+    // watcher: the mode travels on the message that establishes the
+    // attachment, and there is no other way to be attached.
+    client.mode = mode;
     client.dirty_snapshot = false;
     client.host_sixel = request.host_sixel != 0;
     if (request.columns > 0 && request.rows > 0) {
@@ -2095,6 +2349,103 @@ void Server::attach(Client& client, const proto::Attach& request) {
         client.cell_pixels = cell_metric_of(request);
     }
     send_snapshot(client);
+    // Every picker on this machine now shows a stale reader count, including
+    // this client's own (WP-48).
+    //
+    // One flush covers BOTH sessions when a reader switched: `attach` does not
+    // detach a client from the session it was in — it reassigns
+    // `client.session` — so the old session quietly loses a reader here, and
+    // `send_session_list` recounts every session from scratch.
+    session_list_dirty_ = true;
+}
+
+void Server::handle_set_reader_mode(Client& client, const proto::SetReaderMode& wish) {
+    Session* const session = session_of(client);
+    if (session == nullptr) {
+        proto::Error error;
+        error.code = static_cast<std::uint16_t>(proto::ErrorCode::NoSuchSession);
+        error.context = "SetReaderMode";
+        error.human = "attach to a session before changing what its readers may do";
+        send(client, error);
+        return;
+    }
+
+    const auto scope = static_cast<proto::ReaderScope>(wish.scope);
+    if (scope != proto::ReaderScope::Me && scope != proto::ReaderScope::Others) {
+        proto::Error error;
+        error.code = static_cast<std::uint16_t>(proto::ErrorCode::InvalidRequest);
+        error.context = "SetReaderMode";
+        error.human = "a reader mode is aimed either at you or at the others";
+        send(client, error);
+        return;
+    }
+    // The mode is validated rather than defaulted, unlike `Attach.mode`. The
+    // two cases differ: an attach with a mode this build cannot read still has
+    // to attach somehow, and the safe reading is the specified default. Nothing
+    // has to happen here, so an unreadable mode is simply refused and no reader
+    // is left believing something that is not true.
+    const auto mode = static_cast<proto::AttachMode>(wish.mode);
+    if (mode != proto::AttachMode::TakeOver && mode != proto::AttachMode::Join &&
+        mode != proto::AttachMode::Watch) {
+        proto::Error error;
+        error.code = static_cast<std::uint16_t>(proto::ErrorCode::InvalidRequest);
+        error.context = "SetReaderMode";
+        error.human = "no such reader mode";
+        send(client, error);
+        return;
+    }
+
+    if (scope == proto::ReaderScope::Me) {
+        if (mode == proto::AttachMode::TakeOver) {
+            // Attaching is how a session is taken, and it is where the eviction
+            // lives. A scope of *me* cannot evict me, and reading this as "take
+            // it from the others" would make the most destructive act on this
+            // wire reachable by a plausible typo in the scope byte.
+            proto::Error error;
+            error.code = static_cast<std::uint16_t>(proto::ErrorCode::InvalidRequest);
+            error.context = "SetReaderMode";
+            error.human = "attaching is how a session is taken; aim this at the other readers";
+            send(client, error);
+            return;
+        }
+        // No `ReaderMode` back: this reader just asked for it and telling them
+        // is a round trip that teaches nothing (the protocol spec).
+        client.mode = mode;
+        return;
+    }
+
+    // …and at everybody else. Any attached reader may do this to any other:
+    // there is no owner, because the socket is uid-private and an owner among
+    // readers would be a permission system with one user in it — see the session model,
+    // where the symmetry is a decision rather than an omission.
+    if (mode == proto::AttachMode::TakeOver) {
+        // "I want this session to myself." The eviction is the one the attach
+        // path already performs, which is why this needs no verb of its own.
+        std::vector<ClientId> going;
+        for_each_attached(session->id, [&](Client& other) {
+            if (other.id != client.id) going.push_back(other.id);
+        });
+        // Collected first, then acted on: `detach` broadcasts a session list,
+        // which walks `clients_` while `for_each_attached` is walking it too.
+        for (const ClientId id : going)
+            if (Client* const other = client_with_id(id))
+                detach(*other, proto::DetachReason::Takeover,
+                       "another reader took this session over");
+        return;
+    }
+
+    for_each_attached(session->id, [&](Client& other) {
+        if (other.id == client.id) return;
+        // Unchanged readers are not told: a `ReaderMode` that states what a
+        // client already believes is a toast about nothing, and this fires
+        // whenever a reader unticks a box they had never ticked.
+        if (other.mode == mode) return;
+        other.mode = mode;
+        // Somebody ELSE changed what this reader may do, so this one IS told.
+        proto::ReaderMode told;
+        told.mode = static_cast<std::uint8_t>(mode);
+        send(other, told);
+    });
 }
 
 void Server::detach(Client& client, proto::DetachReason reason, std::string text) {
@@ -2109,6 +2460,20 @@ void Server::detach(Client& client, proto::DetachReason reason, std::string text
     detached.reason = reason;
     detached.text = std::move(text);
     send(client, detached);
+    // And the count this session reports just fell (WP-48) — noted for the tick
+    // rather than sent from here, and the difference is not efficiency.
+    //
+    // `forget_session` detaches every reader of a session and only THEN erases
+    // it, so a list sent from inside this function describes a world halfway
+    // through a change: the session is gone as far as its readers are
+    // concerned and still present in `sessions_`. Sending it published exactly
+    // that — and when the session being ended was the last one, the server
+    // stopped before the corrected list could follow, leaving every picker
+    // showing a session that no longer existed.
+    //
+    // Deferring to the tick makes that unrepresentable rather than fixed:
+    // there is no moment mid-mutation at which anything is published.
+    session_list_dirty_ = true;
     // The terminals are untouched, which is the whole promise: a detach is a
     // client going away, and the programs it was watching do not care.
 }
@@ -2550,6 +2915,7 @@ void Server::drop(Client& client, std::string_view why) {
     // A socket that closed IS a detach (the session model): no message arrives, nothing
     // is asked, and the terminals carry on. Marked before the stream goes so
     // that whatever the loop does next does not treat this client as attached.
+    const bool was_attached = client.attached;
     client.attached = false;
     if (!why.empty())
         std::fprintf(stderr, "ckmux server: dropping client %llu: %.*s\n",
@@ -2560,6 +2926,12 @@ void Server::drop(Client& client, std::string_view why) {
     (void)client.stream.flush();
     client.stream.close();
     client.closing = true;
+    // And the others learn this session's new reader count on the tick (WP-48).
+    // A socket that closed is the commonest detach there is — it is how
+    // quitting a client, closing a window and dropping an SSH connection all
+    // arrive — and it does not pass through `detach` at all, because `detach`
+    // exists to send a `Detached` message and this socket has gone.
+    if (was_attached) session_list_dirty_ = true;
 }
 
 void Server::flush_tick() {
@@ -2587,6 +2959,13 @@ void Server::flush_tick() {
     if (!kills_.empty()) advance_kills();
     // And a terminal being closed, for the same reason.
     if (!closes_.empty()) advance_closes();
+    // An attach or a detach moved a reader count (WP-48). Flushed HERE, after
+    // the passes above have finished moving sessions around and before
+    // anything else is composed: the point of the flag is that nothing is ever
+    // published from the middle of an operation, and a flush placed earlier
+    // would give that away again.
+    if (session_list_dirty_) flush_reader_counts();
+
     // Then the children nobody asked to end. After the two above, so that a
     // terminal this server is already closing is removed by `advance_closes`
     // and never announced twice; before `diffs_.flush`, which clears the

@@ -136,6 +136,13 @@ std::vector<Message> every_message() {
 
     messages.emplace_back(Detached{DetachReason::Takeover, "another client attached"});
 
+    // WP-49's two. `SetReaderMode` carries the combination a reader reaches for
+    // most and the one the server refuses least trivially — aimed at the
+    // others, asking them to watch.
+    messages.emplace_back(SetReaderMode{static_cast<std::uint8_t>(ReaderScope::Others),
+                                        static_cast<std::uint8_t>(AttachMode::Watch)});
+    messages.emplace_back(ReaderMode{static_cast<std::uint8_t>(AttachMode::Watch)});
+
     LayoutDelta layout;
     layout.session = 4;
     layout.entries.push_back(LayoutEntry{11, Rect{1, 2, 30, 10}, 1, 0, TileFraction{}});
@@ -227,6 +234,35 @@ std::vector<Message> every_message() {
 }
 
 }  // namespace
+
+CK_TEST(every_attach_mode_survives_the_wire_including_the_one_added_last) {
+    // The protocol spec's rule, applied to the field it was written about. The catalogue
+    // holds ONE `Attach`, so it proves one mode; `Attach.share` shipped with
+    // WP-44 round-tripped by exactly that guard and set by no line in the
+    // client, and "every alternative round-trips" turned out to be a claim
+    // about the encoder rather than about anything a reader could reach.
+    //
+    // The producer half is `test_attach_flags.cpp`. This half is the byte.
+    for (const AttachMode mode : {AttachMode::TakeOver, AttachMode::Join, AttachMode::Watch}) {
+        Attach request;
+        request.session = 7;
+        request.columns = 120;
+        request.rows = 40;
+        request.mode = static_cast<std::uint8_t>(mode);
+        request.host_sixel = 1;
+        Message decoded;
+        const std::string bytes = encode(request);
+        CK_CHECK(decode(bytes, decoded).error == DecodeError::None);
+        const auto* arrived = std::get_if<Attach>(&decoded);
+        CK_CHECK(arrived != nullptr);
+        if (arrived == nullptr) continue;
+        CK_CHECK(arrived->mode == static_cast<std::uint8_t>(mode));
+        // The neighbouring byte, because these two are adjacent on the wire and
+        // a decoder that read them in the wrong order would pass every check
+        // above for `Join` — whose value is 1, and so is this.
+        CK_CHECK(arrived->host_sixel == 1);
+    }
+}
 
 CK_TEST(every_message_in_the_catalogue_survives_the_wire) {
     const std::vector<Message> messages = every_message();

@@ -137,10 +137,18 @@ CliRequest parse_cli(const std::vector<std::string>& arguments) {
     }
 
     if (request.subcommand == "attach") {
-        request.usage = "ckmux attach [--share] [--adopt-size] <name|id>";
+        request.usage = "ckmux attach [--share] [--watch] [--adopt-size] <name|id>";
         for (std::size_t index = 1; index < arguments.size(); ++index) {
             const std::string& word = arguments[index];
             if (word == "--share") {
+                request.share = true;
+                continue;
+            }
+            if (word == "--watch") {
+                // Watching is a way of joining, so this sets both rather than
+                // relying on every reader of `share` to remember that `watch`
+                // implies it. `--share --watch` is then simply redundant.
+                request.watch = true;
                 request.share = true;
                 continue;
             }
