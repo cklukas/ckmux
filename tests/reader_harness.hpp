@@ -103,6 +103,43 @@ inline void remember_harness_server(::pid_t pid) {
     if (pid > 0) harness_servers().push_back(pid);
 }
 
+// The shell every rig pins, for both halves (start_server below and
+// Reader::start). Two requirements, each learned on a different platform, and
+// the choice is platform-specific because the problems are:
+//
+//   * It must be QUIET ABOUT TITLES. On Debian an inherited login /bin/bash
+//     builds a PS1 with an OSC 0 title (stock ~/.bashrc), ckmux honours it,
+//     and every assertion naming "Terminal 1" looks for a string the screen
+//     no longer holds. Pinning /bin/sh — dash there — fixed six failures.
+//   * It must be a shell the programs launched INSIDE the terminal can live
+//     with. mc is the matrix's line-drawing row, and mc's subshell needs a
+//     shell with a line editor: on macOS, /bin/sh is bash in sh-mode with
+//     basename "sh", which mc rejects outright ("unimplemented subshell type
+//     1", no screen at all); and macOS ALSO ships /bin/dash, under which mc
+//     paints but its subshell probe dies — mc sends a ^H ahead of the typed
+//     line, harmless under readline/ZLE, a literal byte under dash, so dash
+//     ran "\x08echo" and answered "echo: not found". Measured, all three,
+//     in the rig and in a bare pty. The mc row never runs on GitHub's
+//     runners (no mc there), which is why the macOS red went unseen.
+//
+// So: Debian keeps dash (the exact shell "/bin/sh" already named there; the
+// Linux rig is unchanged), and macOS takes bash — mc's reference subshell,
+// and title-quiet here: /etc/bashrc only sources a title-setting file for
+// TERM_PROGRAM=Apple_Terminal, and HOME is pinned to /tmp so no ~/.bashrc is
+// read — with zsh as the fallback.
+inline const char* harness_shell() {
+    static const char* const chosen = [] {
+#if defined(__APPLE__)
+        for (const char* candidate : {"/bin/bash", "/bin/zsh"})
+#else
+        for (const char* candidate : {"/bin/dash"})
+#endif
+            if (::access(candidate, X_OK) == 0) return candidate;
+        return "/bin/sh";
+    }();
+    return chosen;
+}
+
 inline ::pid_t start_server(const std::filesystem::path& socket) {
     const ::pid_t child = ::fork();
     if (child != 0) {
@@ -125,8 +162,9 @@ inline ::pid_t start_server(const std::filesystem::path& socket) {
     //
     // Reader::start already pins exactly these values for the CLIENT half of
     // the rig. Pinning them here too means both halves agree on shell, home and
-    // locale instead of one of them inheriting the developer's login.
-    (void)::setenv("SHELL", "/bin/sh", 1);
+    // locale instead of one of them inheriting the developer's login. The
+    // shell itself is harness_shell()'s choice, for the reasons given there.
+    (void)::setenv("SHELL", harness_shell(), 1);
     (void)::setenv("HOME", "/tmp", 1);
     (void)::setenv("LC_ALL", "C", 1);
     // STDOUT as well as STDERR, and this is not tidiness — it is why the suite
@@ -208,7 +246,7 @@ struct Reader {
             ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
         spec.working_directory = "/tmp";
         spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"},
-                            {"SHELL", "/bin/sh"},       {"HOME", "/tmp"},
+                            {"SHELL", harness_shell()}, {"HOME", "/tmp"},
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
         for (const std::pair<std::string, std::string>& entry : extra_environment)
             spec.environment.push_back({entry.first, entry.second});

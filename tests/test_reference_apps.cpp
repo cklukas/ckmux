@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <charconv>
 #include <map>
 #include <optional>
 #include <string>
@@ -31,6 +32,9 @@
 
 #include "reader_harness.hpp"
 
+#include "common/version.hpp"
+
+#include "cvision/term/terminal_emulator.hpp"
 #include "cvision/testing/cktest.hpp"
 
 namespace {
@@ -84,6 +88,43 @@ std::optional<int> interior_vertical(Reader& reader) {
         if (entry.first > 8 && entry.first < widest - 8 && entry.second >= 5) return entry.first;
     }
     return std::nullopt;
+}
+
+// Whether the ckVision this binary links reads a CSI's private marker before
+// its final byte (ckVision 45a995e, D-062). ckmux's gating builds fetch
+// ckVision at the pinned release, and that dispatch landed after v0.1.0 was
+// tagged; against the older emulator the modifyOtherKeys row below would
+// assert a behaviour the library cannot provide, and a published tag does not
+// move. So the row states its precondition and is NOT EXERCISED without it,
+// exactly as a row whose program is not installed is — asked of the emulator
+// itself rather than of a version number, because ckVision's version moves at
+// release time, not at the commit. Once the pin is at or past the fix this is
+// always true, and the row runs everywhere.
+bool linked_ckvision_reads_the_private_marker_first() {
+    ckv::term::TerminalEmulator emulator;
+    emulator.feed_output("\x1b[>4m");
+    return emulator.diagnostics().empty();
+}
+
+// The gate's expiry. A capability probe cannot tell an OLD library from a
+// REGRESSED one: the day marker-first dispatch breaks in ckVision, the probe
+// above sees the complaint, concludes "predates the fix", and the row that
+// exists to catch exactly that goes quiet. So the skip is legitimate only
+// while the pin still names v0.1.0. ckVision 45a995e is in every release
+// after it, and a ckmux build links a ckVision at or past its pin by
+// construction — so with a pin past 0.1.0 a failed probe is a regression, and
+// the row fails instead of standing down.
+bool pinned_ckvision_guarantees_marker_first_dispatch() {
+    const std::string_view pin = ckm::kCkVisionPinString;
+    int part[3] = {0, 0, 0};
+    std::size_t begin = 0;
+    for (int& value : part) {
+        const std::size_t end = std::min(pin.find('.', begin), pin.size());
+        std::from_chars(pin.data() + begin, pin.data() + end, value);
+        if (end >= pin.size()) break;
+        begin = end + 1;
+    }
+    return part[0] > 0 || part[1] > 1 || (part[1] == 1 && part[2] > 0);
 }
 
 int probe_counter = 0;
@@ -758,6 +799,60 @@ CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
     reader.settle(1500);
     CK_CHECK(shell_is_ready(reader));
 
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
+CK_TEST(a_child_resetting_modifyotherkeys_on_its_way_out_leaves_no_complaint_in_the_window) {
+    // Claude Code's teardown — `ESC [ < u`, `ESC [ ? 1049 l`, `ESC [ > 4 m` —
+    // left "[terminal: malformed child SGR sequence]" at the bottom of every
+    // ckmux window it had run in: xterm's XTMODKEYS shares SGR's final byte,
+    // and ckVision's emulator once chose the handler from the final byte
+    // alone (ckVision D-062). This is the bytes themselves, through a real
+    // server, the wire, and the client's TerminalView; vim and neovim write
+    // the same reset.
+    if (binary_path().empty()) return;
+    const bool marker_first = linked_ckvision_reads_the_private_marker_first();
+    if (!marker_first && !pinned_ckvision_guarantees_marker_first_dispatch()) {
+        std::printf("  [D-062] linked ckVision predates the marker-first CSI dispatch "
+                    "(ckVision 45a995e) and the pin is still v%s; modifyOtherKeys row NOT EXERCISED\n",
+                    CKMUX_CKVISION_PIN_STRING);
+        return;
+    }
+    if (!marker_first)
+        std::printf("  [D-062] the pin v%s guarantees ckVision 45a995e, yet the linked emulator reports "
+                    "`ESC[>4m` as a complaint: marker-first CSI dispatch has REGRESSED\n",
+                    CKMUX_CKVISION_PIN_STRING);
+    CK_CHECK(marker_first);
+    if (!marker_first) return;
+
+    const std::filesystem::path socket = private_socket("refmodkeys");
+    forget(socket);
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket, ckv::Size{100, 30}));
+    CK_CHECK(reader.sees("new term"));
+    CK_CHECK(shell_is_ready(reader));
+
+    // The set form on the way in and the exact teardown on the way out, then
+    // a marker line so "nothing appeared" is asserted after the bytes landed.
+    reader.press("printf '\\033[?1049h\\033[>4;2m\\033[<u\\033[?1049l\\033[>4m'; echo MODKEYS\"\"-DONE\r");
+    CK_CHECK(reader.sees("MODKEYS-DONE", 8000));
+    reader.settle(800);
+    CK_CHECK(!reader.sees("[terminal:", 1200));
+    CK_CHECK(!reader.sees("malformed", 600));
+
+    // The positive partner, so the absence above is not the complaint having
+    // gone missing somewhere between the emulator and the screen: an SGR that
+    // IS malformed still travels the whole way and is shown.
+    reader.press("printf '\\033[1;2 m'; echo BADSGR\"\"-DONE\r");
+    CK_CHECK(reader.sees("BADSGR-DONE", 8000));
+    CK_CHECK(reader.sees("[terminal: malformed child SGR sequence]", 8000));
+
+    CK_CHECK(shell_is_ready(reader));
     reader.quit();
     end_process(server);
     forget(socket);

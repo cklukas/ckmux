@@ -11,12 +11,21 @@
 //
 // The macro exists so adjacent string literals can compose at compile time
 // ("ckmux " CKMUX_VERSION_STRING); the string_view is for everyone else.
+//
+// The ckVision pin rides along for the same reason: CKMUX_CKVISION_VERSION in
+// CMakeLists.txt is the ONE place it is stated, and a build that knows which
+// release it was pinned to can reason about what the library it links is
+// guaranteed to contain — a sibling checkout may be newer than the pin, never
+// older. tests/test_reference_apps.cpp reads it to decide whether a missing
+// emulator behaviour is an old library or a regression.
 #pragma once
 
 #include <string_view>
 
 #define CKMUX_VERSION_STRING "@PROJECT_VERSION@"
+#define CKMUX_CKVISION_PIN_STRING "@CKMUX_CKVISION_VERSION@"
 
 namespace ckm {
 inline constexpr std::string_view kVersionString = CKMUX_VERSION_STRING;
+inline constexpr std::string_view kCkVisionPinString = CKMUX_CKVISION_PIN_STRING;
 }
