@@ -1211,6 +1211,24 @@ wins**, because a row drawn as the reader's current window while that window
 is nowhere on screen is the one lie a taskbar must not tell. A window whose
 `minimizable()` is false is never minimized from its row. ckVision D-059.
 
+*Revised* (2026-08-23), on the reader's report against the running client: the
+minimized `▄` was a cell-wide, half-cell-tall slab that shouted louder than
+the two thin rectangles beside it, and none of the three said anything the
+window frame said. The marks are now the frame's own controls — `■` (U+25A0),
+the square of the close control, for a terminal on the desktop, and `_`
+(U+005F), the line of the minimize control, for one put away — with **active
+versus behind moved out of shape and into colour**, the way the frame already
+draws it: the active row's mark wears `ckv.window.control` while every other
+row lets it fall back, over the selected highlight the strip drew already. The
+Ambiguous-width warning above is answered rather than ignored: D-019 resolves
+U+25A0 to one column, which is what `PagedStrip`'s own steering triangles and
+the frame's close control have always rested on, so a host resolving it the
+other way breaks the frame and the bar identically instead of making them
+disagree. New ckVision seam: `PagedStrip::Item::icon_role` / `icon_width`,
+which colours an item's leading cells in a role's foreground while keeping the
+row's background — so the highlight runs unbroken under the mark. ckVision
+D-063.
+
 **U4-o — a standard `ckv.window.minimize` command** *(ckVision)*, found while
 building WP-34 and landed with U4-j. U4-i gave every window a `_` control, and
 that control is the one a reader cannot conveniently aim at for the window
@@ -1349,8 +1367,10 @@ that scored it as one would report the opposite of the truth.
 Verified end to end as well as headlessly: `tests/test_minimize_chrome.cpp`
 drives the real client, and `tests/test_menu_commands.cpp` runs the real
 binary in a real terminal, presses `^B _`, and reads the screen — the window
-leaves it, the bar arrives with `▄ Terminal 1` on it, and a click on that row
-brings the terminal back and takes the bar away again.
+leaves it, the bar arrives with the put-away mark and `Terminal 1` on it —
+composed from `status_glyph` rather than spelled in the test, so the revision
+below could not leave it asserting a character nothing draws — and a click on
+that row brings the terminal back and takes the bar away again.
 
 **WP-32 — Window Switcher Bar integration in ckmux.** Wires ckmux's
 terminal windows into U4-a's bar: the title provider (the same

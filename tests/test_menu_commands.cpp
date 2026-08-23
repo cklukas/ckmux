@@ -32,6 +32,7 @@
 #include "reader_harness.hpp"
 
 #include "cvision/testing/cktest.hpp"
+#include "cvision/widgets/window_switcher_bar.hpp"
 
 namespace {
 using ckmtest::binary_path;
@@ -985,6 +986,13 @@ CK_TEST(minimizing_the_only_terminal_puts_the_window_bar_on_screen) {
                  std::string::npos);
     }
 
+    // What the bar draws for a terminal that has been put away, taken from
+    // the widget's own table (ckVision U4-j / D-063) rather than spelled
+    // again here: it is the `_` of the window's minimize control, and a test
+    // that hard-coded it would go on asserting a character nothing draws.
+    const std::string kAwayMark(ckv::widgets::WindowSwitcherBar::status_glyph(
+        ckv::widgets::WindowSwitcherBar::Status::Minimized));
+
     // `^B _`, the chord named for the `_` control on the window's own frame.
     reader.press("\x02" "_");
     reader.settle(300);
@@ -995,8 +1003,11 @@ CK_TEST(minimizing_the_only_terminal_puts_the_window_bar_on_screen) {
     CK_CHECK(listed.has_value());
     if (!listed) return;
     CK_CHECK(listed->first == bar_row);
-    // The minimized glyph, one cell left of the name it belongs to (U4-j).
-    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("▄ Terminal 1") !=
+    // The put-away mark, one cell left of the name it belongs to (U4-j) —
+    // the same `_` the window's own minimize control draws, composed from
+    // the widget's table rather than spelled here so a later table change
+    // cannot leave this test asserting a character nothing draws.
+    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find(kAwayMark + " Terminal 1") !=
              std::string::npos);
 
     // And the row is the way back. A click on it restores the terminal, at
@@ -1013,8 +1024,11 @@ CK_TEST(minimizing_the_only_terminal_puts_the_window_bar_on_screen) {
 
     // And the route the reader most likely took to report this: the `_`
     // control on the window's own frame, clicked with the mouse. It is the
-    // first underscore on the screen — the menu bar above it has none, and
-    // the child is /bin/cat, which writes nothing.
+    // first underscore on the screen — the menu bar above it has none, the
+    // child is /bin/cat, which writes nothing, and the bar (which draws the
+    // same character for a terminal that is away) has just gone with the
+    // last put-away terminal. The row assertion above is what holds that
+    // last clause true.
     const std::optional<std::pair<int, int>> control = reader.find_cell("_");
     CK_CHECK(control.has_value());
     if (!control) return;
@@ -1025,7 +1039,7 @@ CK_TEST(minimizing_the_only_terminal_puts_the_window_bar_on_screen) {
     CK_CHECK(away.has_value());
     if (!away) return;
     CK_CHECK(away->first == bar_row);
-    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find("▄ Terminal 1") !=
+    CK_CHECK(reader.rows()[static_cast<std::size_t>(bar_row)].find(kAwayMark + " Terminal 1") !=
              std::string::npos);
 
     reader.press("\x02" "d");
