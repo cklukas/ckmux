@@ -29,7 +29,7 @@ set -u
 vm=ckdev
 git_root=/Volumes/PRO-BLADE/git
 build_type=Release
-compiler=gnu
+compiler=gnu13
 source=head
 sanitize=
 only=
