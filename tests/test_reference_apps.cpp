@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <charconv>
 #include <map>
 #include <optional>
 #include <string>
@@ -30,6 +31,8 @@
 #include <unistd.h>
 
 #include "reader_harness.hpp"
+
+#include "common/version.hpp"
 
 #include "cvision/term/terminal_emulator.hpp"
 #include "cvision/testing/cktest.hpp"
@@ -101,6 +104,27 @@ bool linked_ckvision_reads_the_private_marker_first() {
     ckv::term::TerminalEmulator emulator;
     emulator.feed_output("\x1b[>4m");
     return emulator.diagnostics().empty();
+}
+
+// The gate's expiry. A capability probe cannot tell an OLD library from a
+// REGRESSED one: the day marker-first dispatch breaks in ckVision, the probe
+// above sees the complaint, concludes "predates the fix", and the row that
+// exists to catch exactly that goes quiet. So the skip is legitimate only
+// while the pin still names v0.1.0. ckVision 45a995e is in every release
+// after it, and a ckmux build links a ckVision at or past its pin by
+// construction — so with a pin past 0.1.0 a failed probe is a regression, and
+// the row fails instead of standing down.
+bool pinned_ckvision_guarantees_marker_first_dispatch() {
+    const std::string_view pin = ckm::kCkVisionPinString;
+    int part[3] = {0, 0, 0};
+    std::size_t begin = 0;
+    for (int& value : part) {
+        const std::size_t end = std::min(pin.find('.', begin), pin.size());
+        std::from_chars(pin.data() + begin, pin.data() + end, value);
+        if (end >= pin.size()) break;
+        begin = end + 1;
+    }
+    return part[0] > 0 || part[1] > 1 || (part[1] == 1 && part[2] > 0);
 }
 
 int probe_counter = 0;
@@ -789,11 +813,19 @@ CK_TEST(a_child_resetting_modifyotherkeys_on_its_way_out_leaves_no_complaint_in_
     // server, the wire, and the client's TerminalView; vim and neovim write
     // the same reset.
     if (binary_path().empty()) return;
-    if (!linked_ckvision_reads_the_private_marker_first()) {
+    const bool marker_first = linked_ckvision_reads_the_private_marker_first();
+    if (!marker_first && !pinned_ckvision_guarantees_marker_first_dispatch()) {
         std::printf("  [D-062] linked ckVision predates the marker-first CSI dispatch "
-                    "(ckVision 45a995e); modifyOtherKeys row NOT EXERCISED\n");
+                    "(ckVision 45a995e) and the pin is still v%s; modifyOtherKeys row NOT EXERCISED\n",
+                    CKMUX_CKVISION_PIN_STRING);
         return;
     }
+    if (!marker_first)
+        std::printf("  [D-062] the pin v%s guarantees ckVision 45a995e, yet the linked emulator reports "
+                    "`ESC[>4m` as a complaint: marker-first CSI dispatch has REGRESSED\n",
+                    CKMUX_CKVISION_PIN_STRING);
+    CK_CHECK(marker_first);
+    if (!marker_first) return;
 
     const std::filesystem::path socket = private_socket("refmodkeys");
     forget(socket);
