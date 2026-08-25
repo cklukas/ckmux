@@ -30,6 +30,7 @@ title: Command line
 With none of these, attaching **takes the session over**: whoever was watching
 it is dropped to their own picker. That is the default and there is no flag to
 ask for it — it is what `ckmux attach <name>` already does.
+
 - `--adopt-size` — make the session's desktop this screen, once, on arrival.
   Reflows every window and resizes every child, for everyone watching.
 

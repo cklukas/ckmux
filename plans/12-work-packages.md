@@ -1,6 +1,6 @@
 # ckmux — Work Packages
 
-Plan 12 · Status: current · 2026-08-18 · [Index](README.md)
+Plan 12 · Status: current · 2026-08-25 · [Index](README.md)
 
 This file answers one question: **what is open, and what do I do next?**
 
@@ -119,15 +119,15 @@ take first.
 | 34 | **WP-16** — Sixel transport, placement, and advertisement | ckmux | 4–5 d | **Done** (2026-08-18) | WP-6 ✓ |
 | 35 | **WP-18** — Paste credit flow | ckmux | 1–2 d | **Done** (2026-08-20, ckmux `f4cab08`, gated) | WP-6 ✓ |
 | 36 | **WP-19** — Bell and activity monitors | ckmux | 2 d | **Done** (2026-08-20) | WP-6 ✓, U0-c ✓ |
-| 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **In progress** — capture and server are Done (2026-08-20, ckmux `6c88466`, ckVision `6648d90`); the CLIENT ROUTE is not wired, so **a reader cannot open, view or save a captured job**. `run_client.cpp` assigns 29 hooks and none of the seven printer ones, so the Print output dialog renders its empty state while the frame button counts jobs correctly off an emulator fallback. Found by ckmux-be building WP-21 §5; verified by the tester. | WP-6 ✓, U1-c ✓, U1-d ✓ |
+| 37 | **PRINT-1…6** — the virtual printer, client and server | ckmux | 4 d | **Done** (2026-08-20: server/spool `6c88466`, client route `7ef0a1c`, ckVision seams `6648d90`; gated 38/38 at ckmux `30e21a6` × ckVision `e070775`, plus a live child-to-saved-file run) | WP-6 ✓, U1-c ✓, U1-d ✓ |
 | 38 | **WP-20** — Performance budget gates under floods | ckmux | 2–3 d | **Done** (2026-08-20; gated by the test-coordinator session at ckmux `02f7c97` × ckVision `df99316`, 35/35, ctest exit 0) | WP-16 ✓ |
-| 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | In progress (ckmux-03, uds:/tmp/cc-socks/31309.sock) | WP-18 ✓, WP-19 ✓, WP-20 ✓, PRINT-1…6 ✓ (WP-16 ✓, WP-17 ✓, U1-a ✓) |
+| 39 | **WP-21** — M4 acceptance: the reference-app matrix and vttest chapters | ckmux | 3–4 d | **In progress** (ckmux-03, `uds:/tmp/cc-socks/31309.sock`) — the tmux, printing and nine-reference-app rigs are built; the three-host/vttest matrix and environment-change cases in [14](14-m4-acceptance.md) remain the acceptance bar | WP-18 ✓, WP-19 ✓, WP-20 ✓, PRINT-1…6 ✓ (WP-16 ✓, WP-17 ✓, U1-a ✓) |
 | 40 | **WP-26** — License, jointly with ckVision's D-OPEN-1 | both | 1 d | **Done** (2026-08-20, decided by the OWNER in their own channel: **MIT** for both repos, with DCO + patent-grant + relicense-grant contribution terms; recorded in ckVision D-OPEN-1, `LICENSE`/`CONTRIBUTING.md` at both roots, SPDX headers swept by `tools/add_spdx.py`) | — |
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
-| 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | **In progress** (ckmux-53) — routed ahead of WP-21 by the tester when CI's red list arrived: the shadow sweep and the `-Wshadow-all` guard are in ckVision `6fdbbf9`, the link dedup in ckmux `d3f89d2`; the process-stats `/proc` + `smaps_rollup` fill (the scope WP-37 handed over) is implemented with its parsers compiled and tested on every platform, awaiting the tester's gate | WP-21 |
-| 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | Blocked | WP-22 |
-| 44 | **WP-25** — Packaging | ckmux | 2–3 d | Blocked | WP-24, WP-26 |
-| 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-22…WP-26 |
+| 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | **Done** (2026-08-23) — `/proc`/`smaps_rollup` in `598de3c`, Linux compile fixes in `2b64fdc`, GCC 13/14 + Clang local sweep in `240bd5b`; Debian GCC 13 full suite 49/49 (`976f66e`), then the v0.1.1 public snapshot `17e4dbc` passed both Linux CI lanes 51/51 and the Linux release build/test/package job | — (routed ahead of WP-21; it had no technical dependency on the M4 matrix) |
+| 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | **Done** (2026-08-25, this commit) — browser guide plus installed `ckmux(1)`; the Markdown and roff key appendices are generated from the compiled `Keymap` registry and the checked-in Pages copy is exact-gated; macOS AppleClang Debug 52/52, ASan+UBSan 52/52, Debian 13 GCC 14.2 Release 52/52 at ckmux `bc83088` + the WP-24 delta × ckVision `386e737`; `mandoc` lint and install-prefix smoke clean | WP-22 ✓ |
+| 44 | **WP-25** — Packaging | ckmux | 2–3 d | **Done** (2026-08-23) — install rule + reproducible CPack TGZ/DEB and the tag-triggered release workflow (`78dfeec`); v0.1.0 and v0.1.1 packages published, with the v0.1.1 Linux package job green | WP-26 ✓ (completed ahead of WP-24; documentation is not a technical packaging prerequisite) |
+| 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-23 (WP-24 ✓) |
 | 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
 | 48 | **U5-a** — `process_id()` on `PosixTerminalSubsession`: a pid for observation | ckVision | 0.5 d | **Done** (2026-08-19, ckVision `da11baa`) | — |
@@ -144,9 +144,9 @@ take first.
 | 58 | **WP-45** — One name, one session | ckmux | 0.5 d | **Done** (2026-08-20, owner ruling) | — |
 | 59 | **WP-46** — `kill-terminal`, and the refusal that told the truth | ckmux | 1 d | **Done** (2026-08-20) | — |
 | 60 | **WP-47** — A test that leaks a server has not finished | ckmux | 0.5 d | **Done** (2026-08-20) | — |
-| 61 | **WP-48** — What the second reader is never told | ckmux | 1–1.5 d | **Done** (2026-08-23, working tree; awaiting the tester session's gate) — three defects fixed, two more found and fixed in the fixing | WP-44 ✓ |
-| 62 | **WP-49** — A reader who may only look | ckmux | 2–3 d | **Done** (2026-08-23, working tree; awaiting the gate) | WP-48 ✓ |
-| 63 | **WP-50** — Join, take over, or watch: the choice on screen | ckmux | 2–3 d | **Done** (2026-08-23, working tree; awaiting the gate) — the picker's shape changed from the spec, and [06](06-ui-design.md) says why | WP-49 ✓, WP-48 ✓ |
+| 61 | **WP-48** — What the second reader is never told | ckmux | 1–1.5 d | **Done** (2026-08-23, `6fa6d81`; integrated at `bc83088` × ckVision 0.1.1: 51/51 Release, 51/51 ASan+UBSan, public Linux 51/51) — three defects fixed, two more found and fixed in the fixing | WP-44 ✓ |
+| 62 | **WP-49** — A reader who may only look | ckmux | 2–3 d | **Done** (2026-08-23, `6fa6d81`; same 51-suite Release/ASan/Linux integration gate as WP-48) | WP-48 ✓ |
+| 63 | **WP-50** — Join, take over, or watch: the choice on screen | ckmux | 2–3 d | **Done** (2026-08-23, `6fa6d81`; same 51-suite Release/ASan/Linux integration gate as WP-48) — the picker's shape changed from the first spec, and [06](06-ui-design.md) records why | WP-49 ✓, WP-48 ✓ |
 
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
@@ -644,7 +644,7 @@ leaving, not a death), the target's watcher is healed by a fresh snapshot, and
 the flag creates the destination so "a new session" is always a workable
 answer. A close pending against the moved terminal is cancelled: a move is
 the reader deciding to keep it.
-**WP-11 — CLI subcommands.** *Ready.* `ls`, `new`, `attach`, `kill-session`,
+**WP-11 — CLI subcommands.** *Done, 2026-08-19.* `ls`, `new`, `attach`, `kill-session`,
 `check-config`, over the same protocol with `client_kind = cli`.
 `--help` and `--version` landed ahead of the package (2026-08-18, `a696435`):
 both are answered in `main()` without touching a socket, the help page is the
@@ -677,10 +677,11 @@ defaulted; `bind`/`unbind` work and a rebinding reaches dispatch, the footer,
 the which-key popup and the help pages together, because all four read one
 `Keymap`. A key the plan documents but no package has wired up yet is
 *neither* warned about as unknown *nor* silently accepted: it is read, and
-`keys_not_honoured_yet()` names it with the package it waits for. Only
-`check-config`'s CLI entry point still waits for WP-11, and both halves of
-its output already exist as return values.
-**WP-13 — Exit policy, banners, respawn.** *In progress.* Two of the three
+`keys_not_honoured_yet()` names it with the package it waits for.
+`check-config`'s CLI entry point landed with WP-11. Its current four printer
+entries are stale relative to the runtime now honoring those keys;
+[08](08-configuration.md) records that remaining diagnostic defect.
+**WP-13 — Exit policy, banners, respawn.** *Done, 2026-08-20.* Two of the three
 sentences this row used to make were already false when it was picked up, so
 what is left is smaller than it advertised. `on-exit` = close/hold/
 hold-on-error **has landed**: the server's self-exit path reads the setting,
@@ -1400,9 +1401,9 @@ defaulting to deny, and **U1-d** the rest of the typed dialog fields —
 `Radio`, `Combo`, `Number`, beside the `Check` and `Note` that landed for
 `Settings ▸ General…`. They were emulator and widget work in files nothing in
 M2 touches, which is exactly why they could be taken while the server was not
-the thing to work on. PRINT-1…6 waited only on the wire, and the wire has been
-real since WP-6: it is `Ready`, with PRINT-2's messages already encoding and
-decoding and nothing yet producing or handling one ([05](05-protocol.md)).
+the thing to work on. PRINT-1…6 later consumed that wire and is now complete;
+the server/spool, client route, ckVision seams and live child-to-saved-file
+check are recorded in the summary row above.
 
 **WP-17 copy mode** — *done, 2026-08-17.* Search (with smartcase and
 wrapping), vi keys beside the arrow keys, character, line and rectangular
@@ -1428,11 +1429,10 @@ add, place and remove all have a producer in `diff_engine.cpp` and a handler in
 picture will actually be drawn on, and a mirror's rasters carry a scene
 identity of their own because a mirror is never adopted by the `Application`.
 
-The rest of M4 is `Ready` rather than waiting: **WP-19** bell and activity
-monitors, and **PRINT-1…6** the
-virtual printer, whose six pieces are
-already itemized in [10-roadmap.md](10-roadmap.md) and behave per
-[04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md).
+**WP-19** bell and activity monitors and **PRINT-1…6** the virtual printer are
+done. Their behavior remains specified in
+[04](04-terminal-emulation.md)/[06](06-ui-design.md)/[08](08-configuration.md),
+and their gate evidence is in the summary row above.
 **WP-18 — Paste credit flow** *(ckmux)*. *Done* (2026-08-20). Gated by the
 test-coordinator session at ckmux `f4cab08` × ckVision `a8fda6a` — 31/31
 Debug, and 31/31 ASan+UBSan at `f41a0b0`, the parent, since the label commit
@@ -1516,6 +1516,30 @@ in-place by `tools/add_spdx.py` under the fleet's pause-adapt-reread
 protocol. ckVision's D-OPEN-1 records the same decision from the library's
 side.* **WP-27** the v1 acceptance audit against
 [01-vision.md](01-vision.md)'s success criteria.
+
+*WP-22 done, 2026-08-23.* The Linux-only `/proc` traversal, page-size RSS and
+`smaps_rollup` PSS path are in the same source that the public v0.1.1 Linux
+lane compiled. The local Debian gate covered GCC 13 Release and Debug, GCC 14
+Release and Clang Release; GCC 13 then ran 49/49 suites. The published snapshot
+derived from ckmux `bc83088` passed both Linux CI lanes 51/51, and the release
+workflow built, tested and packaged Linux x86_64. Linux is now a blocking lane,
+not an advisory port claim.
+
+*WP-25 done ahead of WP-24, 2026-08-23.* CPack produces TGZ everywhere and DEB
+on Linux; the release workflow reproduces those commands and has published
+v0.1.0 and v0.1.1. WP-24 subsequently extended the install set with `ckmux(1)`
+and the browser guide without changing the executable's runtime dependencies.
+
+*WP-24 done, 2026-08-25.* `doc/ckmux.1.in` supplies the command-line narrative;
+its default-key section and `docs/keys.md` are generated by the built `ckmux`
+from the same `Keymap` rows that drive dispatch, menus, footer, which-key and
+in-application help. `tests/test_docs.cpp` proves that every registry row
+reaches both formats, that the Pages copy is byte-exact, and that the man page
+contains every required section. The install target places `ckmux(1)` and the
+browser guide beside the executable. The exact ckmux `bc83088` + WP-24 delta ×
+ckVision `386e737` passed 52/52 in macOS Debug, 52/52 under ASan+UBSan, and
+52/52 on Debian 13 with GCC 14.2 Release; `mandoc -T lint` and a temporary
+install-prefix smoke were clean.
 
 ### Added after the M3 queue was drawn
 
@@ -2299,6 +2323,13 @@ last other reader leaves; the footer says `2 readers` while there are two and
 `read-only` while this client is watching; the toast table is covered; and
 `docs/cli.md` and `docs/getting-started.md` gain `--watch` **in this
 package's commit and not before** — the docs describe what is built.
+
+*WP-48, WP-49 and WP-50 done, 2026-08-23 (`6fa6d81`).* The integration gate
+at ckmux `bc83088` × ckVision 0.1.1 is 51/51 in Release and 51/51 under
+ASan+UBSan; the corresponding public Linux snapshot is 51/51. The picker,
+CLI, server enforcement, count broadcasts and both directions of layout
+fan-out therefore close as one reader-mode slice rather than three rows left
+claiming an unrun gate.
 
 **What WP-48 turned up in the fixing, both of them mine and both caught by a
 test rather than by review.** They are recorded because each is a general shape

@@ -2,27 +2,35 @@
 
 # Status and document map
 
-Development-internal. The public README states what ckmux is and how to build
-it; it deliberately says nothing about milestones, work packages, or which
-plan owns which gap. That material lives here, so that a status claim can be
-kept honest and detailed without it becoming a promise on the front page.
+Development-internal. The public README states what ckmux is, how to build it,
+and a concise milestone-level status. Work-package ownership, evidence and the
+exact gaps live here so those claims remain auditable without turning the
+front page into the queue.
 
-## Current status: M2 in progress
+## Current status: M3/M4 acceptance in progress
 
-The core promise works: terminals run in a detached server, survive the client
+M0–M2 are implemented and their automated gates are green. The core promise
+works: terminals run in a detached server, survive the client
 quitting, and reattach exactly where they left off — a test forks a real
 server, kills the client mid-count, and proves the program kept running
 unwatched. Sessions are plural, named, and killable; the interface — menu bar
 with clock and calendar, footer, floating terminal windows, the prefix and its
 which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
-`Settings ▸ General…` — is real and usable.
+`Settings ▸ General…` — is real and usable. Shared/read-only readers, captured
+printing, process statistics, the Linux port, installable packages and the
+v0.1.1 release have landed. The user guide, installed man page and generated
+key appendix have now landed as well.
 
-Not every M2 edge is closed. The open items live in
-[12-work-packages.md](12-work-packages.md) and
-[13-architecture-review.md](13-architecture-review.md). See
+WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
+M4's reference-app, vttest and changing-environment matrix. The architecture
+review remediation queue is closed. M5 has Linux, licensing and packaging;
+WP-24's documentation row is complete. The terminfo row waits on WP-21, and
+the final v1 audit then waits on that terminfo row. The authoritative states
+live in [12-work-packages.md](12-work-packages.md).
+See
 [10-roadmap.md](10-roadmap.md) for what each milestone means, and
 [14-m4-acceptance.md](14-m4-acceptance.md) for the acceptance criteria of the
-milestone after this one.
+current fidelity milestone.
 
 A "Landed" row is a claim about the code, not the code. Check the code before
 repeating it.

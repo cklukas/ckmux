@@ -1,6 +1,6 @@
 # 13 — Architecture Review Findings (2026-08-18)
 
-Status: waves 1–2 complete — R1–R7, R9, R10 done, R8 ongoing · source: multi-agent code/architecture review
+Status: remediation complete — R1–R10 done · source: multi-agent code/architecture review
 of 2026-08-18 (7 specialist reviewers over the whole tree, 65 claims
 adversarially verified by independent agents — several by probe programs
 compiled against the built library — 0 findings refuted). Reviewed at

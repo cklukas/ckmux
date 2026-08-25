@@ -1,6 +1,6 @@
 # ckmux — Planning Documents
 
-Status: complete draft set · 2026-08-16 · planning phase (pre-M0)
+Status: living specification · 2026-08-25 · M3/M4 acceptance, M5 release work
 
 **ckmux** is a terminal multiplexer with a face: tmux's persistence model
 (sessions and the programs inside them survive disconnection; reattach
@@ -8,10 +8,10 @@ anytime) combined with a **ckVision** desktop UI — permanent menu bar,
 permanent context-sensitive hotkey footer, and each terminal in a floating,
 movable window with full mouse and Sixel support.
 
-These plans were written against a verified inventory of ckVision
-(sibling repo) as of 2026-08-16. They are **living documents**: behavior
-changes edit the corresponding plan in the same commit
-([11-conventions.md](11-conventions.md)).
+These plans began from a verified ckVision inventory on 2026-08-16 and have
+been updated through the v0.1.1 integration state on 2026-08-25. They are
+**living documents**: behavior changes edit the corresponding plan in the
+same commit ([11-conventions.md](11-conventions.md)).
 
 **Co-development principle (read this first):** ckmux is one of the first
 real applications of ckVision, and deliberately its proving ground. We have
@@ -36,10 +36,11 @@ and is scheduled inside the ckmux milestones in [10-roadmap.md](10-roadmap.md).
 | 07 | [ckVision Integration](07-ckvision-integration.md) | Verified capability inventory, the four integration seams, the upstream work list, consumption & pinning |
 | 08 | [Configuration](08-configuration.md) | Tiny INI config: locations, defaults, keybinding syntax, what is deliberately not configurable |
 | 09 | [Testing & Verification](09-testing.md) | Test pyramid on ckVision's harnesses, conformance pins, e2e core-promise test, fuzzing, budget gates |
-| 10 | [Roadmap, Risks & Open Questions](10-roadmap.md) | Milestones M0–M5 with acceptance criteria, parking lot, risk table, questions to answer at M0 |
+| 10 | [Roadmap, Risks & Decisions](10-roadmap.md) | Milestones M0–M5 with acceptance criteria, parking lot, risk table, and recorded decisions |
 | 11 | [Engineering Conventions](11-conventions.md) | Inherited ckVision discipline: style, determinism, provenance rule, workflow, definition of done |
 | 12 | [Work Packages](12-work-packages.md) | **The queue.** Numbered packages, one state each, and the rule for picking the next one |
 | 13 | [Architecture Review Findings](13-architecture-review.md) | The 2026-08-18 review: verified findings and their remediation state |
+| 14 | [M4 Acceptance](14-m4-acceptance.md) | Reference apps, vttest, tmux-inside-ckmux, printing, host matrix, and environment-change cases |
 
 Suggested reading order: 01 → 02 → 03 → 07 → 04 → 05 → 06 → 08 → 09 → 10 → 11.
 
@@ -61,7 +62,7 @@ the first `Ready` row. 10 says what a milestone means; 12 says what is open.
 | D-09 | Hand-rolled framed binary protocol, one version integer pre-1.0, **self-healing by snapshot** on any desync or backpressure overflow | 05 |
 | D-10 | `TERM=xterm-256color` first, own `ckmux-256color` terminfo at M5 | 04 |
 | D-11 | v1 excludes: panes/tiling-only mode, linking, remote transport, reflow, resurrect, plugins, scripting API (parking lot). **Multi-client left this list 2026-08-20**, reader-directed — see D-07 | 01, 10 |
-| D-12 | C++20/CMake, zero new dependencies, ckVision **pinned by commit** with conformance-pin goldens | 07, 09, 11 |
+| D-12 | C++20/CMake, zero new dependencies, ckVision **pinned by release version** for adopter/CI builds (co-development sibling source deliberately outranks it), with conformance-pin goldens | 07, 09, 11 |
 | D-13 | **Sanitization by construction**: child bytes are parsed into state and re-rendered — raw child output can never reach the host terminal | 02, 04 |
 | D-14 | **Printing is captured, never a printer** (WP-PRINT): Media Copy leaves the never-list because the hazard was the *sink*, not the sequence — output goes to a bounded in-memory spool, surfaced by a frame button, saved only by an explicit user click to a user-chosen path. No device is opened, no command is executed. Default **ask**, which tells the *program* yes and asks the *user* | 04, 06, 08 |
 
@@ -77,14 +78,16 @@ footer, sending encoded input and layout requests back. Detach is just a
 closed socket; reattach is a snapshot. Killing anything is explicit,
 confirmed, and menu-visible.
 
-## Next step
+## Current work
 
-M0 and M1 are done. The next package is the first `Ready` row in
-[12-work-packages.md](12-work-packages.md) — today **U0-a**, the
-attach-an-existing-subsession entry point in ckVision, which is what lets a
-ckmux mirror reach the loop that M2's client is built on.
+M0–M2 and the architecture-review remediation queue are complete. **WP-15**
+(M3's menu-driven acceptance walkthrough) and **WP-21** (M4's reference-app,
+vttest and changing-environment matrix) are in progress. **WP-24** is done:
+the browser guide, installed man page and generated key appendix are all built
+and gated from the command/key registries. There is no unclaimed `Ready` row:
+WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
+WP-23. Linux, licensing and packaging are done, and v0.1.1 is published.
 
-The open questions in [10-roadmap.md](10-roadmap.md) are still open. All have
-recommendations, all are answer-and-edit, and none of them blocks a row above;
-#1, #3 and #5 will be decided by M2/M3 code whether or not they are written
-down first, so they are worth settling before that code exists.
+The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
+as decisions. Work selection still comes only from
+[12-work-packages.md](12-work-packages.md).

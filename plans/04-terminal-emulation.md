@@ -1,6 +1,6 @@
 # ckmux — Terminal Emulation
 
-Plan 04 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 04 · Status: current · 2026-08-25 · [Index](README.md)
 
 The VT engine decides whether "any app just works". **Decision: ckmux does
 not write a terminal emulator.** ckVision already ships one that matches our
@@ -70,19 +70,19 @@ per ckVision's own verification rules; ckmux tracks them in
 
 | Pri | Gap (today's behavior) | Why ckmux needs it |
 |---|---|---|
-| U0 | **No damage/dirty reporting; `snapshot()` deep-copies grid + scrollback + rasters per call** | Server diffing at tick rate × N terminals must not copy ~MB per frame. Need damage spans or a borrowed/zero-copy view, and a snapshot-without-scrollback option. The single biggest perf risk in the design. |
+| ~~U0~~ | ~~No damage/dirty reporting; `snapshot()` deep-copies grid + scrollback + rasters per call~~ — **done** (U0-b): row damage spans, borrowed cells/scrollback and a snapshot-without-history path; measured 574 µs → 57 µs per steady-state read. | Server diffing at tick rate no longer copies history; WP-4b consumes the borrowed path. |
 | ~~U0~~ | ~~BEL ignored entirely~~ — **done**: counted per terminal as `TerminalSnapshot::bell_serial`, not latched, so a footer badge, a title marker and a session picker can all read the same snapshot and each see every bell. | Bell badges ([06](06-ui-design.md)) and WP-19's monitors. |
 | ~~U0~~ | ~~Charset designation `ESC ( 0` unsupported~~ — **done**, with the whole published DEC Special Graphics range rather than the box-drawing half. | ncurses ACS line-drawing (mc, dialog, old tools) drew `qqq` instead of `───`. |
 | ~~U0~~ | ~~Scrollback capacity fixed at 2 000 lines~~ — **done**: `max_scrollback_lines` is honoured including `0` (nothing is copied at all), and a width change re-lays stored lines instead of shearing the history. | Config `scrollback` ([08](08-configuration.md)), including "0 = off". |
 | ~~U0~~ | ~~RIS (`ESC c`) not implemented~~ — **done**, with DECALN (`ESC # 8`); the caption and the child's own fate survive a reset, everything a child can reach does not. | `reset`(1) inside a terminal now actually resets it; vttest chapters open with DECALN. |
-| U1 | **OSC 4/10/11 palette/fg/bg queries dropped** | vim/nvim probe OSC 11 to pick light/dark defaults. Needs reply plumbing (emulator can already queue replies via `take_pending_input`). |
+| ~~U1~~ | ~~OSC 4/10/11 palette/fg/bg queries dropped~~ — **done** (L-18): answered as `rgb:RRRR/GGGG/BBBB` under the query policy, preserving the child's terminator. | vim/nvim can probe the background instead of guessing a light theme. |
 | ~~U1~~ | ~~Child OSC 52 denied by policy, no allow path~~ — **done**: an opt-in `clipboard_policy`, the decoded text on the snapshot with a monotonic `clipboard_serial` beside it, a damage flag when it moves, and a 64 KiB cap; ckmux forwards the write to the reader's `[terminal] clipboard` targets and carries the watermark — never the text — on the attach snapshot. | tmux-style `set-clipboard` ([08](08-configuration.md) `osc52`). The policy was enabled toward the child before the write had anywhere to go, which is why [08](08-configuration.md)'s claim read ahead of the code (M-R1 → R8). |
 | ~~U1~~ | ~~Tab stops fixed at 8 (HTS/TBC ignored); REP ignored~~ — **done**: a stop table with HTS, TBC, CHT/CBT, CTC and DECST8C, kept across a resize; REP landed earlier. | Correctness for the long tail (and vttest). |
-| U1 | **Underline styles (SGR 4:x), SGR 21/53/58, colored underline** | nvim undercurl; degrades gracefully meanwhile. |
-| U1 | **Mode 1007 alternateScroll untracked** | Wheel→arrow-keys on alternate screen (less/vim wheel scrolling) — needs mode state so the client can translate. |
-| ~~U1~~ | ~~Media Copy (MC) dropped with a diagnostic~~ — **done** (U1-c): a printer policy defaulting to Deny, the controller with a chunk-safe terminator, print screen and line, autoprint, DECPFF/DECPEX, the three honest `CSI ? 15 n` answers, a bounded spool that drops a job whole rather than in part, and an out-of-band `take_printer_jobs()`. | **WP-PRINT** (below). The emulator half is upstream; the dialogs, the frame button and the save path are PRINT-1…6. |
+| U1 (wire) | **Upstream done; ckmux cell wire still reserves rather than serializes underline shape/colour.** ckVision handles SGR `4:0`…`4:5`, `21`, `58`/`59`; `proto::Writer::cell` currently writes zero into the reserved field. | nvim undercurl/underline colour survives locally but degrades across the detached-server mirror until the wire field is assigned. |
+| ~~U1~~ | ~~Mode 1007 alternateScroll untracked~~ — **done** (L-19): child-controlled mode, transported in `ModesOp`; `TerminalView` turns a wheel notch on the alternate screen into cursor keys. | `less`/`man` wheel scrolling is live. |
+| ~~U1~~ | ~~Media Copy (MC) dropped with a diagnostic~~ — **done** (U1-c): a printer policy defaulting to Deny, the controller with a chunk-safe terminator, print screen and line, autoprint, DECPFF/DECPEX, the three honest `CSI ? 15 n` answers, a bounded spool that drops a job whole rather than in part, and an out-of-band `take_printer_jobs()`. | **WP-PRINT is complete**: server spool/policy, dialogs, frame button, fetch/discard and `.txt`/`.ansi` save route are all live. |
 | ~~U2~~ | ~~Kitty keyboard protocol (child side)~~ — **done**: the emulator implements the protocol (push/pop/set per screen, masked to what this terminal can really deliver) and flags `damage.modes` when a child moves the flags; ckmux carries the active-screen flags in five bits of `ModesOp`'s word and rehydrates them into the mirror's `status()`, so the client's `TerminalView` encodes each key the way the child asked. | The staged half was the transport: `DeclaredProfile` answered the child's re-probe with the enhancements ON while the client, which is what encodes the keys, was never told — so the legacy fallback the program had just switched off was delivered anyway (M-R2 → R8 in [13](13-architecture-review.md)). |
-| U2 | **256/truecolor flattened to RGB at emulation time** (indexed identity lost) | Pass-through rendering is unaffected (why it's U2), but palette re-theming of running apps is impossible until indexed colors survive. |
+| ~~U2~~ | ~~256/truecolor flattened to RGB at emulation time~~ — **done** (L-22): indexed colour remains indexed through ckVision and ckmux's tagged wire colour. | A reader's terminal palette keeps its normal meaning; per-terminal re-theming is now optional ckmux UI work rather than blocked upstream work. |
 | U2 | XTGETTCAP, DECRQSS, rectangular ops, DECCOLM-as-resize, OSC 8 hyperlinks | Graveyard list; implement when an actual app breaks. |
 
 **Never** (matching upstream policy): Tektronix/ReGIS, DRCS soft fonts,

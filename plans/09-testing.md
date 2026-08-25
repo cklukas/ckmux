@@ -1,6 +1,6 @@
 # ckmux — Testing & Verification
 
-Plan 09 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 09 · Status: current · 2026-08-25 · [Index](README.md)
 
 ckmux adopts ckVision's verification culture wholesale (categories, golden
 discipline, sanitizers, deterministic benchmarks, "all tests pass" is not
@@ -10,6 +10,12 @@ evidence) and reuses its test infrastructure: the dependency-free
 the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
 `unit`, `golden`, `script`, `pty`, `e2e`, `benchmark`, `fuzz-corpus`,
 `portable`.
+
+**Current integration baseline:** ckmux `bc83088` against ckVision v0.1.1
+passed 51/51 suites in Release and 51/51 under ASan+UBSan; the published
+v0.1.1 Linux snapshot passed both Linux CI lanes and its release package job.
+WP-15 and WP-21 still own the remaining milestone acceptance coverage; a
+green 51-suite integration run is not a substitute for those matrices.
 
 ## Layers (bottom-up)
 
@@ -281,8 +287,9 @@ than the allocations themselves. Both are honest gaps, not silent ones.
 ## Platforms
 
 macOS is the daily gate (Apple clang + a homebrew LLVM lane for fuzzers,
-matching upstream's split). Linux container lane joins at the M5 port
-milestone and then becomes blocking. Host-terminal manual matrix per
-release: WezTerm + iTerm2 (Sixel), Terminal.app (no Sixel — fallback path),
-xterm (`-ti vt340`), plus upstream's `ckvision_terminal_probe` output
-attached to release notes for each.
+matching upstream's split). Linux is blocking: the Debian 13 `ckdev` VM runs
+GCC 13/14 and Clang locally, while public CI builds against both the pinned
+ckVision release and ckVision HEAD. Host-terminal manual matrix per release:
+WezTerm + iTerm2 (Sixel), Terminal.app (no Sixel — fallback path), xterm
+(`-ti vt340`), plus upstream's `ckvision_terminal_probe` output attached to
+release notes for each. The full three-host/vttest pass remains WP-21.

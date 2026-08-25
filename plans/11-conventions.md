@@ -1,6 +1,6 @@
 # ckmux — Engineering Conventions
 
-Plan 11 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 11 · Status: current · 2026-08-25 · [Index](README.md)
 
 ckmux inherits ckVision's engineering culture deliberately — two repos, one
 discipline. This doc records the rules a contributor (human or AI agent)
@@ -8,7 +8,7 @@ must follow; the repo's `AGENTS.md` (written at M0) will point here.
 
 ## Language & style
 
-- **C++20**, CMake ≥ 3.25, zero external dependencies beyond
+- **C++20**, CMake ≥ 3.28, zero external dependencies beyond
   `ckvision::cvision` and platform libs. Adding any dependency — including
   vendored or test-only code — is a decision-record matter first.
 - Naming, ckVision-style: `snake_case` functions/variables, trailing `_`
@@ -52,8 +52,9 @@ Man pages and user manuals of those tools are fine; their source is not.
 - Pre-1.0: no backward compatibility inside ckmux — fix the design, update
   every caller and test in the same change, remove what is superseded.
   (The *protocol* version handshake exists precisely so we can do this.)
-- ckVision is pinned by commit; bumps are their own commits, run the full
-  suite, and update the conformance pins when upstream behavior changed
+- ckVision is pinned by release version for adopter and CI builds; the sibling
+  source outranks that pin for co-development. Version bumps run the full
+  suite and update conformance pins when upstream behavior changed
   intentionally.
 - **Right level, hands-on (the co-development rule)**: ckmux is a proving
   ground for ckVision, and we develop both repos. A ckVision capability

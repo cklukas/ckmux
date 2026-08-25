@@ -53,7 +53,7 @@ program in the window, exactly as it would without ckmux.
 
 ## Build
 
-Needs a C++20 compiler, CMake 3.25+, and a ckVision checkout beside this one
+Needs a C++20 compiler, CMake 3.28+, and a ckVision checkout beside this one
 (or an installed ckVision package).
 
 ```bash
@@ -61,6 +61,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
 ./build/ckmux
 ```
+
+`cmake --install build` installs the executable, `ckmux(1)`, and the browser
+guide. The key appendix in both installed formats is generated from the same
+registry that drives dispatch, menus, the footer, and in-application help.
 
 Run the suite:
 
@@ -70,15 +74,20 @@ ctest --test-dir build --output-on-failure
 
 ## Status
 
-Early. The core promise works and is proven by a test that forks a real
+Pre-1.0, with **v0.1.1** published for macOS arm64 and Linux x86_64. The core
+promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
 Sessions are plural, named and killable. The interface is real and usable:
 menu bar with clock and calendar, footer, floating terminal windows, the
 prefix and its popup, scrollback with a frame scrollbar, Sixel graphics, and
-themes under `Settings ▸ General…`.
+themes under `Settings ▸ General…`. Shared and read-only attaches, copy mode,
+captured print output, and per-terminal process statistics are built as well.
 
-It is not finished software, and there is no tagged release yet. Expect rough
-edges, and expect the interface to move.
+M3 and M4 are in their acceptance passes. The user guide, installed man page,
+generated key appendix, Linux port, licensing, and packaging are complete.
+The remaining v1 work is M4's three-host/vttest acceptance, the
+`ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
+rough edges, and expect the interface to move.
 
 ## Layout
 
@@ -88,12 +97,15 @@ edges, and expect the interface to move.
 | `src/server/` | The detached server: terminals, PTYs, the diff engine |
 | `src/client/` | The attaching client: the ckVision interface, commands, copy mode |
 | `src/platform/` | The OS seam — sockets, processes, polling, clipboard, paths |
+| `doc/` | Templates for the installed man page and generated key appendix |
+| `docs/` | The browser guide; its key page is checked against the compiled registry |
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS is where ckmux is developed and verified. Linux builds with Clang and
-the server runs there; the GCC build is not yet warning-clean, and the Linux
-port is open work rather than a claim. Windows is a design target —
+macOS and Linux are both gating platforms. The v0.1.1 snapshot passed the full
+suite on Linux with the pinned ckVision release and with ckVision HEAD, and the
+release workflow built, tested and packaged the Linux binary. The local Debian
+gate additionally sweeps GCC 13, GCC 14 and Clang. Windows is a design target —
 `src/platform` is written against a seam that ConPTY can fill — and no more.
 
 ## Provenance

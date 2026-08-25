@@ -1,6 +1,6 @@
 # ckmux — UI & Interaction Design
 
-Plan 06 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 06 · Status: current · 2026-08-25 · [Index](README.md)
 
 The client is a full-screen ckVision application. This doc defines the screen
 layout, the menu tree, the hotkey philosophy and default keymap, the
@@ -389,9 +389,8 @@ above the separator that divides them from moving between them. A row somebody e
 attaching takes it over)"; the row this client holds says "(this client)".
 Created/last-used columns wait for the wall-clock question they raise.
 
-**What WP-50 changes about the two paragraphs above.** The inline text stops
-guessing and states the number, because the wire has carried a reader COUNT
-since WP-44 and the client throws it away on arrival — `(2 readers —
+**What WP-50 changed about the two paragraphs above.** The inline text states
+the number carried by the wire rather than narrowing it to a boolean — `(2 readers —
 attaching joins them)` rather than `(in use)`. And a row somebody else holds
 grows a second action, because "attach" is now a question with two answers:
 
@@ -832,22 +831,20 @@ Nearly every surface above is a stock ckVision widget; ckmux mostly writes
 | Confirmations | message boxes (standard button sets) | — |
 | Exit-banner windows | `Window::add_frame_overlay` border readouts | banner content (`[exit 1]`, restart hint) |
 | Print button | `Window::add_frame_overlay` (bottom-left, no shadow, clicks routed by `topmost_view_at`) | the four button states, live byte counter, unit formatter |
-| Printer Settings / Ask popup | descriptor dialogs + `wire_dialog_window` | the forms — **needs upstream typed dialog fields** (radio/check/combo/number), today's `FieldDescriptor` materializes text inputs only ([07](07-ckvision-integration.md) U1-d) |
+| Printer Settings / Ask popup | descriptor dialogs + `wire_dialog_window` | the forms, using U1-d's landed radio/check/combo/number fields |
 | Print Output | `Table` + `TextView` + `FileDialog` (`Save` mode) | job model over the protocol; `.txt`/`.ansi` writers |
 | Themes | Dark/Light/Mono schemes + interned roles | ckmux's semantic roles (hint key, badges, prefix indicator) |
 | Toasts ("Detached", "Config reloaded") | `NotificationCenter` + `set_auto_dismiss` (U6-a) | message content — implemented, WP-14, except "Config reloaded", which waits for a reload command to exist |
 
-## Open UX questions (tracked in [10-roadmap.md](10-roadmap.md))
+## UX decisions (tracked in [10-roadmap.md](10-roadmap.md))
 
-1. Default prefix `Ctrl+B` (tmux muscle memory) vs `Ctrl+A` (screen) — B
-   avoids shell `beginning-of-line`; recommend **B**.
-2. Should plain `F10` also open the menu even when a terminal is focused
-   (breaking mc's F10-quit)? Recommend **no** by default; offer as config.
+1. Default prefix is **Ctrl+B**, rebindable through `[keys]`.
+2. Plain F10 stays with a focused terminal (notably mc); `^B m` and
+   Alt+mnemonic open ckmux's menu.
 3. Scrollbars on terminal windows — **resolved** (owner decision, 2026-08-18):
    on, mounted on the window's right frame border (ckVision D-051), which
    dissolves the "costs a column" objection — the border cell was always
    there. Shown exactly while the primary screen has history off the top;
    hidden on the alternate screen.
-4. Session picker at startup even when exactly one session exists, or
-   auto-attach? Recommend **picker always** (predictability), `ckmux attach`
-   for speed.
+4. Startup auto-attaches when exactly one unused session exists; the picker
+   appears when there is a real choice or another reader is present.

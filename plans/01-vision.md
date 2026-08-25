@@ -1,6 +1,6 @@
 # ckmux — Vision & Goals
 
-Plan 01 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 01 · Status: current · 2026-08-25 · [Index](README.md)
 
 ## Elevator pitch
 
@@ -50,10 +50,11 @@ ckmux marries the two ideas:
 6. **Deterministic and testable.** Same inputs → same screens. The emulator,
    the protocol, and the UI are all testable headlessly (following ckVision's
    own determinism discipline).
-7. **macOS now, Linux next.** Development happens on macOS; all platform-
-   specific code stays behind small seams so the Linux port is a work item,
-   not a rewrite. (Windows/ConPTY is a possible later follow-on since
-   ckVision targets it, but it is out of scope for now.)
+7. **macOS and Linux, by named gates.** Development happens on macOS and the
+   Linux port is now shipped and blocking in CI. Platform-specific code stays
+   behind small seams, and a clean-build claim names its compiler and host.
+   (Windows/ConPTY is a possible later follow-on since ckVision targets it,
+   but it is out of scope for now.)
 8. **Fix ckVision, never work around it.** ckmux is one of the first real
    applications of ckVision and deliberately serves as its proving ground.
    We own and co-develop both repos: when a capability, widget, or API is
@@ -97,11 +98,11 @@ ckmux marries the two ideas:
    I no longer need (with confirmation).
 6. *Graphics & mouse:* Inside a terminal I run a program that draws Sixel
    images and uses the mouse; both work as in a plain terminal.
-7. *Take over:* From my laptop I attach to a session my desk machine still
-   has open. The transfer is automatic: the desk client is informed and
-   dropped back to its session picker, and my laptop gets the session
-   instantly. Latest request wins — no lock to break, no prompt, nothing to
-   clean up, even if the old client is unreachable.
+7. *Take over, join, or watch:* From my laptop I attach to a session my desk
+   machine still has open. The picker shows the reader count and offers all
+   three choices. Takeover remains the no-flag/default path and cannot be
+   vetoed by an unreachable client; join keeps both readers active; watch is
+   enforced read-only by the server.
 
 ## Prior art we consciously borrow from
 

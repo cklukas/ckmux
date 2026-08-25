@@ -1,12 +1,12 @@
 # ckmux — ckVision Integration
 
-Plan 07 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 07 · Status: current · 2026-08-25 · [Index](README.md)
 
 What ckVision (sibling repo, `/Volumes/PRO-BLADE/git/ckvision`, library
 target `ckvision::cvision`, C++20, zero mandatory dependencies, POSIX
-implemented / Windows deferred) actually provides for ckmux — verified
-against the source on 2026-08-16 — plus the integration seams and the
-ckVision work ckmux drives.
+implemented / Windows deferred) actually provides for ckmux — initially
+verified on 2026-08-16 and maintained through 2026-08-25 — plus the
+integration seams and the ckVision work ckmux drives.
 
 **The relationship is co-development, not consumption.** We have write
 access to both repos; ckmux is one of the first real ckVision applications
@@ -300,7 +300,7 @@ architecture review ([13](13-architecture-review.md) R7/R2c):
 |---|---|---|
 | U4-k | **`ui::Animation`, and the minimize flight as its first consumer.** ckVision had no animation machinery at all — `Application::start_timer` was the whole toolkit — so the package decided what animation IS here before it drew anything: a duration, a progress callback read from the injected `Clock`, and a terminal callback, with **no ownership of the end state**. The caller applies the end state first and the frames decorate a change that has already happened (D-060). That is the reverse of the usual retained-mode design, and it is what makes the package's four non-negotiable constraints fall out of one decision instead of being defended separately — a host that never gets a timer tick is correct because nothing downstream ever depended on a frame, "interruptible" is only "stop drawing", and a duration of zero is a complete disable answered once in the mechanism rather than by a branch at every call site. Three rules make it safe to build on: progress from the clock and never a step per tick (a slow terminal covers more ground per frame rather than running the effect in slow motion); `on_finished` exactly once for every ending, so an effect has one place to tear its decoration down; and destruction silent, because an owner being destroyed is already tearing down. The flight itself is `Desktop::set_minimize_target_provider` — a provider, because a `Desktop` does not know what lists its windows — plus `set_minimize_animation_duration` and `finish_minimize_animation`. **No provider, no flight**, so no existing ckVision application changes. [12](12-work-packages.md) U4-k. | ckmux is the application with a taskbar, so it is the one where "the window went *somewhere*" is a thing a reader can be shown rather than told. `WindowSwitcherBar` already knew where each window's row was (`drawn_entries()`), and `Window::set_minimized` already applied its whole state before notifying — the two halves the effect needed were both there, and what was missing was the middle. ckmux wires the provider to the bar's entry for the window and gets the flight; a ckVision application with no listing installs nothing and sees no change. |
 
-### Landed (U6 — a notification centre an application can actually post to)
+### Landed (U6-a/U6-b; U6-c remains open)
 
 | # | Item | Why ckmux hit it |
 |---|---|---|
@@ -314,26 +314,29 @@ ckVision `45a995e`, 2026-08-23, from a user report against ckmux:
 
 | # | Item | Why ckmux hit it |
 |---|---|---|
-| L-63 | **`TerminalEmulator::handle_csi` reads ECMA-48's private parameter bytes (`<` `=` `>` `?`) first** and hands a marked sequence to `handle_private_csi`, where every marked form the emulator honours lives and anything else marked is a diagnostic; no public handler is reachable with a marker. XTMODKEYS/XTFMTKEYS (`CSI > Pp ; Pv m` / `f`) are consumed without effect or diagnostic and XTQMODKEYS (`CSI ? Pp m`) is answered truthfully — `0` for modifyOtherKeys, which is not implemented, `2` for the cursor and function keys, which already travel in xterm's level-2 forms (ckVision D-062). Siblings fixed by the same dispatch: XTSAVE/XTRESTORE no longer overwrite the saved cursor or set a scrolling region, XTRMTITLE no longer scrolls, DECXCPR (`CSI ? 6 n`) is answered as `CSI ? r ; c R`. | Exiting `claude` in a ckmux window left "[terminal: malformed child SGR sequence]" at the bottom of the window: Claude Code's teardown writes `ESC[<u ESC[?1049l ESC[>4m`, and the last of those reached the SGR parser. Vim and neovim write the same reset. `tests/test_reference_apps.cpp` now plays the exact bytes through a real server, the wire and the client's `TerminalView`, paired with a malformed SGR that still complains. Claude Code also sends `CSI ? 6 n`, whose answer it reads only in the DEC form. **The row gates itself on the linked ckVision** — v0.1.0 was tagged before 45a995e landed, and the gating lanes build against the pin — and the gate **expires with the pin**: while `CKMUX_CKVISION_VERSION` is 0.1.0 a linked emulator without the fix makes the row NOT EXERCISED; with any later pin, which contains 45a995e by construction, the same probe result is a regression and the row fails. Nothing to remember when the pin moves. |
+| L-63 | **`TerminalEmulator::handle_csi` reads ECMA-48's private parameter bytes (`<` `=` `>` `?`) first** and hands a marked sequence to `handle_private_csi`, where every marked form the emulator honours lives and anything else marked is a diagnostic; no public handler is reachable with a marker. XTMODKEYS/XTFMTKEYS (`CSI > Pp ; Pv m` / `f`) are consumed without effect or diagnostic and XTQMODKEYS (`CSI ? Pp m`) is answered truthfully — `0` for modifyOtherKeys, which is not implemented, `2` for the cursor and function keys, which already travel in xterm's level-2 forms (ckVision D-062). Siblings fixed by the same dispatch: XTSAVE/XTRESTORE no longer overwrite the saved cursor or set a scrolling region, XTRMTITLE no longer scrolls, DECXCPR (`CSI ? 6 n`) is answered as `CSI ? r ; c R`. | Exiting `claude` in a ckmux window left "[terminal: malformed child SGR sequence]" at the bottom of the window: Claude Code's teardown writes `ESC[<u ESC[?1049l ESC[>4m`, and the last of those reached the SGR parser. Vim and neovim write the same reset. `tests/test_reference_apps.cpp` plays the exact bytes through a real server, the wire and the client's `TerminalView`, paired with a malformed SGR that still complains. Claude Code also sends `CSI ? 6 n`, whose answer it reads only in the DEC form. The current ckVision v0.1.1 pin contains `45a995e`, so the row is exercised normally and a failed capability probe is a regression; the temporary NOT EXERCISED escape used with the v0.1.0 pin has expired. |
 
-### Open
+### Upstream status
 
-| # | Item | For |
-|---|---|---|
-| U1-b | `StatusLine`/`MenuBar` niceties if gaps surface while building the footer (none known today). | M3–M4 |
-| U5-b | **`process_id()` on `core::TerminalSubsession` itself, default −1.** *Landed 2026-08-19, ckVision `4d0afef`.* The seam's implementors are a POSIX session, a mirror, and every test fake; a host holding only the seam (ckmux's serverless client, WP-39) would otherwise `dynamic_cast` to the platform class to ask who is behind a terminal — the workaround the adopter policy forbids. Virtual with a −1 default because "no pid" is the honest answer for most implementations; U5-a's accessor became the override. Observation only, both declarations say so. [12](12-work-packages.md) WP-39. | with WP-39 |
-| U5-a | **`process_id()` on `PosixTerminalSubsession` — a pid for observation.** *Landed 2026-08-19, ckVision `da11baa`.* The child pid is private and the header's reasoning (hosts signal through `request_termination()`/`terminate_now()`, never by pid) is about *control* and stands unchanged; a host that wants to **measure** the process tree — ckmux's per-terminal CPU/memory readout — needs the tree's root, and enumeration/sampling are platform work no wrapper could own. Public accessor, −1 once the child is gone, documented as observation-only with the signalling rule restated beside it. [12](12-work-packages.md) WP-37/WP-38. | with WP-38 |
-| U4-a | **Window Switcher Bar** — a new dockable widget listing open windows by title, click to activate, right-click for a host-supplied context menu, docked at the bottom stacked above whatever a host already docks there; `Desktop`'s content-area and maximize accounting reserve its height. Customizable (window set, menu contents, activation) by construction, not hardcoded to one host. [12-work-packages.md](12-work-packages.md) WP-32. | M3 |
-| U4-b | **Tile Horizontally / Tile Vertically**, plus a public query for whether the desktop is currently a filled, non-overlapping tile and what fraction each window occupies (verified absent from `desktop.cpp` today — new work, not a reuse). Drives shadow suppression while filled and ckmux's proportional reattach restoration. [12](12-work-packages.md) WP-31, WP-30. | M3 |
-| U4-c | **Maximize-follows-on-open** — opt-in: a window created while the active one is maximized opens maximized too. [12](12-work-packages.md) WP-33. | M3 |
-| U4-d | **A window-order signal on `Desktop`** (e.g. `on_window_order_changed`). Found while building WP-29: `View::on_bounds_changed` covers move, resize and zoom, but a *raise* has no observer at all — `activate()`, `activate_next()` and add/remove reorder the z-stack silently, and `Application` has no focus-changed hook either. So the client cannot be edge-triggered on the one thing a layout report exists to carry, and WP-29 samples on a settle timer instead of listening. With this, layout reporting becomes exact rather than heuristic. | after U4-a |
-| U4-g | **A dialog too tall for its screen scrolls, with its buttons pinned.** Measured, not hypothetical: `Settings ▸ General…` wants 22 rows, and an 80×24 terminal with the switcher bar and two terminals gives the desktop 21 — so the dialog clips at the bottom, which is exactly where Save and Cancel live. Content area into the existing `ScrollViewport`, button `Row` outside and below it; a dialog that fits is unchanged. Carries `ScrollViewport`'s documented wheel-over-content limitation (no mouse bubbling in `Application`) rather than pretending it away. [12](12-work-packages.md) U4-g. | M3 |
-| U4-i | **Minimize.** A `_` control left of maximize that hides a window while leaving it listed — new state, not `set_visible(false)`: every tiling, the grid, the cycle order and `filled_tile_fractions()` must skip it, and restore must return bounds, z-order and zoom. Verified absent from ckVision today. [12](12-work-packages.md) U4-i. | M3 |
-| U4-h | **A content-area change notification on `Desktop`.** U4-g's dialog re-fit has to learn that the space available changed; the only public hook was `Desktop::on_bounds_changed`, so the dialog factory chains it (lifetime-guarded, restored on close). That works and is bounded, but a factory borrowing a public observer slot is a smell, and it misses a dock appearing or leaving — which changes `content_area()` without changing Desktop's bounds, exactly what the switcher bar does. Wanted: `subscribe_content_area_change(observer, lifetime)` in the shape `subscribe_window_change` already has, fired at the end of `Desktop::on_resized`. | after U4-g |
-| U4-f | **`ui::View::set_visible()` should report a size-hint change.** A container excludes invisible children from its aggregate hint (`sum_hints()` skips them), so hiding a docked child genuinely changes what that dock asks for — but `set_visible()` only calls `invalidate()`, so nothing re-places the dock, re-clamps windows or re-fills zoomed ones. Found by WP-32, whose switcher bar hides itself at one window: ckmux has to call `Desktop::on_child_size_hint_changed()` by hand to get the row back. Every host that hides a laid-out child hits this. One line in `src/ui/view.cpp`. | after U4-a |
-| U4-e | **A public "gesture in progress" predicate on `Window`** — the shape `in_keyboard_mode()` already has. `gesture_active_` is private, and the only public proxy (`rasters_suppressed()`) is false for a window with no rasters, so a host cannot ask "is the reader still dragging?". WP-29 therefore waits for two agreeing samples 150 ms apart to infer that a drag ended, which is a heuristic standing in for a fact the library already knows. | after U4-a |
-| U3 | **A scroll op in the `Presenter`.** It diffs the composed frame against the last one and writes only changed cell runs, which is right for everything except the one case a multiplexer sees constantly: when a window's text shifts up a row, every row differs and the whole window is re-emitted. A scrolled band that is full host width, unobstructed, and aligned to real host rows can be shifted with `DECSTBM` + `SU`/`IND` instead, leaving one new row to draw; a band narrower than the host needs left-right margins (`DECLRMM`/`DECSLRM`), so it is capability-gated and falls back to what happens today. Wins most where few rows move per frame — paging in `less`, a `git log` — because a flood already coalesces into one repaint per tick. Needs the occlusion test the compositor already does, since shifting rows another window overlaps would move cells that are not ours. | after WP-4b, once the wire side (`op Scroll`) is real and the same question has been answered once |
-| U2 | XTGETTCAP/DECRQSS/rectangles when an app demands them; `OSC 8` hyperlinks, inner side; `SGR 53` overline. *(Kitty keyboard child side and indexed-colour preservation have landed; see below.)* | later |
+This table keeps the landed seams beside the genuinely open/deferred ones so
+"Open" cannot continue to contain rows whose text itself says they landed.
+
+| # | State | Item | For |
+|---|---|---|---|
+| U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
+| U5-b | **Done** (`4d0afef`) | `process_id()` on `core::TerminalSubsession`, default −1. | WP-39 |
+| U5-a | **Done** (`da11baa`) | `process_id()` on `PosixTerminalSubsession`, observation-only. | WP-37/WP-38 |
+| U4-a | **Done** (`fae8f97`) | Window Switcher Bar. | WP-32 |
+| U4-b | **Done** (`0c06c3f`) | Horizontal/vertical/grid tiling and filled-layout fractions. | WP-30/WP-31 |
+| U4-c | **Done** (`0c06c3f`) | Maximize-follows-on-open. | WP-33 |
+| U4-d | Open, non-blocking | A window-order signal on `Desktop`; WP-29 still samples on a settle timer. | follow-up to U4-a |
+| U4-g | **Done** (`6d7172b`) | Oversized dialogs scroll with buttons pinned. | M3 |
+| U4-i | **Done** (`720e0eb`) | Minimize state and window control. | M3 |
+| U4-h | Open, non-blocking | A content-area change subscription on `Desktop`; current consumers chain the bounds observer. | follow-up to U4-g |
+| U4-f | Open, non-blocking | `View::set_visible()` should report a size-hint change; ckmux currently triggers relayout explicitly. | follow-up to U4-a |
+| U4-e | Open, non-blocking | Public "gesture in progress" state on `Window`; WP-29 still infers the end from stable samples. | follow-up to U4-a |
+| U3 | Deferred, demand/performance-driven | A scroll op in `Presenter` for unobstructed aligned bands. WP-20's budgets are green without it. | post-v1 candidate |
+| U2 | Deferred, app-driven | XTGETTCAP/DECRQSS/rectangles, inner OSC 8 hyperlinks, SGR 53. | later |
 
 Process note: each item goes through ckVision's own decision/verification
 discipline (a `DECISIONS.md` record where design changes, regression + unit
@@ -359,19 +362,15 @@ around the library.
   build, and the old order silently built against yesterday's installed
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
-- **Version discipline**: ckVision is pre-1.0 with *no* backward-compat
-  guarantee (breaking changes land with all callers updated — but only
-  callers inside its own tree). ckmux therefore builds against a pinned
-  commit and bumps deliberately; every bump runs the full ckmux suite.
-  ckVision's current state: substantial implementation through M10 + the
-  embedded-terminal stack landed with Mac gates passed; its Mac 0.1 release
-  audit is in progress; milestones are acceptance-driven and some remain
-  formally open. Practical consequence for ckmux: treat the pinned commit,
-  not a version number, as truth.
-- **License**: ckVision has no license file yet (open decision, due at its
-  0.1; currently "all rights reserved" — same author as ckmux, so this is a
-  formality to resolve, tracked in [10-roadmap.md](10-roadmap.md) open
-  questions).
+- **Version discipline**: adopter and CI builds resolve exactly
+  `CKMUX_CKVISION_VERSION` — currently v0.1.1 — through `find_package` or a
+  FetchContent clone of that release tag. Co-development builds deliberately
+  use the sibling source first so an upstream fix is visible immediately.
+  Every version bump runs the full ckmux suite and updates conformance pins
+  when behavior changed intentionally.
+- **License**: both repositories are MIT. Their `LICENSE` files are
+  authoritative; `CONTRIBUTING.md` carries the shared DCO, patent-grant and
+  relicense-grant terms (WP-26 / ckVision D-OPEN-1).
 
 ## Conventions ckmux inherits
 

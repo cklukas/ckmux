@@ -1,6 +1,6 @@
 # ckmux — Architecture
 
-Plan 02 · Status: draft · 2026-08-18 · [Index](README.md)
+Plan 02 · Status: current · 2026-08-25 · [Index](README.md)
 
 ## The one diagram
 
@@ -33,7 +33,8 @@ simultaneously:
 - child apps survive client exit (PTY master never closes on detach);
 - reattach shows *current* screens instantly (no replay heuristics);
 - terminals can move between sessions inside one process (pointer move);
-- a future second client is a broadcast, not a redesign.
+- a second client is a broadcast, not a redesign (shared and read-only attach
+  are now live).
 
 The alternative (client-side emulation + raw-byte replay on attach, as
 dtach does) was rejected: replay is unbounded, loses alternate-screen and
@@ -67,10 +68,9 @@ One binary, three roles (dispatch on argv):
 | `ckmux check-config`, `kill-server`, … | CLI utilities over the same socket protocol |
 | `ckmux --help` / `--version` (also `-h`, `help`, `-V`) | answered in `main()` alone; no socket, no server |
 
-**Of that table, `ckmux`, `--server`, `kill-server`, `--help` and `--version`
-dispatch today**; every other subcommand meets an explicit refusal naming
-`--help` rather than silently starting a client that ignores what was typed.
-The rest is WP-11 ([12-work-packages.md](12-work-packages.md)).
+**Every public role in that table dispatches today.** Unknown arguments meet
+an explicit refusal naming `--help` rather than silently starting a client
+that ignores what was typed (WP-11).
 
 Single binary keeps client/server versions paired (they still handshake —
 plan 05 — because old servers meet new binaries after upgrades).
@@ -134,11 +134,9 @@ loop:
 no `SIGCHLD` handler: ckVision's subsession reaps its own child and reports
 `Exited` with a status, and the loop reads that where it reads everything else.
 That is deliberate — a handler cannot safely touch the state a reap has to
-update — but two halves of it are still open, and it is worth saying which:
-the server currently observes the exit and sends no `TermClosed` for it
-(m-exit-msg, remediation topic R2 in
-[13-architecture-review.md](13-architecture-review.md)), and there is no
-on-exit policy to apply yet (WP-13).
+update. Both former gaps are closed: lifecycle damage produces `TermClosed`,
+and WP-13 applies `[general] on-exit` (`close`, `hold`, or `hold-on-error`) to
+the same observed transition.
 
 poll() suffices for the target scale (tens of fds); the fd-wait sits behind
 a small seam (`platform/poller.{hpp,cpp}`) so Linux epoll / kqueue can slot
@@ -196,11 +194,11 @@ renders them verbatim ([07-ckvision-integration.md](07-ckvision-integration.md))
 | Server gone — crashed, or ended with its last session | Children get SIGHUP (PTYs close). The client does **not** exit: it empties its desktop, greys every session-needing command, and the next request that needs a server starts one, throttled to a second so a machine where none can start is not asked twenty times a second (WP-8). Ending the last session and starting another is therefore one uninterrupted thing. Same blast radius as tmux; mitigated by server minimalism + tests + ASan/UBSan CI ([09](09-testing.md)). |
 | Mirror desync (a sequence gap, ops that do not fit) | Not fatal: the mirror applies nothing and sets `needs_snapshot()`, the client re-sends `Attach`, and the server answers with every terminal whole. One message, one code path (plan 05). |
 | Decode / framing error | Fatal for that connection on both sides: there is no way to resynchronise a stream whose framing is wrong. The server drops that client and serves the others; the client prints one line and exits — deliberately *after* ckVision has given the terminal back, because a line printed mid-frame lands on top of a window border. |
-| Slow client (buffer full) | Server never blocks: per-client send queue with high-water mark → stop queueing deltas and collapse into "snapshot on drain" (plan 05). A wedged client cannot stall PTY reading. The mark is advisory today — a frame past it is still queued rather than dropped, so memory is not yet bounded, and the heal gate can re-snapshot repeatedly (M-S1/M-S5 → R2 in [13](13-architecture-review.md)). |
+| Slow client (buffer full) | Server never blocks: 256 KiB suppresses further screen deltas into one owed snapshot, 4 MiB is the connection high-water, and 32 MiB drops the laggard. A repair does not re-mark itself, so draining produces one heal rather than a snapshot loop (R2, plan 05). |
 | Descriptor exhaustion at `accept()` (EMFILE) | `Socket::accept_one` returns an `AcceptResult` whose status separates `Idle` (nothing pending — the ordinary answer several times a second) from `Exhausted` and `Failed`, precisely so a caller does not read every `-1` as "try again" and spin on a listener that stays readable. The seam landed with topic R4 of [13](13-architecture-review.md); the server loop's adoption of it is R2's there. |
 | `poll()` itself fails | `Poller::outcome()` distinguishes `Ready`/`TimedOut`/`Interrupted`/`Failed`, because three of those return an empty set and a caller that cannot tell a closed-but-watched descriptor from a timeout burns a core for the life of the process. Landed with R4; adopted by the loop in R2. |
 | A spawned child inheriting ckmux's descriptors | Every descriptor ckmux opens is close-on-exec (`platform/descriptors.hpp`), so a shell in a terminal window cannot hold the control socket, the listener or the start lock. Fork sites also reset every signal disposition and unblock the mask, so a child does not inherit the server's ignored SIGPIPE. |
-| PTY flood (`yes`, `cat /dev/urandom`) | Read caps per *pass* (shared, not per terminal) + emulator batch parsing + fps-coalesced output keep the server responsive. Bench target in [09](09-testing.md); measured `Ping` in 32 ms worst under `yes`. The child→PTY input queue is not yet byte-bounded. |
+| PTY flood (`yes`, `cat /dev/urandom`) | Read caps per *pass* (shared, not per terminal) + emulator batch parsing + fps-coalesced output keep the server responsive. The [09](09-testing.md) gate measures roughly 550 ms worst in Debug and roughly 22 ms mean optimized under `yes`; build type is part of the measurement. The child→PTY input queue is not yet byte-bounded. |
 | Version mismatch | Handshake refuses with actionable message (plan 05). |
 
 ## Security posture
@@ -252,7 +250,7 @@ ckmux/
 ├── tests/                  # unit + golden + integration (plan 09)
 ├── fuzz/                   # decoder fuzz targets + corpora (plan 09)
 ├── tools/                  # check_layers.py — the module and layer lint
-├── .github/workflows/      # macOS, macOS+ASan/UBSan, Linux (advisory to M5)
+├── .github/workflows/      # macOS, macOS+ASan/UBSan, Linux (blocking)
 └── CMakeLists.txt
 ```
 
@@ -294,7 +292,7 @@ Language/build: **C++20 + CMake**, mirroring ckVision's standards and
 conventions (zero mandatory external dependencies; ckVision consumed as a
 sibling checkout / package per [07](07-ckvision-integration.md)).
 
-## Portability seams (macOS now, Linux next)
+## Portability seams (macOS and Linux gated)
 
 | Concern | macOS | Linux | Seam |
 |---|---|---|---|

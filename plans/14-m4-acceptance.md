@@ -649,6 +649,7 @@ happened twice in one afternoon.
 - **Wall-clock performance.** WP-20 gates budgets deterministically by counts;
   the flood row here confirms at the application level, and deliberately does
   not introduce a second, timing-based bar.
-- **The Linux hosts (WP-22).** M4's matrix is this platform. The rig should
-  not hard-code paths that make the Linux lane a rewrite, but nothing here is
-  claimed for Linux.
+- **Linux (WP-22).** The port and its blocking CI/release lanes are complete.
+  M4's visual host matrix remains WezTerm, iTerm2 and Terminal.app on macOS;
+  this document does not turn the Linux compile/test gate into a fourth visual
+  host claim.

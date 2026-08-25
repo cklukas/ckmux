@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "client/cli.hpp"
+#include "client/key_reference.hpp"
 #include "client/client_app.hpp"
 #include "client/run_client.hpp"
 #include "client/server_connection.hpp"
@@ -159,6 +160,16 @@ int kill_server(const std::filesystem::path& socket) {
 
 int main(int argc, char** argv) {
     const std::filesystem::path socket = ckm::platform::socket_path();
+    if (argc == 2 && std::strcmp(argv[1], "--internal-key-appendix=markdown") == 0) {
+        const std::string appendix = ckm::client::render_default_key_appendix(
+            ckm::client::KeyAppendixFormat::Markdown);
+        return std::fwrite(appendix.data(), 1, appendix.size(), stdout) == appendix.size() ? 0 : 1;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--internal-key-appendix=roff") == 0) {
+        const std::string appendix =
+            ckm::client::render_default_key_appendix(ckm::client::KeyAppendixFormat::Roff);
+        return std::fwrite(appendix.data(), 1, appendix.size(), stdout) == appendix.size() ? 0 : 1;
+    }
     if (argc >= 2 && std::strcmp(argv[1], "--server") == 0) {
         // The socket is passed rather than resolved again, so a server always
         // listens on the path the client that started it was looking at — one

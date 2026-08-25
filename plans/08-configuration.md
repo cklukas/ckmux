@@ -1,6 +1,6 @@
 # ckmux — Configuration
 
-Plan 08 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 08 · Status: current · 2026-08-25 · [Index](README.md)
 
 Deliberately small in v1. ckmux must be excellent with an *empty* config —
 configuration exists to adjust, never to make it usable (contrast: stock
@@ -196,16 +196,17 @@ Three states, and the difference between them is the point:
 | **Unknown** | No such key. Warns with its line, and the rest of the file is still read. |
 
 Honoured today: `prefix`, `shell`, `login-shell`, `scrollback` (including
-`0`), `theme`, `clock`, `confirm-kill`, `kill-grace-seconds`,
+`0`), `theme`, `clock`, `on-exit`, `confirm-kill`, `kill-grace-seconds`,
 `kill-empty-session`, `term`, `mouse`, `alternate-scroll`, `sixel`,
 `sixel-max-megapixels`, `osc52`, `clipboard`, `[render] max-fps`,
-`[printer] mode` and `[printer] spool-limit`, and the whole of `[keys]`.
+all `[printer]` keys (`mode`, `ask-cache`, `spool-limit`, `save-format`,
+`save-folder`, `save-ask-name`), and the whole of `[keys]`.
 
-Read but not yet honoured: `on-exit` (WP-13), and `[printer]`'s `ask-cache`,
-`save-format`, `save-folder` and `save-ask-name` (PRINT-1…6). A key leaves
-that list in the commit that wires it up — `[terminal] clipboard` left it with
-WP-17, which is where copying began, and `clock` left it with the menu-bar
-clock.
+No documented v1 key is intentionally waiting for an implementation package.
+The runtime honours the printer save fields in the Print Output path and the
+ask-cache in server policy resolution. `keys_not_honoured_yet()` still names
+those four fields, so `check-config` currently emits a stale progress warning;
+that is a diagnostic defect, not the feature state.
 
 Four keys stayed on that list *after* they were wired up, which is the same
 defect facing the other way: `check-config` told a reader that setting them
@@ -215,10 +216,10 @@ coalescing tick, and `[printer] mode` and `spool-limit` the terminal launch
 profile. Corrected 2026-08-18 (plans/13, m-conf), with a test that fails if
 any of the four returns to the list.
 
-The one remaining printer gap is about a *value*, not a key: `mode = off`
-genuinely denies capture, but until PRINT-1…6 lands there is nobody to ask, so
-`mode = ask` captures rather than asking. `keys_not_honoured_yet()` is a list
-of keys nothing reads, so it does not carry that — this paragraph does.
+Printer `mode = off`, `capture`, and `ask` are all live. Ask uses the bounded
+ask cache and the reader-facing prompt; captures are exposed through the frame
+button and Print Output window, and save formatting/folder/name settings are
+applied at the filesystem boundary.
 
 Notes on the parts that are easy to get wrong:
 

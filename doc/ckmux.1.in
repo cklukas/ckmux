@@ -1,0 +1,144 @@
+.\" Copyright (c) 2026 C. Klukas. All rights reserved.
+.\" SPDX-License-Identifier: MIT
+.TH CKMUX 1 "August 25, 2026" "ckmux" "User Commands"
+.SH NAME
+ckmux \- terminal multiplexer with a visible desktop interface
+.SH SYNOPSIS
+.B ckmux
+.br
+.B ckmux ls
+.br
+.B ckmux new
+.RB [ \-s " name" ]
+.RI [ command ]
+.br
+.B ckmux attach
+.RB [ \-\-share ]
+.RB [ \-\-watch ]
+.RB [ \-\-adopt\-size ]
+.I name|id
+.br
+.B ckmux kill\-session
+.I name|id
+.br
+.B ckmux check\-config
+.br
+.B ckmux kill\-server
+.br
+.B ckmux
+.RB [ \-h | \-\-help | \-V | \-\-version ]
+.SH DESCRIPTION
+.B ckmux
+keeps terminal sessions and the programs inside them alive when its client
+disconnects. A detached per-user server owns the sessions, pseudo-terminals,
+screen state, scrollback, and window layout. The client presents that state as
+a visible ckVision desktop with menus, a context-sensitive footer, and movable
+terminal windows.
+.PP
+Running
+.B ckmux
+starts the server if necessary and opens the session picker. Detaching or
+losing the client connection leaves every child program running. Reattaching
+shows current state rather than replaying output.
+.SH COMMANDS
+.TP
+.B ls
+List the sessions held by an existing server. This command does not start a
+server merely to report that none is running.
+.TP
+.BI new " [\-s name] [command]"
+Create a session without attaching. If supplied,
+.I command
+runs in its first terminal through the configured shell.
+.TP
+.BI attach " [options] name|id"
+Attach directly to one session. With no mode option, take the session over and
+return previous readers to their pickers.
+.TP
+.BI kill\-session " name|id"
+Ask every program in one session to end, then remove the session.
+.TP
+.B check\-config
+Parse the configuration, print warnings and settings not honored by this
+build, and start no server. Configuration warnings produce exit status 1.
+.TP
+.B kill\-server
+End the server and every terminal it owns.
+.SH ATTACH OPTIONS
+.TP
+.B \-\-share
+Join without evicting readers already attached.
+.TP
+.B \-\-watch
+Join read-only. Input and all session-changing operations are refused by the
+server. Implies
+.BR \-\-share .
+.TP
+.B \-\-adopt\-size
+Make the session desktop the size of this screen on arrival. This reflows
+windows and resizes child pseudo-terminals for every attached reader.
+
+@CKMUX_KEY_APPENDIX@
+.SH CONFIGURATION
+The configuration is a small INI file with
+.BR [general] ,
+.BR [terminal] ,
+.BR [printer] ,
+.BR [render] ,
+and
+.B [keys]
+sections. A missing file is normal and every setting has a built-in default.
+Use
+.B ckmux check\-config
+to validate it without starting a server. In
+.BR [keys] ,
+.B bind
+and
+.B unbind
+change prefix chords by the action names listed in the generated key section.
+.PP
+The browser guide documents every setting and default at
+https://cklukas.github.io/ckmux/configuration.html.
+.SH ENVIRONMENT
+.TP
+.B CKMUX_SOCKET
+Server socket path used exactly as given. Otherwise ckmux uses
+.B $XDG_RUNTIME_DIR/ckmux\-<uid>/default.sock
+with
+.B $TMPDIR
+and then
+.B /tmp
+as fallbacks.
+.TP
+.B CKMUX_CONFIG
+Configuration file used exactly as given. Otherwise ckmux uses
+.B $XDG_CONFIG_HOME/ckmux/ckmux.conf
+or ordinarily
+.BR $HOME/.config/ckmux/ckmux.conf .
+.SH FILES
+.TP
+.B $XDG_CONFIG_HOME/ckmux/ckmux.conf
+Default configuration file.
+.TP
+.B $XDG_RUNTIME_DIR/ckmux\-<uid>/default.sock
+Default server socket when
+.B XDG_RUNTIME_DIR
+is set to an absolute path.
+.SH EXIT STATUS
+Zero means the requested command completed. Status 1 means an understood
+request could not be completed, or
+.B check\-config
+found configuration warnings. Status 2 means command-line arguments were
+invalid.
+.SH SECURITY
+The server accepts only local Unix-domain socket connections from the owning
+user. Child output is parsed into terminal state and re-rendered; raw child
+bytes are never forwarded to the host terminal. Printing is captured into a
+bounded in-memory spool and never opens a printer device or executes a print
+command.
+.SH SEE ALSO
+.BR infocmp (1),
+.BR tic (1),
+.BR terminfo (5)
+.PP
+Project documentation: https://cklukas.github.io/ckmux/

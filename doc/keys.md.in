@@ -1,0 +1,36 @@
+---
+title: Keys
+---
+
+`^B` (Ctrl-b) is the *prefix*: press it, then the command key. The footer
+shows the most useful chords for your terminal's width, `^B ?` opens the full
+key reference, and every command here is also in the menu bar — a chord is a
+shortcut, never the only way.
+
+A reader's `bind` lines in the [configuration](configuration.md) rewrite
+these chords; commands without a default chord remain available in the menus.
+
+@CKMUX_KEY_APPENDIX@
+## Copy mode and paste
+
+`^B [` enters copy mode on the focused terminal (its scrollback included);
+`^B ]` pastes what was copied.
+
+Inside copy mode:
+
+| Keys | Movement / action |
+|---|---|
+| Arrows, `h j k l` | Move the cursor |
+| `0` / `$` | Start / end of line |
+| `g` / `G` | Top / bottom of history |
+| PageUp / PageDown, `^B` / `^F` | Page up / down |
+| `v` | Select by character |
+| `V` | Select by line |
+| `^V` | Select a rectangle |
+| `/` and `?` | Search forward / backward |
+| Enter | Copy the selection and leave |
+| Esc | Leave without copying |
+
+Where a copy goes — the outer terminal's clipboard, `pbcopy`, or a command of
+your own — is the `[terminal] clipboard` setting in the
+[configuration](configuration.md).

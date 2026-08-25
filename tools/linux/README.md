@@ -16,7 +16,7 @@ terminal output — after weeks of clean builds here.
 |---|---|
 | VM | Lima (`brew install lima`), instance **`ckdev`**, Apple Virtualization (`vz`) |
 | Guest | Debian 13 "trixie", aarch64, kernel 6.12 cloud image |
-| Toolchain | GCC 14.2, Clang 19.1, CMake 3.31, Ninja, libFuzzer, Python 3.13, glibc 2.41 |
+| Toolchain | GCC 13.3 + 14.2, Clang 19.1, CMake 3.31, Ninja, libFuzzer, Python 3.13, glibc 2.41 |
 | Resources | 4 CPUs, 6 GiB RAM, 40 GiB sparse disk |
 | Where it lives | `/Volumes/PRO-BLADE/lima/ckdev` (`~/.lima` is a symlink there; the download cache is `/Volumes/PRO-BLADE/lima-cache`). Nothing on the system disk but the 78 MB `lima` binary. |
 | Source | `/Volumes/PRO-BLADE/git` is mounted **at the same path** inside the VM, writable (virtiofs). Edit on the Mac, build on Linux. |
@@ -80,11 +80,12 @@ limactl start ckdev       # ~10 s to a shell
 limactl delete ckdev      # everything but the yaml
 ```
 
-## Known state (2026-08-22, first run, ckVision `c1c0c68` × ckmux `d05ab76`)
+## Known state (2026-08-23, ckmux v0.1.1 × ckVision v0.1.1)
 
-Neither repository builds with **GCC** at HEAD; the inventory is the point of
-the tool and is in the commit that added it. Both **libraries and production
-binaries build with Clang** — every Clang error is in `tests/` — and the
-Linux `ckmux` starts a server, opens a PTY and lists a session. So Clang is
-the configuration to use for interactive testing today, and GCC is the one
-that has work to do.
+The port is green, not advisory. The local VM builds clean with GCC 13 Release
+and Debug, GCC 14 Release, and Clang Release; GCC 13 ran the full ckmux suite
+49/49. The published v0.1.1 snapshot then passed both Linux CI lanes 51/51
+(pinned ckVision and ckVision HEAD), and the Linux x86_64 release job built,
+tested and packaged successfully. The first-run paragraph this replaces is
+kept in git history as the inventory that found the port defects; it is no
+longer the current operating state.

@@ -10,7 +10,7 @@ page states each one.
 `ckmux check-config` parses the file and reports every problem with its file
 and line, starting nothing; it exits non-zero when the file has problems. A
 running ckmux shows the same warnings at startup rather than guessing. The
-Settings dialog (`Session ▸ Settings…`) writes the same keys back to the same
+Settings dialog (`Settings ▸ General…`) writes the same keys back to the same
 file.
 
 Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
@@ -102,3 +102,7 @@ Actions: `new-terminal`, `close-terminal`, `kill-terminal`, `move-terminal`,
 `ckmux check-config` also names any key that is parsed and validated but not
 yet acted on by this version, with the work it waits for — so "I set this,
 why did nothing happen?" always has an answer.
+
+Known v0.1.1 diagnostic defect: `check-config` still lists `ask-cache`,
+`save-format`, `save-folder`, and `save-ask-name` as waiting for printer work.
+The runtime does honor all four; only that report is stale.

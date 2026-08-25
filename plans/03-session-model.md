@@ -1,6 +1,6 @@
 # ckmux — Session Model
 
-Plan 03 · Status: draft · 2026-08-16 · [Index](README.md)
+Plan 03 · Status: current · 2026-08-25 · [Index](README.md)
 
 Defines the server-side object model: what exists, who owns what, how things
 are named, and the exact semantics of every lifecycle operation. The wire
@@ -39,9 +39,9 @@ Server (one per user, per socket path)
 | `name` | UTF-8, unique among live sessions. Auto-named `1`, `2`, … on creation; renameable any time (`Session → Rename…`). |
 | `created_at`, `last_attached_at` | For the session picker. |
 | `terminals` | Ordered list (creation order = default cycling order). |
-| `desktop_size` | Cols×rows of the session's virtual desktop (see multi-client rules below). **Not yet real: `Server` keeps a desktop per CONNECTION (`Client::desktop`) and `Session` has no size at all.** Indistinguishable while one client is attached, and the whole of the problem the moment two are — WP-40. |
+| `desktop_size` | Cols×rows of the session's virtual desktop (see multi-client rules below). Server-owned since WP-40; a lone reader may resize it, while an additional reader pans unless an explicit size policy adopts that reader's screen. |
 | `layout` | Per-terminal window geometry + z-order + focused terminal + maximized flag. |
-| `attached_clients` | 0..n; v1 enforces 0..1 (takeover). Opt-in `0..n` is WP-44. |
+| `attached_clients` | 0..n. Takeover is the default; opt-in join and server-enforced read-only watch are live (WP-44, WP-48…50). |
 
 **Decision: window layout is session state, owned by the server** — not
 client-local. Rationale: the user expects window arrangement to survive
@@ -79,7 +79,7 @@ dialogs, the session picker, copy-mode UI — all client-local, never synced.
 | Operation | Semantics | Edge cases |
 |---|---|---|
 | `new-session [name] [cmd]` | Create session; optionally create its first terminal running `cmd` (default: user's shell). Does not implicitly attach. Implemented. | Name collision → reject with `NameTaken` (UI suggests `name-2`). Names compare exactly: `Build` and `build` are two names, because case folding is a locale question this has no business answering. |
-| `attach session` | Bind client to session; server sends full snapshot (layout + every terminal's screen + scrollback tail + images). Sets `last_attached_at`. | Already attached elsewhere: **automatic takeover — latest client wins**; the previous client is detached first, informed best-effort, and can never block the transfer (full spec below). |
+| `attach session` | Bind client to session; server sends full snapshot (layout + every terminal's screen + scrollback tail + images). Sets `last_attached_at`. | If readers are already attached, mode **take over** evicts them best-effort, **join** keeps them, and **watch** joins read-only. No flag means take over (full spec below). |
 | `detach` | Unbind client. Session and terminals unaffected. Also triggered by client EOF/crash (socket close = implicit detach). | Detaching the last client from an *empty* session (0 terminals) does not kill it — sessions die only explicitly or when their last terminal closes with `on-exit=close` and config `kill-empty-session=true` (default **true**, matching tmux). |
 | `new-terminal [session] [cmd] [geom]` | Allocate PTY, spawn `cmd` (default shell, `TERM` per [04](04-terminal-emulation.md)), place window per placement policy (cascade from last position; honor explicit geom). | Session at terminal limit (config, default 64) → error. |
 | `close-terminal id {force, grace}` | Graceful, implemented: the child's process group is ASKED — SIGHUP then SIGTERM, ckVision's `request_termination` — with the PTY still draining, so a goodbye lands on the reader's screen. The terminal is removed and `TermClosed{exited=1, status}` sent when the child exits; the client's window falls only then. | `force=1` (the dialog's ticked-by-default box) closes whatever remains when the grace expires — ckVision's close escalates to SIGKILL. `force=0` and the program declines: terminal and window stay, said in the server log. The grace is config `kill-grace-seconds`, shared with `kill-session`. A repeated close replaces the pending one's terms. A session emptied this way is subject to `kill-empty-session`. |
@@ -94,10 +94,9 @@ dialogs, the session picker, copy-mode UI — all client-local, never synced.
 
 ## Two clients at once: how size and layout work (WP-40…WP-44)
 
-Takeover below stays the DEFAULT and is not a v1 simplification. What this
-section specifies is the opt-in that sits beside it, and it is written here
-rather than in the parking lot because three of its findings are latent
-defects in the single-client design as it stands today.
+Takeover stays the DEFAULT and is not a v1 simplification. The opt-in modes
+that sit beside it, plus the reader/session state split they required, landed
+through WP-40…50.
 
 ### The constraint that decides everything
 
@@ -137,13 +136,12 @@ deliberately STICKY — it shrinks to fit a newcomer and does not grow back when
 they leave, because a session whose geometry oscillates with people's attach
 cycles is worse than one that is merely too small.
 
-### What stops being session state
+### What stopped being session state
 
-Under one client these are indistinguishable from session state, which is why
-they were built that way and why each is a latent defect rather than a
-mistake. All of them are WP-41.
+Under one client these were indistinguishable from session state. WP-41 moved
+them to the reader side before simultaneous attach shipped.
 
-| Today | Under two clients | Why |
+| Before WP-41 | Current ownership | Why |
 |---|---|---|
 | `Session::focused`, set on every `Input` | Per client; the session keeps one as the reattach default | Two readers typing steal each other's focus marker |
 | `TerminalMarks` (WP-19), set by the server and cleared once it has told **a** client | The FACT stays server-side ("rang at T", "wrote at T"); the MARK becomes each client's own | "A terminal you are not in" is a sentence about a reader. Cleared globally, the second client never sees the mark it was owed |
@@ -153,11 +151,9 @@ mistake. All of them are WP-41.
 
 ### Two hazards that are not obvious
 
-**Pastes interleave.** WP-18's credit queue is per connection and the server
-writes each chunk as it arrives, so two readers pasting into one terminal
-produce a mixture neither of them typed. A terminal needs a write slot held
-for the duration of a paste, with the second queued behind it — WP-42, and it
-must land WITH multi-attach rather than after it.
+**Pastes would interleave without arbitration.** WP-42 added a terminal-level
+write slot for the duration of a paste, with a second paste queued behind it;
+it landed before multi-attach.
 
 **Layout can echo.** A's gesture → server → broadcast → B applies → B's clamp
 nudges geometry → B reports → server broadcasts → A applies… The pieces that
@@ -169,14 +165,13 @@ originate**: fitting is local, gestures are reported.
 
 ### Reader modes (WP-49, WP-50)
 
-WP-44 built the opt-in as a boolean: take the session, or join it. That is one
-bit for a question a reader asks in three ways, and the missing third is the
-one that makes sharing comfortable — **watch without being able to type**.
-`Attach.share` becomes `Attach.mode`, the same byte with a third value:
+WP-44 first built the opt-in as a boolean: take the session, or join it.
+WP-48…50 widened that byte to `Attach.mode` and added the third reader intent:
+**watch without being able to type**.
 
 | Mode | Value | What it does to the readers already there | What this reader may do |
 |---|---|---|---|
-| Take over | 0 | Every one of them is detached (`Detached{takeover}`), exactly as today | Everything |
+| Take over | 0 | Every one of them is detached (`Detached{takeover}`), the default path | Everything |
 | Join | 1 | Nothing; they stay | Everything |
 | Watch | 2 | Nothing; they stay | Read the session, and nothing that changes it |
 
@@ -264,11 +259,11 @@ count is on screen, and a stored default would silently change what a bare
 takes over when given neither, which needs no flag of its own precisely
 because there is no setting for it to disambiguate against.
 
-## Multi-client policy: latest client wins (specified behavior)
+## Default multi-client policy: latest client wins
 
-Attaching to a session is **always granted, immediately, to the newest
-requester**. This is a product requirement, not a v1 simplification: any
-connect to an open session transfers the session to the latest client.
+A take-over attach is **always granted, immediately, to the newest requester**.
+This is the default and a product requirement, not a v1 simplification.
+Explicit join and watch attaches preserve existing readers instead.
 
 The transfer, step by step:
 
@@ -282,7 +277,7 @@ The transfer, step by step:
    view, attaching an open session is indistinguishable from attaching an
    idle one: **no prompt, no negotiation, no waiting.**
 4. A — if still alive — falls back to its session picker with a prominent
-   notice (which session, when, taken over by whom). Re-attaching from A
+   notice that another reader took over the session. Re-attaching from A
    takes the session back the same way; nothing to unlock, nothing to
    clean up.
 
@@ -292,9 +287,8 @@ Rules that follow:
   requests; the last arrival holds the session.
 - One client is attached to at most one session at a time; switching
   sessions is detach + attach under the hood, seamless in the UI.
-- Takeover also settles desktop sizing: the session's desktop is always
-  sized by its one current client (a fresh `resize-desktop` accompanies
-  every attach).
+- Takeover changes who may read the session, not its geometry. The session's
+  desktop-size policy and explicit `--adopt-size` action govern resizing.
 - **Simultaneous shared attach** is built and is opt-in (WP-44, landed
   2026-08-20): takeover-by-default remains the contract, and a client that
   asks to join gets to join. What each of the three modes means, and what a
