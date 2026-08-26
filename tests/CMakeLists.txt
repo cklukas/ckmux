@@ -19,6 +19,7 @@ set(CKMUX_TEST_SOURCES
     test_copy_mode.cpp
     test_core_promise.cpp
     test_diff_engine.cpp
+    test_docs.cpp
     test_grid_delta.cpp
     test_kill_terminal.cpp
     test_keymap.cpp
@@ -72,6 +73,13 @@ if(TARGET ckmux)
             CKMUX_CKVISION_HELLO_PATH="$<TARGET_FILE:ckvision_hello>")
     endif()
     add_dependencies(ckmux_tests ckmux)
+endif()
+if(TARGET ckmux_docs)
+    target_compile_definitions(ckmux_tests PRIVATE
+        CKMUX_GENERATED_MAN_PATH="${CKMUX_GENERATED_MAN}"
+        CKMUX_GENERATED_KEYS_PATH="${CKMUX_GENERATED_KEYS}"
+        CKMUX_SOURCE_KEYS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../docs/keys.md")
+    add_dependencies(ckmux_tests ckmux_docs)
 endif()
 ckmux_strict(ckmux_tests)
 

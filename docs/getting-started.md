@@ -9,14 +9,14 @@ From the [releases page](https://github.com/cklukas/ckmux/releases):
 **Debian / Ubuntu (x86_64):**
 
 ```sh
-sudo apt install ./ckmux_0.1.0_amd64.deb
+sudo apt install ./ckmux_0.1.1_amd64.deb
 ```
 
 **Linux tarball (x86_64) or macOS (Apple Silicon):**
 
 ```sh
-tar xzf ckmux-0.1.0-*.tar.gz
-sudo cp ckmux-0.1.0-*/bin/ckmux /usr/local/bin/
+tar xzf ckmux-0.1.1-*.tar.gz
+sudo cp ckmux-0.1.1-*/bin/ckmux /usr/local/bin/
 ```
 
 Every archive ships with a `.sha256` checksum file alongside it.
@@ -31,6 +31,11 @@ cmake --build build -j
 ctest --test-dir build          # optional, the full suite
 sudo cmake --install build
 ```
+
+The source install includes `ckmux(1)` and the complete browser guide; use
+`man ckmux` for the command reference. Its default-key appendix and the
+browser [keys page](keys.md) are generated from the compiled command registry,
+so they stay aligned with the interface.
 
 The build fetches the matching [ckVision](https://github.com/cklukas/ckVision)
 release automatically, pinned to the exact version this ckmux was developed
@@ -81,11 +86,11 @@ time. `ckmux attach --share` joins a session instead of taking it over, and
 type reaches it. From the picker, a session somebody else is watching offers
 the same three answers, and the footer says `2 readers` while you have company.
 
-Once you are in, the Session menu carries the rest: **Watch Only** puts you
-read-only and takes you back out, **Others Read-Only** does it to everybody
-else, and **Take Session Over** drops them to their pickers. Any reader can do
-any of these to any other — there is no owner, so whatever one of you does,
-the other can undo.
+Once you are in, the Session menu carries the rest: **Watch Only** toggles you
+into or out of read-only mode, **Others Read-Only** does it to everybody else,
+and **Take Session Over** drops them to their pickers. Any reader can do any of
+these to any other — there is no owner, so whatever one of you does, the other
+can undo.
 
 Quitting entirely: `^B q` quits the client; `ckmux kill-server` ends the
 server and every terminal in it.

@@ -8,47 +8,52 @@ key reference, and every command here is also in the menu bar — a chord is a
 shortcut, never the only way.
 
 A reader's `bind` lines in the [configuration](configuration.md) rewrite
-these chords; the commands themselves are fixed.
+these chords; commands without a default chord remain available in the menus.
 
-## Terminals
+## Default key appendix
 
-| Chord | Command |
-|---|---|
-| `^B c` | New Terminal |
-| `^B x` | Close Terminal |
-| `^B ,` | Rename Terminal |
-| `^B .` | Move to Session… |
-| `^B n` / `^B p` | Next / Previous Terminal |
-| `^B 1`–`9` | Focus Terminal by Number |
-| `^B w` | Window List… |
-| `^B P` | Print Output… |
+This table is generated from the same registry that drives dispatch, the
+menus, footer, which-key popup, and in-application help. `Prefix` means `^B` by
+default. A `bind` or `unbind` line can change any row with an action name.
 
-Kill Terminal deliberately has no default chord — it destroys unsaved work
-with no undo, so it lives in the menu; bind `kill-terminal` yourself if you
-want it on a key.
-
-## Windows and layout
-
-| Chord | Command |
-|---|---|
-| `^B z` | Zoom (maximize / restore) |
-| `^B _` | Minimize — the window returns from the window bar |
-| `^B M` | Move / Resize by keyboard |
-| `^B h` / `^B v` / `^B g` | Tile Horizontally / Vertically / Grid |
-| `^B T` | Cascade |
-| `^B b` | Status Bar on/off |
-
-## Sessions and the client
-
-| Chord | Command |
-|---|---|
-| `^B d` | Detach — programs keep running |
-| `^B s` | Sessions… (the picker) |
-| `^B S` / `^B R` / `^B K` | New / Rename / End Session… |
-| `^B q` | Quit ckmux |
-| `^B m` | Menu Bar |
-| `^B ?` | Keys… (the reference) |
-| `^B ^B` | Send a literal prefix to the program |
+| Default | Command | `bind` action |
+|---|---|---|
+| `^B c` | New Terminal | `new-terminal` |
+| `^B x` | Close Terminal | `close-terminal` |
+| `Menu only` | Kill Terminal | `kill-terminal` |
+| `^B .` | Move to Session... | `move-terminal` |
+| `^B ,` | Rename Terminal... | `rename-terminal` |
+| `^B P` | Print Output... | `print-output` |
+| `Menu only` | Printer Settings... | `printer-settings` |
+| `^B n` | Next Terminal | `next-terminal` |
+| `^B p` | Previous Terminal | `previous-terminal` |
+| `^B 1-9` | Focus Terminal by Number | — |
+| `^B w` | Window List... | `window-list` |
+| `^B z` | Zoom | `zoom` |
+| `^B _` | Minimize | `minimize` |
+| `^B M` | Move / Resize | `move-resize` |
+| `^B h` | Tile Horizontally | `tile-horizontally` |
+| `^B v` | Tile Vertically | `tile-vertically` |
+| `^B g` | Tile Grid | `tile-grid` |
+| `^B T` | Cascade | `cascade` |
+| `^B m` | Menu Bar | `menu-bar` |
+| `^B [` | Copy Mode | `copy-mode` |
+| `^B ]` | Paste | `paste` |
+| `^B ^B` | Send Prefix to Program | `send-prefix` |
+| `^B d` | Detach | `detach` |
+| `^B s` | Sessions... | `sessions` |
+| `^B S` | New Session... | `new-session` |
+| `^B R` | Rename Session... | `rename-session` |
+| `^B K` | End Session... | `kill-session` |
+| `^B ?` | Keys... | `key-reference` |
+| `^B q` | Quit ckmux | `quit` |
+| `Menu only` | Settings... | `settings` |
+| `^B b` | Status Bar | `status-bar` |
+| `Menu only` | Fit Desktop to This Screen | `fit-desktop` |
+| `Menu only` | Show CPU Usage | `show-cpu` |
+| `Menu only` | Show Memory Usage (RSS) | `show-memory-rss` |
+| `Menu only` | Show Memory Usage (Real) | `show-memory-real` |
+| `Menu only` | About ckmux... | `about` |
 
 ## Copy mode and paste
 

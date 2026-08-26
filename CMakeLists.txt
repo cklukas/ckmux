@@ -215,6 +215,7 @@ add_library(ckmux_client STATIC
     src/client/cli.cpp
     src/client/client_app.cpp
     src/client/commands.cpp
+    src/client/key_reference.cpp
     src/client/copy_mode.cpp
     src/client/capability_grace.cpp
     src/client/printer_button.cpp
@@ -248,12 +249,55 @@ target_include_directories(ckmux_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ckmux_server PUBLIC ckmux_common)
 ckmux_strict(ckmux_server)
 
-# The one installed artifact: ckmux itself. Everything it needs is linked in
-# statically, so the prefix gets a binary and nothing else.
+# The executable, followed by documentation generated from that exact build.
+# Everything the program needs is linked statically; the additional installed
+# files are references for the reader rather than runtime dependencies.
 add_executable(ckmux src/main.cpp)
 target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server)
 ckmux_strict(ckmux)
 install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+set(CKMUX_GENERATED_DOC_DIR "${CMAKE_BINARY_DIR}/docs")
+set(CKMUX_GENERATED_KEYS "${CKMUX_GENERATED_DOC_DIR}/keys.md")
+set(CKMUX_GENERATED_MAN "${CKMUX_GENERATED_DOC_DIR}/ckmux.1")
+add_custom_command(
+    OUTPUT "${CKMUX_GENERATED_KEYS}" "${CKMUX_GENERATED_MAN}"
+    COMMAND ${CMAKE_COMMAND}
+        "-DCKMUX_BINARY=$<TARGET_FILE:ckmux>"
+        "-DCKMUX_MARKDOWN_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/doc/keys.md.in"
+        "-DCKMUX_MAN_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/doc/ckmux.1.in"
+        "-DCKMUX_OUTPUT_DIR=${CKMUX_GENERATED_DOC_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateDocs.cmake"
+    DEPENDS ckmux
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateDocs.cmake"
+            "${CMAKE_CURRENT_SOURCE_DIR}/doc/keys.md.in"
+            "${CMAKE_CURRENT_SOURCE_DIR}/doc/ckmux.1.in"
+    COMMENT "Generating ckmux man page and key reference"
+    VERBATIM)
+add_custom_target(ckmux_docs ALL DEPENDS "${CKMUX_GENERATED_KEYS}" "${CKMUX_GENERATED_MAN}")
+
+# Explicitly requested because it writes the Pages source tree. The ordinary
+# build writes only below CMAKE_BINARY_DIR; test_docs compares that output to
+# the checked-in page and fails when somebody changes the registry without
+# regenerating it.
+add_custom_target(ckmux_update_key_docs
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CKMUX_GENERATED_KEYS}" "${CMAKE_CURRENT_SOURCE_DIR}/docs/keys.md"
+    DEPENDS ckmux_docs
+    COMMENT "Updating docs/keys.md from the compiled key registry"
+    VERBATIM)
+
+install(FILES "${CKMUX_GENERATED_MAN}"
+    DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+install(FILES
+    README.md
+    LICENSE
+    docs/index.md
+    docs/getting-started.md
+    docs/cli.md
+    docs/configuration.md
+    "${CKMUX_GENERATED_KEYS}"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 # Python is build tooling, never a dependency of ckmux (the engineering standard: no external
 # dependencies beyond ckvision::cvision). The convenience target is offered

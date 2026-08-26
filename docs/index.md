@@ -12,8 +12,8 @@ window on a desktop. Everything works by mouse or by keyboard, and nothing
 has to be memorized before it can be found.
 
 - Repository: [github.com/cklukas/ckmux](https://github.com/cklukas/ckmux)
-- Install: [releases](https://github.com/cklukas/ckmux/releases) — Debian
-  package and tarballs for Linux (x86_64) and macOS (arm64)
+- Install: [v0.1.1 and other releases](https://github.com/cklukas/ckmux/releases)
+  — Debian package and tarballs for Linux (x86_64) and macOS (arm64)
 - Built on [ckVision](https://cklukas.github.io/ckVision/), a C++ library for
   full terminal user interfaces
 
@@ -22,11 +22,13 @@ has to be memorized before it can be found.
 - [Getting started](getting-started.md) — install, first session, detach and
   reattach
 - [Command line](cli.md) — every `ckmux` subcommand and environment variable
-- [Keys](keys.md) — the prefix table, menus, and copy mode
+- [Keys](keys.md) — a default-key appendix generated from the live registry,
+  plus copy mode
 - [Configuration](configuration.md) — `ckmux.conf`, every key and its default
 
 Inside ckmux itself, **F1** opens the help pages and **`^B ?`** opens the key
-reference — the documentation below is the same story for a browser.
+reference — the documentation below is the same story for a browser. An
+installed build also provides the command-line reference as `man ckmux`.
 
 ## How it works
 
