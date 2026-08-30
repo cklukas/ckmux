@@ -1530,6 +1530,10 @@ TGZ everywhere and DEB plus RPM on Linux. The release workflow reproduces those
 commands, inspects each package for the installed binary, and generates a
 versioned Homebrew formula whose source digest is taken from the exact tag
 archive. A macOS job installs that formula and runs its test before publication.
+The formula declares the pinned ckVision archive as a second checksummed
+Homebrew resource and stages it through `CKMUX_CKVISION_SOURCE_DIR`; Homebrew
+forbids CMake `FetchContent` during `install`, so the ordinary adopter fallback
+cannot be the formula's dependency transport.
 Manual dispatch runs the identical package and Homebrew jobs but deliberately
 skips the release-writing job, so the machinery can be proved before a tag
 exists. The workflow has published v0.1.0 and v0.1.1; v0.1.2 is the release
