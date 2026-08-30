@@ -62,9 +62,11 @@ builds ckmux from that exact release source.
 On macOS with [Homebrew](https://brew.sh/):
 
 ```bash
-curl -LO https://github.com/cklukas/ckmux/releases/latest/download/ckmux.rb
-brew install --formula ./ckmux.rb
+brew install cklukas/ckmux/ckmux
 ```
+
+The tap uses the same versioned `ckmux.rb` formula attached to the GitHub
+release, including its release-source SHA-256.
 
 On Debian or Ubuntu, download the `.deb` from the latest release and install
 it with APT so system dependencies are resolved:
