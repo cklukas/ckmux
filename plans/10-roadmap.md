@@ -236,18 +236,19 @@ command.
 
 Linux port (poller/paths/creds seams; container CI lane becomes blocking);
 `ckmux-256color` terminfo shipped and default flipped; man page + user
-guide (generated key appendix); packaging (at minimum `make install`, brew
-formula if licensing settled); license resolved jointly with ckVision's
+guide (generated key appendix); packaging (`make install`, TGZ, DEB, RPM, and
+a release-pinned Homebrew formula); license resolved jointly with ckVision's
 D-OPEN-1; version 1.0 acceptance audit against
 [01-vision.md](01-vision.md) success criteria.
 
 **Implemented ahead of v1:** WP-22 makes Linux a blocking platform, with local
 GCC 13/14 and Clang coverage and public 51/51 Linux lanes; WP-26 resolved both
-projects to MIT; WP-25 provides `make install`, CPack TGZ/DEB and tag-triggered
-GitHub releases; WP-24 provides the browser guide, installed `ckmux(1)`, and a
-key appendix generated from the live registry. v0.1.0 and v0.1.1 are
-published. **Remaining:** WP-23 `ckmux-256color` waits for WP-21; WP-27 is the
-final v1 audit after WP-23.
+projects to MIT; WP-25 provides `make install`, CPack TGZ/DEB/RPM, a generated
+and install-tested Homebrew formula, and tag-triggered GitHub releases; WP-24
+provides the browser guide, installed `ckmux(1)`, and a key appendix generated
+from the live registry. v0.1.0 and v0.1.1 are published, and v0.1.2 is the
+packaging expansion release. **Remaining:** WP-23 `ckmux-256color` waits for
+WP-21; WP-27 is the final v1 audit after WP-23.
 
 ## Parking lot (post-v1, explicitly not now)
 
@@ -319,5 +320,7 @@ and means something else; the two never appear in the same table, the same way
 7. **License**: **resolved** — MIT for ckmux and ckVision, with DCO, patent and
    relicense grants in `CONTRIBUTING.md`.
 8. v1 **packaging**: **resolved for the current release line** — `make install`,
-   TGZ on both platforms and DEB on Linux, published by the release workflow.
-   A brew formula is not a v1 gate.
+   TGZ on both platforms, DEB and RPM on Linux, and a release-pinned Homebrew
+   formula installed and tested on macOS before the release workflow publishes
+   any of them. Manual dispatch exercises the same package jobs without making
+   a release.

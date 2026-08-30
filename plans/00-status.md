@@ -19,7 +19,10 @@ which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
 `Settings ▸ General…` — is real and usable. Shared/read-only readers, captured
 printing, process statistics, the Linux port, installable packages and the
 v0.1.1 release have landed. The user guide, installed man page and generated
-key appendix have now landed as well.
+key appendix have now landed as well. The packaging path is being expanded for
+v0.1.2 with RPM and an install-tested Homebrew formula alongside the existing
+DEB and platform archives; its release workflow has a non-publishing manual
+mode so that exact path can be gated before the tag is created.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture
