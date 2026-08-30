@@ -110,7 +110,7 @@ ctest --test-dir build --output-on-failure
 
 ## Status
 
-Pre-1.0, with **v0.1.1** published for macOS arm64 and Linux x86_64. The core
+Pre-1.0, with **v0.1.2** published for macOS arm64 and Linux x86_64. The core
 promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
 Sessions are plural, named and killable. The interface is real and usable:
@@ -140,11 +140,12 @@ rough edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are both gating platforms. The v0.1.1 snapshot passed the full
-suite on Linux with the pinned ckVision release and with ckVision HEAD, and the
-release workflow built, tested and packaged the Linux binary. The local Debian
-gate additionally sweeps GCC 13, GCC 14 and Clang. Windows is a design target —
-`src/platform` is written against a seam that ConPTY can fill — and no more.
+macOS and Linux are both gating platforms. The v0.1.2 release passed all 53
+suites in both native package jobs; the workflow then published the macOS and
+Linux archives, DEB, RPM, their SHA-256 files, and the install-tested Homebrew
+formula. The local Debian gate additionally sweeps GCC 13, GCC 14 and Clang.
+Windows is a design target — `src/platform` is written against a seam that
+ConPTY can fill — and no more.
 
 ## Provenance
 

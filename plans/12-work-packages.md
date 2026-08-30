@@ -126,7 +126,7 @@ take first.
 | 41 | **WP-23** — `ckmux-256color` terminfo | ckmux | 1–2 d | Blocked | WP-21 |
 | 42 | **WP-22** — Linux port: poller, paths, credentials | ckmux | 4–6 d | **Done** (2026-08-23) — `/proc`/`smaps_rollup` in `598de3c`, Linux compile fixes in `2b64fdc`, GCC 13/14 + Clang local sweep in `240bd5b`; Debian GCC 13 full suite 49/49 (`976f66e`), then the v0.1.1 public snapshot `17e4dbc` passed both Linux CI lanes 51/51 and the Linux release build/test/package job | — (routed ahead of WP-21; it had no technical dependency on the M4 matrix) |
 | 43 | **WP-24** — Man page and user guide | ckmux | 3–4 d | **Done** (2026-08-25, this commit) — browser guide plus installed `ckmux(1)`; the Markdown and roff key appendices are generated from the compiled `Keymap` registry and the checked-in Pages copy is exact-gated; macOS AppleClang Debug 52/52, ASan+UBSan 52/52, Debian 13 GCC 14.2 Release 52/52 at ckmux `bc83088` + the WP-24 delta × ckVision `386e737`; `mandoc` lint and install-prefix smoke clean | WP-22 ✓ |
-| 44 | **WP-25** — Packaging | ckmux | 2–3 d | **Done** (2026-08-23) — install rule + reproducible CPack TGZ/DEB and the tag-triggered release workflow (`78dfeec`); v0.1.0 and v0.1.1 packages published, with the v0.1.1 Linux package job green | WP-26 ✓ (completed ahead of WP-24; documentation is not a technical packaging prerequisite) |
+| 44 | **WP-25** — Packaging | ckmux | 2–3 d | **Done** (2026-08-23; expanded 2026-08-31) — install rule + reproducible CPack TGZ/DEB/RPM and tag-triggered release workflow; v0.1.2 published nine assets after 53/53 Linux, 53/53 macOS and an install-tested Homebrew formula (run `33341719685`) | WP-26 ✓ (completed ahead of WP-24; documentation is not a technical packaging prerequisite) |
 | 45 | **WP-27** — v1 acceptance audit against [01-vision.md](01-vision.md) | ckmux | 2–3 d | Blocked | WP-23 (WP-24 ✓) |
 | 46 | **U4-m** — Damped switcher-bar entry widths (with **U4-n**, `PagedStrip::press_in_flight()`, landed as ckVision `850711f`) | ckVision | 0.5–1 d | **Done** (2026-08-19) | U4-a ✓, U4-l ✓ |
 | 47 | **WP-36** — Rename Terminal: a custom title that overrides the child's, and a bar that does not twitch | ckmux | 1–2 d | **Done** (2026-08-19) | WP-6 ✓, WP-32 ✓, U4-m ✓ |
@@ -1540,8 +1540,11 @@ exists. That proof is GitHub run `33341038991` at public snapshot `fdf3c9b`:
 macOS arm64 and Linux x86_64 each passed 53/53 in Release, CPack produced and
 inspected both TGZs plus DEB and RPM, Homebrew built and tested the generated
 formula, and all three artifact bundles uploaded. The downloaded SHA-256 files
-verified every binary package. The workflow has published v0.1.0 and v0.1.1;
-v0.1.2 is the release target for the RPM/Homebrew expansion. WP-24 subsequently
+verified every binary package. The v0.1.2 tag run `33341719685` at public
+snapshot `bd4906f` then passed the same 53/53 native gates, built and tested the
+formula, and published nine release assets. All four downloaded binary-package
+SHA-256 files verified. The workflow has published v0.1.0, v0.1.1 and v0.1.2.
+WP-24 subsequently
 extended the install set with `ckmux(1)` and the browser guide without changing
 the executable's runtime dependencies.
 

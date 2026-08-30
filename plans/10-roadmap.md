@@ -16,7 +16,7 @@ is the point of being its proving ground.
 Linux, licensing, packaging and documentation have landed for M5.** WP-15
 owns M3's final menu-driven walkthrough. WP-21 owns the
 three-host/reference-app/vttest matrix and its changing-environment cases.
-v0.1.1 is published for macOS arm64 and Linux x86_64. What each milestone
+v0.1.2 is published for macOS arm64 and Linux x86_64. What each milestone
 means in practice, and what remains before v1, is recorded at the end of each
 section below.
 What is *selectable* is never read from here —
@@ -246,9 +246,9 @@ GCC 13/14 and Clang coverage and public 51/51 Linux lanes; WP-26 resolved both
 projects to MIT; WP-25 provides `make install`, CPack TGZ/DEB/RPM, a generated
 and install-tested Homebrew formula, and tag-triggered GitHub releases; WP-24
 provides the browser guide, installed `ckmux(1)`, and a key appendix generated
-from the live registry. v0.1.0 and v0.1.1 are published, and v0.1.2 is the
-packaging expansion release. **Remaining:** WP-23 `ckmux-256color` waits for
-WP-21; WP-27 is the final v1 audit after WP-23.
+from the live registry. v0.1.0, v0.1.1 and v0.1.2 are published; v0.1.2 adds
+RPM and the install-tested Homebrew formula. **Remaining:** WP-23
+`ckmux-256color` waits for WP-21; WP-27 is the final v1 audit after WP-23.
 
 ## Parking lot (post-v1, explicitly not now)
 
@@ -295,7 +295,7 @@ and means something else; the two never appear in the same table, the same way
 | R4 | Protocol/perf under floods or huge scrollbacks — **and it materialised once**: a 10 000-line scrollback encoded a 16.29 MiB attach snapshot, past the decoder's own cap, and made that session permanently unattachable (C1) | Closed as a correctness risk by remediation R1/R2: encode enforces caps, snapshots are budget-bounded at 4 MiB, history is fair-shared, and the queue has 256 KiB screen suppression, 4 MiB high-water and a 32 MiB drop-the-laggard ceiling. WP-20 keeps performance as a measured gate rather than a correctness hope. |
 | R5 | UX scope creep (menus and options multiply) | v1 non-goals ([01](01-vision.md)) + config minimalism ([08](08-configuration.md)) are binding; additions need a plan edit first |
 | R6 | Single server = single blast radius | Server stays small, UI-free, thread-free, sanitizer-clean, crash-only; the honest-failure table in [03](03-session-model.md) is user-visible truth |
-| ~~R7~~ | ~~No license upstream yet (D-OPEN-1)~~ — **closed 2026-08-20**: both repositories are MIT, with contribution terms in `CONTRIBUTING.md`. | v0.1.0 and v0.1.1 have been published under that decision. |
+| ~~R7~~ | ~~No license upstream yet (D-OPEN-1)~~ — **closed 2026-08-20**: both repositories are MIT, with contribution terms in `CONTRIBUTING.md`. | v0.1.0, v0.1.1 and v0.1.2 have been published under that decision. |
 | R8 | **Invariants asserted in a comment or a plan and enforced by nothing.** The 2026-08-18 review's central verdict: the design-level engineering holds, and the weaknesses cluster in this one pattern — a size cap that only the decoder applies, a high-water mark that stops nothing, a layer rule a comment claimed the build enforced, a queue whose `Blocked` rows had no unmet prerequisite | Remediation tracked topic by topic in [13-architecture-review.md](13-architecture-review.md), each with a state and a commit. The durable half is that an invariant now has to be *executable*: the layer rule became `tools/check_layers.py` and two CTest cases, and R1 turns the snapshot bound into code on the sending side. A plan row is a claim; the code is the evidence, and re-derivation is somebody's job on every landing |
 
 ## Decisions formerly open at M0

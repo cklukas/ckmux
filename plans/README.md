@@ -9,7 +9,7 @@ permanent context-sensitive hotkey footer, and each terminal in a floating,
 movable window with full mouse and Sixel support.
 
 These plans began from a verified ckVision inventory on 2026-08-16 and have
-been updated through the v0.1.1 integration state on 2026-08-25. They are
+been updated through the v0.1.2 release state on 2026-08-31. They are
 **living documents**: behavior changes edit the corresponding plan in the
 same commit ([11-conventions.md](11-conventions.md)).
 
@@ -86,10 +86,10 @@ vttest and changing-environment matrix) are in progress. **WP-24** is done:
 the browser guide, installed man page and generated key appendix are all built
 and gated from the command/key registries. There is no unclaimed `Ready` row:
 WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
-WP-23. Linux, licensing and packaging are done, and v0.1.1 is published.
-The v0.1.2 packaging expansion adds RPM and an install-tested Homebrew formula
-and is verified through the release workflow's non-publishing manual mode
-(public `fdf3c9b`, run `33341038991`).
+WP-23. Linux, licensing and packaging are done, and v0.1.2 is published.
+The release adds RPM and an install-tested Homebrew formula, first verified in
+the non-publishing manual mode (public `fdf3c9b`, run `33341038991`) and then
+published by the tag run at public `bd4906f` (run `33341719685`).
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from

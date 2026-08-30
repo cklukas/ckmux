@@ -18,14 +18,14 @@ with clock and calendar, footer, floating terminal windows, the prefix and its
 which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
 `Settings ▸ General…` — is real and usable. Shared/read-only readers, captured
 printing, process statistics, the Linux port, installable packages and the
-v0.1.1 release have landed. The user guide, installed man page and generated
-key appendix have now landed as well. The packaging path is being expanded for
-v0.1.2 with RPM and an install-tested Homebrew formula alongside the existing
-DEB and platform archives; its release workflow has a non-publishing manual
-mode so that exact path can be gated before the tag is created. That manual
-path passed at public snapshot `fdf3c9b` (GitHub run `33341038991`), including
-both native 53-suite Release gates, package-content inspection, Homebrew
-installation/test, artifact upload, and downloaded checksum verification.
+v0.1.2 release have landed. The user guide, installed man page and generated
+key appendix have now landed as well. v0.1.2 adds RPM and an install-tested
+Homebrew formula alongside the existing DEB and platform archives. Its exact
+path first passed in non-publishing manual mode at public snapshot `fdf3c9b`
+(GitHub run `33341038991`), then the tag run at public `bd4906f` published all
+nine assets (run `33341719685`). Both native jobs passed all 53 suites, every
+binary package was inspected before publication, and all four downloaded
+SHA-256 files verified afterwards.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture
