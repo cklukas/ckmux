@@ -88,7 +88,8 @@ and gated from the command/key registries. There is no unclaimed `Ready` row:
 WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
 WP-23. Linux, licensing and packaging are done, and v0.1.1 is published.
 The v0.1.2 packaging expansion adds RPM and an install-tested Homebrew formula
-and is verified through the release workflow's non-publishing manual mode.
+and is verified through the release workflow's non-publishing manual mode
+(public `fdf3c9b`, run `33341038991`).
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from

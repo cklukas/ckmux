@@ -22,7 +22,10 @@ v0.1.1 release have landed. The user guide, installed man page and generated
 key appendix have now landed as well. The packaging path is being expanded for
 v0.1.2 with RPM and an install-tested Homebrew formula alongside the existing
 DEB and platform archives; its release workflow has a non-publishing manual
-mode so that exact path can be gated before the tag is created.
+mode so that exact path can be gated before the tag is created. That manual
+path passed at public snapshot `fdf3c9b` (GitHub run `33341038991`), including
+both native 53-suite Release gates, package-content inspection, Homebrew
+installation/test, artifact upload, and downloaded checksum verification.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture
