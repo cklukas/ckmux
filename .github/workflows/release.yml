@@ -123,7 +123,11 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install --formula "$GITHUB_WORKSPACE/packages/ckmux.rb"
+          brew tap-new --no-git ckmux/release-ci
+          formula_dir="$(brew --repository ckmux/release-ci)/Formula"
+          mkdir -p "$formula_dir"
+          cp "$GITHUB_WORKSPACE/packages/ckmux.rb" "$formula_dir/ckmux.rb"
+          brew install ckmux/release-ci/ckmux
           brew test ckmux
 
       - uses: actions/upload-artifact@v4
