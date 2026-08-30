@@ -90,7 +90,7 @@ jobs:
             grep -Eq '/usr/bin/ckmux$' "$RUNNER_TEMP/ckmux-rpm-contents"
           fi
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: packages-${{ matrix.name }}
           path: packages/ckmux*
@@ -138,7 +138,7 @@ jobs:
           brew install ckmux/release-ci/ckmux
           brew test ckmux
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: packages-homebrew
           path: packages/ckmux.rb
@@ -151,7 +151,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: packages
           merge-multiple: true
