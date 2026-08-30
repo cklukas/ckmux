@@ -76,15 +76,18 @@ jobs:
           set -euo pipefail
           archive=$(find "$GITHUB_WORKSPACE/packages" -maxdepth 1 -name '*.tar.gz' -print -quit)
           test -n "$archive"
-          tar -tzf "$archive" | grep -Eq '/bin/ckmux$'
+          tar -tzf "$archive" > "$RUNNER_TEMP/ckmux-tar-contents"
+          grep -Eq '/bin/ckmux$' "$RUNNER_TEMP/ckmux-tar-contents"
           if [[ "$RUNNER_OS" == Linux ]]; then
             deb=$(find "$GITHUB_WORKSPACE/packages" -maxdepth 1 -name '*.deb' -print -quit)
             rpm=$(find "$GITHUB_WORKSPACE/packages" -maxdepth 1 -name '*.rpm' -print -quit)
             test -n "$deb" && test -n "$rpm"
             dpkg-deb --info "$deb"
-            dpkg-deb --contents "$deb" | grep -Eq '/usr/bin/ckmux$'
+            dpkg-deb --contents "$deb" > "$RUNNER_TEMP/ckmux-deb-contents"
+            grep -Eq '/usr/bin/ckmux$' "$RUNNER_TEMP/ckmux-deb-contents"
             rpm -qip "$rpm"
-            rpm -qlp "$rpm" | grep -Eq '/usr/bin/ckmux$'
+            rpm -qlp "$rpm" > "$RUNNER_TEMP/ckmux-rpm-contents"
+            grep -Eq '/usr/bin/ckmux$' "$RUNNER_TEMP/ckmux-rpm-contents"
           fi
 
       - uses: actions/upload-artifact@v4
