@@ -51,6 +51,40 @@ shortcut rather than the only way in. Press `Ctrl+B` twice to send a literal
 Everything else — function keys, Alt combinations, the mouse — belongs to the
 program in the window, exactly as it would without ckmux.
 
+## Install
+
+Release packages are available from the
+[latest GitHub release](https://github.com/cklukas/ckmux/releases/latest).
+The DEB, RPM, and macOS packages currently target Linux x86_64 and macOS
+arm64. Starting with v0.1.2, each release also carries a Homebrew formula that
+builds ckmux from that exact release source.
+
+On macOS with [Homebrew](https://brew.sh/):
+
+```bash
+curl -LO https://github.com/cklukas/ckmux/releases/latest/download/ckmux.rb
+brew install --formula ./ckmux.rb
+```
+
+On Debian or Ubuntu, download the `.deb` from the latest release and install
+it with APT so system dependencies are resolved:
+
+```bash
+sudo apt install ./ckmux_*_amd64.deb
+```
+
+On Fedora, RHEL, or another RPM-based distribution, download the `.rpm` and
+install it with the distribution package manager:
+
+```bash
+sudo dnf install ./ckmux-*.x86_64.rpm
+```
+
+Every release also includes `.tar.gz` archives for installation without a
+package manager. Extract one and copy its `bin`, `share/man`, and
+`share/doc/ckmux` contents under the same prefix. Confirm any installation
+with `ckmux --version`.
+
 ## Build
 
 Needs a C++20 compiler, CMake 3.28+, and a ckVision checkout beside this one
@@ -84,7 +118,9 @@ themes under `Settings ▸ General…`. Shared and read-only attaches, copy mode
 captured print output, and per-terminal process statistics are built as well.
 
 M3 and M4 are in their acceptance passes. The user guide, installed man page,
-generated key appendix, Linux port, licensing, and packaging are complete.
+generated key appendix, Linux port, licensing, and packaging are complete;
+the v0.1.2 packaging update adds RPM and Homebrew delivery to the existing DEB
+and platform archives.
 The remaining v1 work is M4's three-host/vttest acceptance, the
 `ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
 rough edges, and expect the interface to move.
