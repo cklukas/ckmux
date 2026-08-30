@@ -106,17 +106,22 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sed -nE 's/^project\(ckmux VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' ckmux/CMakeLists.txt)
-          test -n "$version"
+          ckvision_version=$(sed -nE 's/^set\(CKMUX_CKVISION_VERSION ([0-9.]+)\)$/\1/p' ckmux/CMakeLists.txt)
+          test -n "$version" && test -n "$ckvision_version"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             source_url="https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$GITHUB_REF_NAME.tar.gz"
           else
             source_url="https://github.com/$GITHUB_REPOSITORY/archive/$GITHUB_SHA.tar.gz"
           fi
+          ckvision_url="https://github.com/$GITHUB_REPOSITORY_OWNER/ckVision/archive/refs/tags/v$ckvision_version.tar.gz"
           curl --fail --location --retry 3 --output ckmux-source.tar.gz "$source_url"
+          curl --fail --location --retry 3 --output ckvision-source.tar.gz "$ckvision_url"
           python3 ckmux/packaging/homebrew/generate_formula.py \
             --version "$version" \
             --source-url "$source_url" \
             --archive ckmux-source.tar.gz \
+            --ckvision-url "$ckvision_url" \
+            --ckvision-archive ckvision-source.tar.gz \
             --output packages/ckmux.rb
 
       - name: Install and test with Homebrew
