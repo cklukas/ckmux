@@ -18,14 +18,18 @@ with clock and calendar, footer, floating terminal windows, the prefix and its
 which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
 `Settings ▸ General…` — is real and usable. Shared/read-only readers, captured
 printing, process statistics, the Linux port, installable packages and the
-v0.1.2 release have landed. The user guide, installed man page and generated
-key appendix have now landed as well. v0.1.2 adds RPM and an install-tested
+v0.1.3 release have landed. The user guide, installed man page and generated
+key appendix have now landed as well. v0.1.2 added RPM and an install-tested
 Homebrew formula alongside the existing DEB and platform archives. Its exact
 path first passed in non-publishing manual mode at public snapshot `fdf3c9b`
 (GitHub run `33341038991`), then the tag run at public `bd4906f` published all
 nine assets (run `33341719685`). Both native jobs passed all 53 suites, every
 binary package was inspected before publication, and all four downloaded
-SHA-256 files verified afterwards.
+SHA-256 files verified afterwards. v0.1.3 additionally builds its Ubuntu 20.04
+DEB in a focal userspace with GCC 10, runs all 53 suites there, installs the
+result into a fresh focal container, and pins ckVision v0.1.4, whose portable
+numeric conversion and exported thread dependency make that older toolchain a
+supported consumer rather than a package-label workaround.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture

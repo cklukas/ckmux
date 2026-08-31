@@ -1,7 +1,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.28)
-project(ckmux VERSION 0.1.2 LANGUAGES CXX)
+project(ckmux VERSION 0.1.3 LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
@@ -12,7 +12,7 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.1)
+set(CKMUX_CKVISION_VERSION 0.1.4)
 
 # Said once, plainly: ckmux builds on POSIX only. The server forks, opens
 # PTYs, polls file descriptors and speaks over a unix-domain socket, and

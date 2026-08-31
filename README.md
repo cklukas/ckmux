@@ -55,9 +55,11 @@ program in the window, exactly as it would without ckmux.
 
 Release packages are available from the
 [latest GitHub release](https://github.com/cklukas/ckmux/releases/latest).
-The DEB, RPM, and macOS packages currently target Linux x86_64 and macOS
-arm64. Starting with v0.1.2, each release also carries a Homebrew formula that
-builds ckmux from that exact release source.
+The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Starting
+with v0.1.3, each release also includes a separately named Ubuntu 20.04 DEB
+built and install-tested inside the actual 20.04 userspace. Starting with
+v0.1.2, each release also carries a Homebrew formula that builds ckmux from
+that exact release source.
 
 On macOS with [Homebrew](https://brew.sh/):
 
@@ -74,6 +76,10 @@ it with APT so system dependencies are resolved:
 ```bash
 sudo apt install ./ckmux_*_amd64.deb
 ```
+
+On Ubuntu 20.04, choose the file whose name contains
+`ubuntu20.04`; the generic Linux package is built on a newer distribution and
+may require a newer glibc.
 
 On Fedora, RHEL, or another RPM-based distribution, download the `.rpm` and
 install it with the distribution package manager:
@@ -110,7 +116,8 @@ ctest --test-dir build --output-on-failure
 
 ## Status
 
-Pre-1.0, with **v0.1.2** published for macOS arm64 and Linux x86_64. The core
+Pre-1.0, with **v0.1.3** published for macOS arm64 and Linux x86_64, including
+a dedicated Ubuntu 20.04 package. The core
 promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
 Sessions are plural, named and killable. The interface is real and usable:
@@ -121,8 +128,8 @@ captured print output, and per-terminal process statistics are built as well.
 
 M3 and M4 are in their acceptance passes. The user guide, installed man page,
 generated key appendix, Linux port, licensing, and packaging are complete;
-the v0.1.2 packaging update adds RPM and Homebrew delivery to the existing DEB
-and platform archives.
+the v0.1.2 packaging update added RPM and Homebrew delivery to the existing DEB
+and platform archives, and v0.1.3 adds the Ubuntu 20.04 compatibility package.
 The remaining v1 work is M4's three-host/vttest acceptance, the
 `ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
 rough edges, and expect the interface to move.
@@ -140,10 +147,11 @@ rough edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are both gating platforms. The v0.1.2 release passed all 53
-suites in both native package jobs; the workflow then published the macOS and
-Linux archives, DEB, RPM, their SHA-256 files, and the install-tested Homebrew
-formula. The local Debian gate additionally sweeps GCC 13, GCC 14 and Clang.
+macOS and Linux are both gating platforms. The v0.1.3 release matrix runs all
+53 suites in its native package jobs and in an Ubuntu 20.04/GCC 10 container;
+the latter also installs and launches its own compatibility DEB before the
+release can publish. The local Debian gate additionally sweeps GCC 13, GCC 14
+and Clang.
 Windows is a design target — `src/platform` is written against a seam that
 ConPTY can fill — and no more.
 

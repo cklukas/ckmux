@@ -1,6 +1,6 @@
 # ckmux — Roadmap, Risks & Decisions
 
-Plan 10 · Status: current · 2026-08-25 · [Index](README.md)
+Plan 10 · Status: current · 2026-08-31 · [Index](README.md)
 
 Milestones are acceptance-based (ckVision's discipline): a milestone is done
 when its criteria hold with test evidence per [09-testing.md](09-testing.md),
@@ -16,7 +16,8 @@ is the point of being its proving ground.
 Linux, licensing, packaging and documentation have landed for M5.** WP-15
 owns M3's final menu-driven walkthrough. WP-21 owns the
 three-host/reference-app/vttest matrix and its changing-environment cases.
-v0.1.2 is published for macOS arm64 and Linux x86_64. What each milestone
+v0.1.3 is published for macOS arm64 and Linux x86_64, with a dedicated Ubuntu
+20.04 DEB in addition to the generic Linux packages. What each milestone
 means in practice, and what remains before v1, is recorded at the end of each
 section below.
 What is *selectable* is never read from here —
@@ -289,7 +290,7 @@ and means something else; the two never appear in the same table, the same way
 | # | Risk | Mitigation |
 |---|---|---|
 | ~~R1~~ | ~~**Snapshot deep-copy cost** (U0-b) makes tick-rate diffing expensive~~ — **closed 2026-08-17**: U0-b landed in ckVision (`c4f96d2`) before any ckmux hot path existed to work around it. Measured on the pinned machine: 574 µs/op for a full snapshot, 126 µs declining the history, 57 µs for damage plus borrowed cells. The last two do not grow with the history, which was the risk. | The mitigation was carried out as written — the fix went in the library first, and `scene_budget_gate` now pins the steady-state tick. |
-| R2 | **ckVision is pre-1.0**; behavior may shift under us, and our U-items add churn of our own | Pin adopter/CI builds to a release version; let the co-development sibling source outrank it locally; conformance-pin goldens ([09](09-testing.md) §2) catch drift at bump time. v0.1.1 is the current paired release. |
+| R2 | **ckVision is pre-1.0**; behavior may shift under us, and our U-items add churn of our own | Pin adopter/CI builds to a release version; let the co-development sibling source outrank it locally; conformance-pin goldens ([09](09-testing.md) §2) catch drift at bump time. v0.1.4 is the current paired release. |
 | R2a | **Upstream work named out loud rather than patched around.** Open/deferred in [07](07-ckvision-integration.md): U4-d/e/f/h are non-blocking API cleanup; U3 is a deferred presenter scroll optimisation; U1-b has no known concrete gap; U2 is app-driven XTGETTCAP/DECRQSS/rectangles, inner OSC 8 and SGR 53. | WP-20's budgets are green without U3, so it is an optimisation rather than a hidden prerequisite. U1-b/U2 wait for a concrete app or WP-21 finding. None is worked around silently in ckmux; a blocking discovery gets a queue row. |
 | R3 | Emulator fidelity long tail (some app misbehaves) | Per-terminal diagnostics surfaced in UI (`Terminal → Info…` shows unknown-sequence log); reference matrix per milestone; upstream fix loop per adopter policy |
 | R4 | Protocol/perf under floods or huge scrollbacks — **and it materialised once**: a 10 000-line scrollback encoded a 16.29 MiB attach snapshot, past the decoder's own cap, and made that session permanently unattachable (C1) | Closed as a correctness risk by remediation R1/R2: encode enforces caps, snapshots are budget-bounded at 4 MiB, history is fair-shared, and the queue has 256 KiB screen suppression, 4 MiB high-water and a 32 MiB drop-the-laggard ceiling. WP-20 keeps performance as a measured gate rather than a correctness hope. |

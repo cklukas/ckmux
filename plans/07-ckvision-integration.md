@@ -316,6 +316,15 @@ ckVision `45a995e`, 2026-08-23, from a user report against ckmux:
 |---|---|---|
 | L-63 | **`TerminalEmulator::handle_csi` reads ECMA-48's private parameter bytes (`<` `=` `>` `?`) first** and hands a marked sequence to `handle_private_csi`, where every marked form the emulator honours lives and anything else marked is a diagnostic; no public handler is reachable with a marker. XTMODKEYS/XTFMTKEYS (`CSI > Pp ; Pv m` / `f`) are consumed without effect or diagnostic and XTQMODKEYS (`CSI ? Pp m`) is answered truthfully — `0` for modifyOtherKeys, which is not implemented, `2` for the cursor and function keys, which already travel in xterm's level-2 forms (ckVision D-062). Siblings fixed by the same dispatch: XTSAVE/XTRESTORE no longer overwrite the saved cursor or set a scrolling region, XTRMTITLE no longer scrolls, DECXCPR (`CSI ? 6 n`) is answered as `CSI ? r ; c R`. | Exiting `claude` in a ckmux window left "[terminal: malformed child SGR sequence]" at the bottom of the window: Claude Code's teardown writes `ESC[<u ESC[?1049l ESC[>4m`, and the last of those reached the SGR parser. Vim and neovim write the same reset. `tests/test_reference_apps.cpp` plays the exact bytes through a real server, the wire and the client's `TerminalView`, paired with a malformed SGR that still complains. Claude Code also sends `CSI ? 6 n`, whose answer it reads only in the DEC form. The current ckVision v0.1.1 pin contains `45a995e`, so the row is exercised normally and a failed capability probe is a regression; the temporary NOT EXERCISED escape used with the v0.1.0 pin has expired. |
 
+### Landed (an Ubuntu 20.04 consumer is a supported toolchain)
+
+ckVision v0.1.4 (public `5c0e7fb`), 2026-08-31, from the Ubuntu 20.04 package
+gate:
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-64 | **Floating-point `<charconv>` is feature-detected, with a deterministic classic-locale stream fallback, and `Threads::Threads` is a public exported dependency.** C++20 libraries did not acquire the floating overloads together, so compiler-version inference would be another portability bug; the CMake probe asks for the actual operations. The fallback preserves locale independence and round-trip precision. The installed package config resolves the thread target before importing `ckvision::cvision`. | Ubuntu 20.04's libstdc++ 10 has integer `charconv` but no floating overloads, so ckVision failed to compile before ckmux could package it. Once compiled, the first graphics-log call threw `std::system_error` because focal predates glibc's pthread merge and ckVision's static target had not exported its thread link requirement. Both are general library-consumer requirements, so they were fixed upstream rather than hidden in the ckmux lane. The resulting ckmux Release build passed 53/53 with GCC 10 and its DEB installed in a clean focal container. |
+
 ### Upstream status
 
 This table keeps the landed seams beside the genuinely open/deferred ones so
@@ -363,7 +372,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.1 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.4 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins

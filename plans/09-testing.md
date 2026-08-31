@@ -1,6 +1,6 @@
 # ckmux — Testing & Verification
 
-Plan 09 · Status: current · 2026-08-25 · [Index](README.md)
+Plan 09 · Status: current · 2026-08-31 · [Index](README.md)
 
 ckmux adopts ckVision's verification culture wholesale (categories, golden
 discipline, sanitizers, deterministic benchmarks, "all tests pass" is not
@@ -11,11 +11,14 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
 `unit`, `golden`, `script`, `pty`, `e2e`, `benchmark`, `fuzz-corpus`,
 `portable`.
 
-**Current integration baseline:** ckmux `bc83088` against ckVision v0.1.1
-passed 51/51 suites in Release and 51/51 under ASan+UBSan; the published
-v0.1.1 Linux snapshot passed both Linux CI lanes and its release package job.
-WP-15 and WP-21 still own the remaining milestone acceptance coverage; a
-green 51-suite integration run is not a substitute for those matrices.
+**Current integration baseline:** ckmux v0.1.3 consumes ckVision v0.1.4. The
+Ubuntu 20.04/GCC 10 Release candidate passed 53/53 suites, generated a DEB
+whose declared runtime floor fits focal (`libc6 >= 2.17`, `libstdc++6 >= 9`),
+and installed and launched it in a fresh Ubuntu 20.04 userspace. The release
+matrix repeats that gate on GitHub x86_64 alongside the current Linux and
+macOS jobs. WP-15 and WP-21 still own the remaining milestone acceptance
+coverage; a green 53-suite integration run is not a substitute for those
+matrices.
 
 ## Layers (bottom-up)
 
