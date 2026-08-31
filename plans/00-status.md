@@ -30,6 +30,10 @@ DEB in a focal userspace with GCC 10, runs all 53 suites there, installs the
 result into a fresh focal container, and pins ckVision v0.1.4, whose portable
 numeric conversion and exported thread dependency make that older toolchain a
 supported consumer rather than a package-label workaround.
+The exact v0.1.3 tag at public snapshot `8204709` passed every release job in
+GitHub run `33377741193`; its focal x86_64 job passed 53/53, inspected and
+installed `ckmux_0.1.3-ubuntu20.04_amd64.deb`, and the workflow published all
+eleven assets.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture

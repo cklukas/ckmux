@@ -88,7 +88,9 @@ and gated from the command/key registries. There is no unclaimed `Ready` row:
 WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
 WP-23. Linux, licensing and packaging are done, and v0.1.3 adds a separately
 built and install-tested Ubuntu 20.04 DEB to the RPM, Homebrew formula, generic
-DEB and platform archives introduced through v0.1.2.
+DEB and platform archives introduced through v0.1.2. The exact public snapshot
+`8204709` passed every release job and published eleven assets in run
+`33377741193`.
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from

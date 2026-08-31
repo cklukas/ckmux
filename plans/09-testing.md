@@ -15,10 +15,11 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
 Ubuntu 20.04/GCC 10 Release candidate passed 53/53 suites, generated a DEB
 whose declared runtime floor fits focal (`libc6 >= 2.17`, `libstdc++6 >= 9`),
 and installed and launched it in a fresh Ubuntu 20.04 userspace. The release
-matrix repeats that gate on GitHub x86_64 alongside the current Linux and
-macOS jobs. WP-15 and WP-21 still own the remaining milestone acceptance
-coverage; a green 53-suite integration run is not a substitute for those
-matrices.
+matrix repeated that gate on GitHub x86_64 at public snapshot `8204709`: the
+focal job passed 53/53, installed and launched its package, and every release
+job passed (run `33377741193`). WP-15 and WP-21 still own the remaining
+milestone acceptance coverage; a green 53-suite integration run is not a
+substitute for those matrices.
 
 ## Layers (bottom-up)
 
