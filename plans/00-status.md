@@ -41,6 +41,9 @@ their exact encoded wire cost, and large ckVision text frames retain only the
 latest scene while a known-answering host completes the outstanding frame.
 The matched Release `htop` move audit reduced 182,028 host bytes to 25,581
 with zero unchanged-cell writes and the same final position.
+The exact v0.1.4 tag at public snapshot `f0ea0f6` passed every package and
+publication job in GitHub run `33446774634`; all eleven release assets were
+downloaded afterwards and the five package/archive SHA-256 files verified.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture

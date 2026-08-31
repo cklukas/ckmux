@@ -17,9 +17,12 @@ ASan+UBSan passed 53/53 ckmux suites and 172/172 ckVision suites; Debian 13
 GCC 13.3 Release with `_FORTIFY_SOURCE=2` passed the same 53/53 and 172/172.
 The matched Release live `htop` audit reduced twenty rapid move frames from
 182,028 host bytes to 25,581, with zero unchanged-cell writes and the same
-final position. WP-15 and WP-21 still own the remaining milestone acceptance
-coverage; a green 53-suite integration run is not a substitute for those
-matrices.
+final position. The public v0.1.4 tag at `f0ea0f6` then passed every native,
+Ubuntu 20.04, Homebrew, package-inspection and publication job in GitHub run
+`33446774634`; all eleven assets were downloaded and every package/archive
+checksum verified. WP-15 and WP-21 still own the remaining milestone
+acceptance coverage; a green 53-suite integration run is not a substitute for
+those matrices.
 
 ## Layers (bottom-up)
 

@@ -90,7 +90,9 @@ WP-23. Linux, licensing and packaging are done, and v0.1.3 adds a separately
 built and install-tested Ubuntu 20.04 DEB to the RPM, Homebrew formula, generic
 DEB and platform archives introduced through v0.1.2. v0.1.4 pairs exact
 sparse-delta wire budgeting with ckVision v0.1.5's host-aware large-frame
-coalescing.
+coalescing. The exact public snapshot `f0ea0f6` passed every package and
+publication job in run `33446774634`; its eleven assets and five
+package/archive checksums were verified after download.
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from
