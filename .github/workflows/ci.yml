@@ -35,14 +35,29 @@ jobs:
             ckvision: pinned
             name: linux
           - os: ubuntu-latest
+            container: ubuntu:20.04
+            configure_args: "-DCMAKE_CXX_COMPILER=g++-10"
+            sanitize: ""
+            ckvision: pinned
+            name: ubuntu-20.04
+          - os: ubuntu-latest
             sanitize: ""
             ckvision: head
             name: linux-ckvision-head
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     # Only the early-warning lane is advisory.
     continue-on-error: ${{ matrix.ckvision == 'head' }}
     steps:
+      - name: Install Ubuntu 20.04 build tools
+        if: matrix.name == 'ubuntu-20.04'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+            ca-certificates g++-10 git lsof make procps python3-pip
+          python3 -m pip install --disable-pip-version-check cmake==3.31.6
+
       - uses: actions/checkout@v5
         with:
           path: ckmux
@@ -62,6 +77,7 @@ jobs:
           cmake -S ckmux -B build
           -DCMAKE_BUILD_TYPE=Debug
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
+          ${{ matrix.configure_args }}
           ${{ matrix.ckvision == 'head'
               && format('-DCKMUX_PREFER_CKVISION_SOURCE=OFF -DFETCHCONTENT_SOURCE_DIR_CKVISION={0}/ckvision', github.workspace)
               || '' }}
