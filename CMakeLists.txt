@@ -331,6 +331,12 @@ if(CKMUX_BUILD_TESTING)
                 --self-test)
     set_tests_properties(layer_checker_self_test PROPERTIES
         LABELS "script;architecture" TIMEOUT 30)
+    add_test(NAME homebrew_formula_generator_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/packaging/homebrew/generate_formula.py
+                --self-test)
+    set_tests_properties(homebrew_formula_generator_test PROPERTIES
+        LABELS "script;packaging" TIMEOUT 30)
     # A seam nobody wires is a feature a reader cannot reach. The printer
     # shipped that way -- nine `std::function`s declared, assigned nowhere,
     # every test green, because every test exercised the half that existed.
@@ -370,11 +376,12 @@ if(CKMUX_BUILD_FUZZERS)
     add_subdirectory(fuzz)
 endif()
 
-# Packaging. `cpack -G TGZ` (any platform) or `cpack -G "TGZ;DEB"` (Linux)
-# from a Release build directory produces the installable packages that
-# .github/workflows/release.yml attaches to a GitHub release -- the workflow
-# runs exactly these commands, so any published package can be reproduced
-# locally. Top-level only: nobody packages ckmux from inside another build.
+# Packaging. `cpack -G TGZ` (any platform) or `cpack -G "TGZ;DEB;RPM"`
+# (Linux, with dpkg and rpmbuild installed) from a Release build directory
+# produces the installable packages that .github/workflows/release.yml attaches
+# to a GitHub release. The workflow runs exactly these commands, so any
+# published package can be reproduced locally. Top-level only: nobody packages
+# ckmux from inside another build.
 if(PROJECT_IS_TOP_LEVEL)
     set(CPACK_PACKAGE_NAME "ckmux")
     set(CPACK_PACKAGE_VENDOR "Dr. Christian Klukas")
@@ -392,5 +399,10 @@ if(PROJECT_IS_TOP_LEVEL)
     set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_RPM_PACKAGE_RELEASE 1)
+    set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+    set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+    set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
     include(CPack)
 endif()
