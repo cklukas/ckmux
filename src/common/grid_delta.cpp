@@ -109,6 +109,68 @@ std::size_t total_length(const std::vector<CellRun>& runs) {
     return total;
 }
 
+// Emits the byte-cheapest partition of one changed row. A CellsOp may span an
+// unchanged gap when the wanted cells there belong to a run already being
+// paid for (turning two isolated cells into one repeated run can be cheaper
+// than two op headers). Across whole unchanged runs, the choice is exact:
+// split when their encoded bytes cost more than another CellsOp's fixed
+// overhead, keep them when they cost the same or less.
+void emit_changed_row(std::uint16_t row, std::span<const ckv::Cell> mirror,
+                      std::span<const ckv::Cell> wanted, std::vector<GridOp>& ops) {
+    if (mirror.size() != wanted.size() || wanted.empty()) return;
+
+    const std::size_t cells_op_overhead = proto::encoded_size(CellsOp{});
+    bool have_span = false;
+    std::size_t span_first = 0;
+    std::size_t span_last = 0;  // exclusive
+    std::size_t gap_bytes = 0;
+
+    const auto emit_span = [&] {
+        ops.push_back(CellsOp{row, static_cast<std::uint16_t>(span_first),
+                              runs_of(wanted.subspan(span_first, span_last - span_first))});
+    };
+
+    for (std::size_t run_first = 0; run_first < wanted.size();) {
+        std::size_t run_last = run_first + 1;
+        while (run_last < wanted.size() && same_cell(wanted[run_first], wanted[run_last]))
+            ++run_last;
+
+        std::size_t first_changed = run_last;
+        std::size_t last_changed = run_first;
+        for (std::size_t column = run_first; column < run_last; ++column) {
+            if (same_cell(mirror[column], wanted[column])) continue;
+            first_changed = std::min(first_changed, column);
+            last_changed = column + 1;
+        }
+
+        if (first_changed == run_last) {
+            if (have_span) {
+                const std::size_t run_length = run_last - run_first;
+                gap_bytes += proto::encoded_size(
+                    CellRun{static_cast<std::uint16_t>(run_length), wanted[run_first]});
+            }
+            run_first = run_last;
+            continue;
+        }
+
+        if (!have_span) {
+            have_span = true;
+            span_first = first_changed;
+            span_last = last_changed;
+        } else if (gap_bytes > cells_op_overhead) {
+            emit_span();
+            span_first = first_changed;
+            span_last = last_changed;
+        } else {
+            span_last = last_changed;
+        }
+        gap_bytes = 0;
+        run_first = run_last;
+    }
+
+    if (have_span) emit_span();
+}
+
 // Every row of `current`, as its own op. What a resize, an attach-and-diff or
 // a mirror of the wrong size comes down to.
 void emit_every_row(const GridView& current, std::vector<GridOp>& ops) {
@@ -364,18 +426,7 @@ std::vector<proto::GridOp> diff(const GridState& previous, const GridView& curre
             if (!examined[static_cast<std::size_t>(row)]) continue;
             const std::span<const ckv::Cell> mirror_row = row_of(mirror_grid, width, row);
             const std::span<const ckv::Cell> wanted = row_of(current.grid, width, row);
-            int first = 0;
-            while (first < width && same_cell(mirror_row[static_cast<std::size_t>(first)],
-                                              wanted[static_cast<std::size_t>(first)]))
-                ++first;
-            if (first == width) continue;
-            int last = width;
-            while (last > first && same_cell(mirror_row[static_cast<std::size_t>(last - 1)],
-                                             wanted[static_cast<std::size_t>(last - 1)]))
-                --last;
-            ops.push_back(CellsOp{static_cast<std::uint16_t>(row), static_cast<std::uint16_t>(first),
-                                  runs_of(wanted.subspan(static_cast<std::size_t>(first),
-                                                         static_cast<std::size_t>(last - first)))});
+            emit_changed_row(static_cast<std::uint16_t>(row), mirror_row, wanted, ops);
         }
     }
 

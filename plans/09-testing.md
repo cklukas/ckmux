@@ -11,15 +11,15 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
 `unit`, `golden`, `script`, `pty`, `e2e`, `benchmark`, `fuzz-corpus`,
 `portable`.
 
-**Current integration baseline:** ckmux v0.1.3 consumes ckVision v0.1.4. The
-Ubuntu 20.04/GCC 10 Release candidate passed 53/53 suites, generated a DEB
-whose declared runtime floor fits focal (`libc6 >= 2.17`, `libstdc++6 >= 9`),
-and installed and launched it in a fresh Ubuntu 20.04 userspace. The release
-matrix repeated that gate on GitHub x86_64 at public snapshot `8204709`: the
-focal job passed 53/53, installed and launched its package, and every release
-job passed (run `33377741193`). WP-15 and WP-21 still own the remaining
-milestone acceptance coverage; a green 53-suite integration run is not a
-substitute for those matrices.
+**Current integration baseline:** ckmux v0.1.4 consumes ckVision v0.1.5
+(public `0e67f04`). Before the version-only release bumps, macOS Debug and
+ASan+UBSan passed 53/53 ckmux suites and 172/172 ckVision suites; Debian 13
+GCC 13.3 Release with `_FORTIFY_SOURCE=2` passed the same 53/53 and 172/172.
+The matched Release live `htop` audit reduced twenty rapid move frames from
+182,028 host bytes to 25,581, with zero unchanged-cell writes and the same
+final position. WP-15 and WP-21 still own the remaining milestone acceptance
+coverage; a green 53-suite integration run is not a substitute for those
+matrices.
 
 ## Layers (bottom-up)
 
@@ -246,6 +246,7 @@ the unbounded version produced: what is asserted is a shape, not a machine.
 |---|---|---|
 | Delta bytes for a scroll — `~O(rows)`, not `O(cells)` | under a quarter of a whole-screen delta, **and** the delta carries a `ScrollOp` | 746 B against 3759 B (19.8%) |
 | Cells diffed per frame | one changed cell under 200 B | 58 B |
+| Sparse process-monitor tick | 66 changed cells, exactly 66 cell values sent, under 3 KiB | 1 740 B in the deterministic 100×22 `htop`-style fixture |
 | Attach snapshot, 10 terminals × 10 k scrollback | inside `kSnapshotPayloadBudget` before history, inside `kMaxSnapshotPayloadBytes` after | 74 694 B mandatory, 1 277 572 B whole |
 | Picture payload built for a session nobody watches | exactly zero | 0 B across 59 animation frames |
 | An idle terminal | no delta, no picture op, no bytes | 0 across 200 ticks |
@@ -254,6 +255,23 @@ The ratio gates carry a positive partner on purpose. A delta can be small
 because it says too little, so "cheap" is asserted together with the mechanism
 that makes it cheap — the scroll gate fails if the saving arrives without a
 `ScrollOp` on the wire.
+
+ckVision separately gates the outer-host half with a real window drag through
+`Application`: a dense text window is moved through twenty positions while a
+known-answering host withholds frame completion. The retained scene reaches
+the twentieth position, the terminal receives only the first and latest large
+frames, and their combined output stays below both three times one frame and
+96 KiB. Together the two gates cover the independent queues found by the live
+audit: sparse child-grid fields on the server wire, and obsolete composed
+window positions on the host wire.
+
+The matched live check is Release at 100×30: real `htop`, twenty window moves
+10 ms apart, and terminal-status replies delayed by 120 ms to model an SSH
+hop. The pre-fix binary emitted 182,028 host bytes in twenty intermediate
+frames; the fixed binary emitted 25,581 bytes in three current frames (86%
+less) and moved the left edge from column 2 to the requested column 7. Its
+five-second steady `htop` phase emitted 8,639 bytes for 1,405 changed cells and
+zero unchanged-cell writes.
 
 The picture budgets are the ones WP-16 freed, and they are gated in two places
 because they fail in two ways. `test_budgets.cpp` gates the work **built**;

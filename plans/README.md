@@ -1,6 +1,6 @@
 # ckmux — Planning Documents
 
-Status: living specification · 2026-08-25 · M3/M4 acceptance, M5 release work
+Status: living specification · 2026-09-01 · M3/M4 acceptance, M5 release work
 
 **ckmux** is a terminal multiplexer with a face: tmux's persistence model
 (sessions and the programs inside them survive disconnection; reattach
@@ -9,7 +9,7 @@ permanent context-sensitive hotkey footer, and each terminal in a floating,
 movable window with full mouse and Sixel support.
 
 These plans began from a verified ckVision inventory on 2026-08-16 and have
-been updated through the v0.1.3 release state on 2026-08-31. They are
+been updated through the v0.1.4 release state on 2026-09-01. They are
 **living documents**: behavior changes edit the corresponding plan in the
 same commit ([11-conventions.md](11-conventions.md)).
 
@@ -88,9 +88,9 @@ and gated from the command/key registries. There is no unclaimed `Ready` row:
 WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
 WP-23. Linux, licensing and packaging are done, and v0.1.3 adds a separately
 built and install-tested Ubuntu 20.04 DEB to the RPM, Homebrew formula, generic
-DEB and platform archives introduced through v0.1.2. The exact public snapshot
-`8204709` passed every release job and published eleven assets in run
-`33377741193`.
+DEB and platform archives introduced through v0.1.2. v0.1.4 pairs exact
+sparse-delta wire budgeting with ckVision v0.1.5's host-aware large-frame
+coalescing.
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from

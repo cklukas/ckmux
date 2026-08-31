@@ -471,6 +471,23 @@ CK_TEST(runs_and_cells_are_inverses_and_a_run_is_shorter_than_what_it_stands_for
     CK_CHECK(from_runs(past_any_grid).size() == 4U * 0xFFFFu);
 }
 
+CK_TEST(a_cells_ops_size_is_the_exact_number_of_grid_delta_payload_bytes_it_adds) {
+    CellsOp op;
+    op.row = 5;
+    op.column = 6;
+    op.runs = to_runs({cell("x"), cell("x"), cell("漢"), cell("z")});
+    GridDelta delta;
+    delta.term = 7;
+    delta.seq = 9;
+    delta.ops.push_back(op);
+
+    // GridDelta's fixed payload is term + seq + op count. Everything after
+    // that is the CellsOp contribution the sparse-row partitioner compares.
+    constexpr std::size_t kGridDeltaFixedPayload = 8 + 4 + 4;
+    CK_CHECK(encode(delta).size() ==
+             kHeaderBytes + kGridDeltaFixedPayload + encoded_size(op));
+}
+
 // --- Properties -----------------------------------------------------------
 
 CK_TEST(random_valid_messages_survive_the_wire) {

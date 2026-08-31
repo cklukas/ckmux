@@ -648,6 +648,11 @@ struct Snapshot {
 // bytes of its session id.
 std::size_t encoded_size(const CellRun& run);
 std::size_t encoded_size(const std::vector<CellRun>& runs);
+// Exact contribution of one Cells operation to a GridDelta payload,
+// including its tag, coordinates and run-count field. The grid differ uses
+// this to choose whether an unchanged gap is cheaper to carry or to split
+// around; an estimate here would make that choice drift from the wire.
+std::size_t encoded_size(const CellsOp& op);
 std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines);
 std::size_t encoded_size(const TerminalState& state);
 std::size_t encoded_size(const Snapshot& snapshot);

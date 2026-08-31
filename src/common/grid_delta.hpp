@@ -184,6 +184,12 @@ struct RowDamage {
 // two-state overload passes, because a caller holding two values has no damage
 // report to offer.
 //
+// Changed cells in one row are partitioned by exact wire cost. An unchanged
+// gap stays inside a CellsOp when its RLE representation is cheaper than
+// another operation header, and is split around when carrying it costs more.
+// Thus sparse process-monitor updates do not restate the text between fields,
+// while two changes inside one repeated-cell run retain that compression.
+//
 // A hint that is WRONG costs correctness, unlike the scroll search below: rows
 // left out of it are rows the mirror will not be told about. It is a report
 // from the emulator, not a guess.

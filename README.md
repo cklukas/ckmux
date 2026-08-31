@@ -116,7 +116,7 @@ ctest --test-dir build --output-on-failure
 
 ## Status
 
-Pre-1.0, with **v0.1.3** published for macOS arm64 and Linux x86_64, including
+Pre-1.0, with **v0.1.4** published for macOS arm64 and Linux x86_64, including
 a dedicated Ubuntu 20.04 package. The core
 promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
@@ -130,6 +130,9 @@ M3 and M4 are in their acceptance passes. The user guide, installed man page,
 generated key appendix, Linux port, licensing, and packaging are complete;
 the v0.1.2 packaging update added RPM and Homebrew delivery to the existing DEB
 and platform archives, and v0.1.3 adds the Ubuntu 20.04 compatibility package.
+v0.1.4 reduces terminal-update traffic in two places: sparse server deltas are
+partitioned by their exact encoded cost, and ckVision 0.1.5 coalesces large
+text frames while the host terminal is still completing the previous frame.
 The remaining v1 work is M4's three-host/vttest acceptance, the
 `ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
 rough edges, and expect the interface to move.
@@ -147,7 +150,7 @@ rough edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are both gating platforms. The v0.1.3 release matrix runs all
+macOS and Linux are both gating platforms. The v0.1.4 release matrix runs all
 53 suites in its native package jobs and in an Ubuntu 20.04/GCC 10 container;
 the latter also installs and launches its own compatibility DEB before the
 release can publish. The local Debian gate additionally sweeps GCC 13, GCC 14

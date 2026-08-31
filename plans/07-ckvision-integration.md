@@ -325,6 +325,15 @@ gate:
 |---|---|---|
 | L-64 | **Floating-point `<charconv>` is feature-detected, with a deterministic classic-locale stream fallback, and `Threads::Threads` is a public exported dependency.** C++20 libraries did not acquire the floating overloads together, so compiler-version inference would be another portability bug; the CMake probe asks for the actual operations. The fallback preserves locale independence and round-trip precision. The installed package config resolves the thread target before importing `ckvision::cvision`. | Ubuntu 20.04's libstdc++ 10 has integer `charconv` but no floating overloads, so ckVision failed to compile before ckmux could package it. Once compiled, the first graphics-log call threw `std::system_error` because focal predates glibc's pthread merge and ckVision's static target had not exported its thread link requirement. Both are general library-consumer requirements, so they were fixed upstream rather than hidden in the ckmux lane. The resulting ckmux Release build passed 53/53 with GCC 10 and its DEB installed in a clean focal container. |
 
+### Landed (large text frames stop outrunning the host)
+
+ckVision v0.1.5 (public `0e67f04`), 2026-09-01, from the live `htop` host-byte
+audit:
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-65 | **Large text frames join raster frames behind frame-completion back-pressure.** `Presenter` classifies an emitted text payload of at least 4 KiB as expensive; `Application` retains only the latest dirty scene while a known-answering host owes that frame, and sleeps on the acknowledgement/deadline rather than spinning on retained damage. Small text remains immediate, and a host that never answers is never waited for. | A matched Release 100×30 live audit moved an `htop` window through twenty positions at 10 ms intervals while delaying DSR answers by 120 ms: the pre-fix binary emitted all twenty intermediate frames (182,028 host bytes), while the fixed binary emitted three current frames (25,581 bytes, 86% less), wrote zero unchanged host cells, and reached the same final position. This belongs upstream because every ckVision desktop with large movable text windows needs host-aware coalescing. A deterministic twenty-position drag permits only the first and latest frame when one answer remains outstanding. |
+
 ### Upstream status
 
 This table keeps the landed seams beside the genuinely open/deferred ones so
@@ -372,7 +381,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.4 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.5 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins

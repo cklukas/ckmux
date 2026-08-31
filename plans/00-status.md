@@ -18,7 +18,7 @@ with clock and calendar, footer, floating terminal windows, the prefix and its
 which-key popup, scrollback with a frame scrollbar, Sixel graphics, themes in
 `Settings ▸ General…` — is real and usable. Shared/read-only readers, captured
 printing, process statistics, the Linux port, installable packages and the
-v0.1.3 release have landed. The user guide, installed man page and generated
+v0.1.4 release have landed. The user guide, installed man page and generated
 key appendix have now landed as well. v0.1.2 added RPM and an install-tested
 Homebrew formula alongside the existing DEB and platform archives. Its exact
 path first passed in non-publishing manual mode at public snapshot `fdf3c9b`
@@ -34,6 +34,13 @@ The exact v0.1.3 tag at public snapshot `8204709` passed every release job in
 GitHub run `33377741193`; its focal x86_64 job passed 53/53, inspected and
 installed `ckmux_0.1.3-ubuntu20.04_amd64.deb`, and the workflow published all
 eleven assets.
+
+v0.1.4 pins ckVision v0.1.5 (public `0e67f04`) and addresses the terminal
+traffic audit at both boundaries: sparse server cell spans are partitioned by
+their exact encoded wire cost, and large ckVision text frames retain only the
+latest scene while a known-answering host completes the outstanding frame.
+The matched Release `htop` move audit reduced 182,028 host bytes to 25,581
+with zero unchanged-cell writes and the same final position.
 
 WP-15 is completing M3's menu-driven operation walkthrough. WP-21 is completing
 M4's reference-app, vttest and changing-environment matrix. The architecture

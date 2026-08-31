@@ -176,6 +176,13 @@ cells[] entry: run_len u16, cell:
     reserved u16 }           # future: underline styles/color, hyperlink id (plan 04 U1/U2)
 ```
 
+Within a row, `Cells` operations are partitioned by their exact encoded cost,
+not merely bounded by the first and last changed column. A gap of unchanged
+cells is carried when its RLE runs cost no more than a second operation header
+(for example, two erased cells inside one long blank run), and split around
+when the gap costs more. Sparse status-screen updates therefore carry the
+fields that changed rather than all stable text between them.
+
 **Three kinds of colour, not two.** This table said `default | rgb` when it
 was written, before indexed colour survived end to end upstream (L-22 in
 [07-ckvision-integration.md](07-ckvision-integration.md)). Flattening a
