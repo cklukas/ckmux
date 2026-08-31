@@ -1230,6 +1230,13 @@ std::size_t encoded_size(const std::vector<CellRun>& runs) {
     return total;
 }
 
+std::size_t encoded_size(const CellsOp& op) {
+    // GridOpTag, row, column, then Writer::runs. Keep this beside the run
+    // arithmetic it delegates to: diff() compares this exact per-op overhead
+    // with the encoded runs an unchanged gap would otherwise add.
+    return 1 + 2 + 2 + encoded_size(op.runs);
+}
+
 std::size_t encoded_size(const std::vector<std::vector<CellRun>>& lines) {
     std::size_t total = 4;  // the line count `Writer::lines` writes first
     for (const std::vector<CellRun>& line : lines) total += encoded_size(line);

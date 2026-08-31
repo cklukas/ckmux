@@ -44,6 +44,16 @@ using ckm::server::TerminalId;
 using ckm::server::Terminals;
 using ckm::server::TerminalSpec;
 
+void write_grid_text(ckm::GridState& state, int row, int column,
+                     std::string_view text, ckv::Style style = {}) {
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const int target = column + static_cast<int>(index);
+        if (target < 0 || target >= state.cells.width) break;
+        state.grid[static_cast<std::size_t>(row * state.cells.width + target)] =
+            ckv::Cell::from_grapheme(text.substr(index, 1), style);
+    }
+}
+
 ckm::Settings test_settings(int scrollback = 200) {
     ckm::Settings settings;
     settings.shell = "/bin/sh";
@@ -104,6 +114,58 @@ std::string screen_of(Terminal& terminal) {
 }
 
 }  // namespace
+
+CK_TEST(sparse_htop_style_updates_send_changed_fields_not_the_space_between_them) {
+    constexpr int kColumns = 100;
+    constexpr int kRows = 22;
+    ckm::GridState before = ckm::blank_state(ckv::Size{kColumns, kRows}, 0);
+    const std::string row_template =
+        " CPU[|||||||| 12.3%] Mem[|||| 3.21G/16G] Tasks:123,456 thr; 1 running Load:0.12 0.34 0.56 ";
+    for (int row = 0; row < kRows; ++row) {
+        write_grid_text(before, row, 0, row_template);
+        // Real process monitors use colour to distinguish meters and fields.
+        // Two stable styled islands ensure the budget represents those cell
+        // runs too, not an artificially monochrome line.
+        write_grid_text(before, row, 5, "||||||||",
+                        ckv::Style{ckv::Color::indexed(2), ckv::Color{}, ckv::Attr::Bold});
+        write_grid_text(before, row, 29, "||||",
+                        ckv::Style{ckv::Color::indexed(4), ckv::Color{}, ckv::Attr{}});
+    }
+
+    ckm::GridState after = before;
+    for (int row = 0; row < kRows; ++row) {
+        after.grid[static_cast<std::size_t>(row * kColumns + 17)] =
+            ckv::Cell::from_grapheme((row & 1) != 0 ? "8" : "9", ckv::Style{});
+        after.grid[static_cast<std::size_t>(row * kColumns + 52)] =
+            ckv::Cell::from_grapheme((row & 1) != 0 ? "7" : "8", ckv::Style{});
+        after.grid[static_cast<std::size_t>(row * kColumns + 82)] =
+            ckv::Cell::from_grapheme((row & 1) != 0 ? "6" : "7", ckv::Style{});
+    }
+
+    ckm::proto::GridDelta delta;
+    delta.term = 1;
+    delta.seq = 1;
+    delta.ops = ckm::diff(before, after);
+    const std::size_t bytes = ckm::proto::encode(delta).size();
+    std::size_t cells_sent = 0;
+    for (const ckm::proto::GridOp& op : delta.ops) {
+        const auto* const cells = std::get_if<ckm::proto::CellsOp>(&op);
+        if (cells == nullptr) continue;
+        for (const ckm::proto::CellRun& run : cells->runs) cells_sent += run.run_length;
+    }
+
+    std::printf("  [budget] sparse htop-style tick: %zu changed cells, %zu cells sent, %zu bytes\n",
+                static_cast<std::size_t>(kRows * 3), cells_sent, bytes);
+    // The changed fields are the only cell values carried. The old bounding
+    // span sent columns 17 through 82 on every row — 1,452 cells for 66 real
+    // changes — and was over an order of magnitude above this byte ceiling.
+    CK_CHECK(cells_sent == static_cast<std::size_t>(kRows * 3));
+    CK_CHECK(bytes < 3U * 1024U);
+
+    ckm::GridState mirror = before;
+    CK_CHECK(ckm::apply_delta(delta.ops, mirror));
+    CK_CHECK(ckm::same_state(mirror, after));
+}
 
 CK_TEST(a_scroll_costs_the_rows_that_moved_not_the_cells_that_moved_with_them) {
     // The gate the testing plan §7 names first: a full-screen scroll must be O(rows),

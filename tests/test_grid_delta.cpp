@@ -111,6 +111,16 @@ int count_ops_of(const std::vector<GridOp>& ops, std::size_t which) {
     return count;
 }
 
+std::size_t cells_carried_by(const std::vector<GridOp>& ops) {
+    std::size_t total = 0;
+    for (const GridOp& op : ops) {
+        const auto* const cells = std::get_if<CellsOp>(&op);
+        if (cells == nullptr) continue;
+        for (const ckm::proto::CellRun& run : cells->runs) total += run.run_length;
+    }
+    return total;
+}
+
 }  // namespace
 
 CK_TEST(a_full_screen_scroll_costs_one_scroll_op_and_the_row_that_is_new) {
@@ -126,7 +136,13 @@ CK_TEST(a_full_screen_scroll_costs_one_scroll_op_and_the_row_that_is_new) {
     // This is WP-4a's stated acceptance criterion: a screen that scrolled costs
     // a shift and the one row that is genuinely new, not a screenful of cells.
     CK_CHECK(count_ops_of(ops, 0) == 1);  // ScrollOp
-    CK_CHECK(count_ops_of(ops, 1) == 1);  // CellsOp — the new bottom row only
+    CK_CHECK(count_ops_of(ops, 1) > 0);  // CellsOps — the new bottom row only
+    for (const GridOp& op : ops)
+        if (const auto* cells = std::get_if<CellsOp>(&op)) CK_CHECK(cells->row == 23);
+    // The two unchanged spaces between the three words cost less as operation
+    // boundaries than as encoded cell runs, so only the thirteen non-space
+    // cells cross the wire.
+    CK_CHECK(cells_carried_by(ops) == 13U);
     for (const GridOp& op : ops)
         if (const auto* scroll = std::get_if<ScrollOp>(&op)) {
             CK_CHECK(scroll->top == 0);
@@ -170,7 +186,9 @@ CK_TEST(a_scroll_with_a_status_line_under_it_is_still_a_scroll) {
 
     const std::vector<GridOp> ops = ckm::diff(before, after);
     CK_CHECK(count_ops_of(ops, 0) == 1);  // one ScrollOp
-    CK_CHECK(count_ops_of(ops, 1) <= 3);  // the new text row, the status line
+    CK_CHECK(count_ops_of(ops, 1) > 0);  // the new text row and status line
+    for (const GridOp& op : ops)
+        if (const auto* cells = std::get_if<CellsOp>(&op)) CK_CHECK(cells->row >= 22);
     GridState mirror = before;
     CK_CHECK(ckm::apply_delta(ops, mirror));
     CK_CHECK(same_state(mirror, after));
@@ -525,6 +543,56 @@ CK_TEST(a_row_of_one_repeated_cell_costs_one_run) {
         CK_CHECK(cells->runs.size() == 1U);
         CK_CHECK(cells->runs.front().run_length == 120);
     }
+}
+
+CK_TEST(sparse_row_changes_split_where_an_unchanged_gap_costs_more_than_an_op) {
+    GridState after = blank_state(ckv::Size{120, 1}, 0);
+    std::string alternating;
+    for (int column = 0; column < 120; ++column)
+        alternating += (column & 1) != 0 ? 'a' : 'b';
+    write_text(after, 0, 0, alternating, ckv::Style{});
+    GridState before = after;
+    before.grid[2] = ckv::Cell::from_grapheme("x", ckv::Style{});
+    before.grid[117] = ckv::Cell::from_grapheme("y", ckv::Style{});
+
+    const std::vector<GridOp> ops = ckm::diff(before, after);
+    CK_CHECK(count_ops_of(ops, 1) == 2);
+    GridState mirror = before;
+    CK_CHECK(ckm::apply_delta(ops, mirror));
+    CK_CHECK(same_state(mirror, after));
+
+    // Compare the chosen partition with the old first-to-last bounding span.
+    // The gap alternates values, so RLE cannot make its unchanged cells cheap;
+    // two op headers cost a small fraction of carrying all 114 cells between
+    // the real changes.
+    ckm::proto::GridDelta split;
+    split.ops = ops;
+    const std::vector<ckv::Cell> row = row_copy(after, 0);
+    ckm::proto::GridDelta bounded;
+    bounded.ops.push_back(CellsOp{0, 2, ckm::proto::to_runs(
+                                           std::vector<ckv::Cell>(row.begin() + 2,
+                                                                  row.begin() + 118))});
+    CK_CHECK(ckm::proto::encode(split).size() * 4U < ckm::proto::encode(bounded).size());
+}
+
+CK_TEST(an_unchanged_gap_inside_one_cheap_run_stays_in_one_cells_op) {
+    GridState after = blank_state(ckv::Size{120, 1}, 0);
+    GridState before = after;
+    before.grid[2] = ckv::Cell::from_grapheme("x", ckv::Style{});
+    before.grid[117] = ckv::Cell::from_grapheme("y", ckv::Style{});
+
+    const std::vector<GridOp> ops = ckm::diff(before, after);
+    CK_CHECK(count_ops_of(ops, 1) == 1);
+    const auto* cells = ops.empty() ? nullptr : std::get_if<CellsOp>(&ops.front());
+    CK_CHECK(cells != nullptr);
+    if (cells != nullptr) {
+        CK_CHECK(cells->column == 2);
+        CK_CHECK(cells->runs.size() == 1U);
+        CK_CHECK(cells->runs.front().run_length == 116);
+    }
+    GridState mirror = before;
+    CK_CHECK(ckm::apply_delta(ops, mirror));
+    CK_CHECK(same_state(mirror, after));
 }
 
 CK_TEST(the_ops_a_diff_produces_survive_the_wire) {

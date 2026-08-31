@@ -112,10 +112,11 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // (ckvision_spin does, and ckmux's emulator takes them at memory speed).
     // So the loop is closed here rather than by guessing a rate: each frame
     // carries a Device Status Report, the reply says that frame was taken in,
-    // and ckVision holds the next picture back until it comes. A host that
-    // never answers is not waited for — tracking turns itself off — and a
-    // frame with no picture in it is never held back at all, so a terminal
-    // showing only text is paced exactly as it was before.
+    // and ckVision holds the next expensive frame back until it comes. Raster
+    // frames always qualify; text qualifies at 4 KiB, which catches a moving
+    // terminal window without putting keystrokes or small focus changes behind
+    // a round trip. A host that never answers is not waited for — tracking
+    // turns itself off — and all intermediate states coalesce to the latest.
     app.set_frame_completion_tracking(true);
     // What this display can actually show, carried on every Attach: the
     // server folds it into the graphics advertisement the children this

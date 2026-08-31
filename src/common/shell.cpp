@@ -20,7 +20,12 @@ std::string_view base_name(std::string_view path) {
     return tail.empty() ? path : tail;
 }
 
-// tmux's checkshell(): an absolute path, executable, and not this program.
+// The three conditions tmux's checkshell() applies, matched deliberately (see
+// the header) and each for a reason of its own: absolute, because a bare name
+// would have to be resolved against a PATH the new terminal has not built yet;
+// executable, because otherwise the failure arrives after the fork, in a child
+// with nowhere to report it; and not ckmux itself, because a $SHELL pointing
+// back here opens a multiplexer inside every terminal the multiplexer opens.
 bool usable_shell(const char* path) {
     if (path == nullptr || *path != '/') return false;
     if (base_name(path) == "ckmux") return false;
