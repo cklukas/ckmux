@@ -30,7 +30,7 @@ Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 | `confirm-kill` | `true` | Ask before closing or killing something with a live program in it. |
 | `kill-grace-seconds` | `5` | How long programs get to end on their own when a session is killed; `0` means don't wait. |
 | `kill-empty-session` | `true` | A session whose last terminal closed goes away. |
-| `clock` | `seconds` | The menu-bar clock: `seconds`, `minutes`, or `off`. |
+| `clock` | `seconds` | The menu-bar clock: `seconds`, `minutes`, or `off`. The big clock (`^B t`) drops its seconds for `minutes`. |
 | `desktop-size` | `fixed` | Whose screen sizes the shared desktop: `fixed`, `fit-smallest`, or `fit-latest`. A client's own screen never silently reflows a session — resizing SIGWINCHes every child, for every reader watching. |
 | `resize-windows-to-fit` | `false` | After a reattach on a smaller screen has moved an oversized window up and left, whether a second, resizing step shrinks it to fit. |
 | `show-cpu` | `false` | CPU readout on every terminal window's footer (View menu). |

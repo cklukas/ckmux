@@ -291,8 +291,12 @@ CK_TEST(the_rename_prompt_starts_from_the_caption_the_reader_can_see) {
 
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kRenameTerminal)));
     f.app.step(0);
-    // Typed onto the end of what is already there, and accepted: the result
-    // proves what the field held without reading the widget.
+    // The field opens with the caption selected (ckVision D-066), so typing
+    // alone would replace it; End keeps it and puts the caret after it, which
+    // is the reader adjusting a nearly-right name. Typed onto the end and
+    // accepted: the result proves what the field held without reading the
+    // widget.
+    f.app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::End, ckv::Modifier::None, ""}});
     type(f, " 2");
     press_enter(f);
     CK_CHECK(window->title() == "build 2");

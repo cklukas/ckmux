@@ -282,7 +282,7 @@ void ClientApp::register_commands() {
         return registry.declare(u::CommandDescriptor{.key = std::string(key),
                                                      .title = std::string(title),
                                                      .category = std::move(category),
-                                                     .context = {},
+                                                     .scope = {},
                                                      .chord = {},
                                                      .visibility = u::CommandVisibility::Palette,
                                                      .handler = std::move(handler)});
@@ -354,6 +354,21 @@ void ClientApp::register_commands() {
         } else if (binding.key == commands::kShowMemoryReal) {
             declare(binding.key, binding.title, "View", [this] {
                 toggle_stats_readout(&Settings::show_memory_real, "show-memory-real");
+            });
+        } else if (binding.key == commands::kShowClock || binding.key == commands::kShowDate ||
+                   binding.key == commands::kShowDateTime) {
+            const w::BigClockContent content = binding.key == commands::kShowClock
+                                                   ? w::BigClockContent::Time
+                                               : binding.key == commands::kShowDate
+                                                   ? w::BigClockContent::Date
+                                                   : w::BigClockContent::DateAndTime;
+            const u::CommandId show = declare(binding.key, binding.title, "View",
+                                              [this, content] { show_big_clock(content); });
+            // A face needs a window to cover and something to tell it the
+            // time. Without either it is a menu item that is plainly not
+            // available, not a clock that shows nothing or guesses.
+            registry.set_enabled_predicate(show, [this] {
+                return active_terminal() != nullptr && static_cast<bool>(options_.local_now);
             });
         } else if (binding.key == commands::kFitDesktop) {
             // Available only where there is a session to reshape: a client
@@ -570,7 +585,7 @@ void ClientApp::register_commands() {
                           .key = std::string(commands::kArmPrefix),
                           .title = "Prefix",
                           .category = "Terminal",
-                          .context = {},
+                          .scope = {},
                           .chord = {},
                           .visibility = u::CommandVisibility::Hidden,
                           .handler = [this] { arm_prefix(); }}));
@@ -640,7 +655,8 @@ std::vector<w::MenuBarItem> ClientApp::build_menus() {
         "&View",
         {checkable(commands::kShowCpuUsage, options_.settings.show_cpu),
          checkable(commands::kShowMemoryRss, options_.settings.show_memory_rss),
-         checkable(commands::kShowMemoryReal, options_.settings.show_memory_real)}};
+         checkable(commands::kShowMemoryReal, options_.settings.show_memory_real), separator,
+         item(commands::kShowClock), item(commands::kShowDate), item(commands::kShowDateTime)}};
     // The window list is a list of WINDOWS — it lives with the other commands
     // that arrange them, not under Terminal, where it sat because M1 had no
     // Window menu yet to put it in.
@@ -728,6 +744,15 @@ void ClientApp::build_chrome() {
         [this](w::Desktop::WindowChange change, w::Window& window) {
             if (change != w::Desktop::WindowChange::Activated) return;
             desktop_->pan_to_show(window.bounds());
+            // Posted, so it runs after whatever activated the window has
+            // finished. A click activates BEFORE the press is delivered, and
+            // a keyboard moved onto the big clock then would make the very
+            // click that brought the reader back read as a click on a clock
+            // that already had the keys — which dismisses it.
+            app_.post([this, target = &window, alive = window.lifetime_token()] {
+                if (!alive.expired() && desktop_ != nullptr && desktop_->active_window() == target)
+                    follow_activation_with_keyboard(*target);
+            });
         },
         alive_);
     // A terminal opened while the reader is working maximized opens maximized
@@ -759,8 +784,8 @@ void ClientApp::build_chrome() {
     // ends in, so all four end the same way.
     desktop_->subscribe_window_change(
         [this](w::Desktop::WindowChange change, w::Window&) {
-            if (change == w::Desktop::WindowChange::Minimized)
-                keep_keyboard_off_hidden_terminals();
+            if (change != w::Desktop::WindowChange::Minimized) return;
+            keep_keyboard_off_hidden_terminals();
         },
         alive_);
 
@@ -1517,8 +1542,10 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
 
 void ClientApp::forget_terminals() {
     if (desktop_ == nullptr) return;
-    // Copy mode is a surface over a window that is about to stop existing.
+    // Copy mode and the big clock are surfaces over windows that are about to
+    // stop existing.
     if (copy_mode_ != nullptr) leave_copy_mode();
+    if (big_clock_ != nullptr) hide_big_clock();
     forgetting_terminals_ = true;
     std::vector<w::Window*> going;
     going.reserve(terminal_windows_.size());
@@ -1574,6 +1601,7 @@ void ClientApp::close_window_for_terminal(const ckv::term::TerminalSubsession& t
     // window with the title poll writing a caption through the pointer several
     // times a second.
     if (copy_mode_ != nullptr && copy_mode_window_ == window) leave_copy_mode();
+    if (big_clock_ != nullptr && big_clock_window_ == window) hide_big_clock();
     // The terminal is already gone, so nothing is asked and nothing is sent:
     // this window is being taken down because the server said its terminal
     // ended, and asking the server to end it again would be an error frame.
@@ -3132,8 +3160,39 @@ void ClientApp::apply_layout(const std::vector<WindowPlacement>& arrangement) {
         focus_active_terminal();
 }
 
+w::View* ClientApp::keyboard_target_of(w::Window* window) {
+    // A window whose content is covered — the big clock, copy mode — takes
+    // the reader's keys at the cover, not at the terminal hidden under it:
+    // the reader coming back to that window is coming back to what they can
+    // see, and the first key they press there is meant for it.
+    if (window == nullptr) return nullptr;
+    if (w::View* const cover = window->content_cover(); cover != nullptr && cover->focusable())
+        return cover;
+    return terminal_view_of(window);
+}
+
+void ClientApp::follow_activation_with_keyboard(w::Window& window) {
+    // The keyboard goes where the window went. `^B n`, `^B p`, Terminal ▸
+    // Next and every other route that activates a terminal window ends here,
+    // and none of them moved the keys: the next window came to the front and
+    // the reader's typing went on arriving in the one behind it.
+    //
+    // Only a keyboard that is IN a terminal follows — at its terminal, or at
+    // the cover over one (the big clock, copy mode). A reader answering a
+    // dialog or walking a menu is not somebody an activation may take the
+    // keys from.
+    w::View* const target = keyboard_target_of(&window);
+    w::View* const focused = app_.focused();
+    if (target == nullptr || focused == target || app_.is_modal()) return;
+    const bool in_a_terminal = dynamic_cast<w::TerminalView*>(focused) != nullptr ||
+                               (focused != nullptr && (focused == big_clock_ || focused == copy_mode_));
+    if (!in_a_terminal) return;
+    app_.set_focus(target);
+    refresh_footer();
+}
+
 void ClientApp::focus_active_terminal() {
-    if (w::TerminalView* const view = terminal_view_of(active_terminal())) app_.set_focus(view);
+    if (w::View* const target = keyboard_target_of(active_terminal())) app_.set_focus(target);
 }
 
 void ClientApp::keep_keyboard_off_hidden_terminals() {
@@ -3141,14 +3200,18 @@ void ClientApp::keep_keyboard_off_hidden_terminals() {
     // dialog, or reading history in copy mode, or part-way through a menu is
     // not somebody whose focus a window leaving the desktop may take — the
     // same rule `apply_layout` states about arrangements.
-    w::TerminalView* const focused = dynamic_cast<w::TerminalView*>(app_.focused());
-    if (focused == nullptr || app_.is_modal() || focused->visible_in_tree()) return;
+    // A covered terminal's keyboard is at its cover — the big clock, copy
+    // mode — and a cover in a window that has just gone is hidden with it.
+    w::View* const focused = app_.focused();
+    const bool in_a_terminal = dynamic_cast<w::TerminalView*>(focused) != nullptr ||
+                               (focused != nullptr && (focused == big_clock_ || focused == copy_mode_));
+    if (!in_a_terminal || app_.is_modal() || focused->visible_in_tree()) return;
     // Whatever the desktop activated in its place — and NOTHING when every
     // terminal is now minimized, which is a state ckmux already has: a client
     // started without a session focuses nothing, and the prefix key still
     // reaches the command table from there (see the kArmPrefix binding). The
     // alternative is a shell being typed into blind behind a bar.
-    app_.set_focus(terminal_view_of(active_terminal()));
+    app_.set_focus(keyboard_target_of(active_terminal()));
     refresh_footer();
 }
 
@@ -3185,13 +3248,23 @@ void ClientApp::refresh_footer() {
     // a selection, not commands anything else can execute — so the footer says
     // what they are rather than advertising prefix keys that are not reachable
     // from here (the interface spec's context table).
-    if (copy_mode_ != nullptr) {
+    if (copy_mode_ != nullptr && copy_mode_->has_focus()) {
         std::vector<w::StatusLineItem> keys;
         keys.emplace_back("↑↓ scroll", ckv::ui::kInvalidCommand, 90);
         keys.emplace_back("v select", ckv::ui::kInvalidCommand, 80);
         keys.emplace_back("y copy", ckv::ui::kInvalidCommand, 70);
         keys.emplace_back("/ search", ckv::ui::kInvalidCommand, 60);
         keys.emplace_back("q exit", ckv::ui::kInvalidCommand, 50);
+        footer_->set_items(std::move(keys));
+        return;
+    }
+    // The big clock has one key, and it is every key: while it has the
+    // keyboard the footer says so rather than advertising prefix chords the
+    // face would swallow. While the reader works in another window, the
+    // clock stays up and the footer is that window's.
+    if (big_clock_ != nullptr && big_clock_->has_focus()) {
+        std::vector<w::StatusLineItem> keys;
+        keys.emplace_back("any key back to the terminal", ckv::ui::kInvalidCommand, 90);
         footer_->set_items(std::move(keys));
         return;
     }
@@ -3418,7 +3491,13 @@ void ClientApp::enter_copy_mode() {
         // leaving destroys it.
         app_.post([this] { leave_copy_mode(); });
     };
-    copy_mode_ = desktop_->add_popup(std::move(surface));
+    // Over the window's content, as the window's own cover (ckVision
+    // `Window::set_content_cover`): the window keeps it on its interior
+    // through every move and resize, and a window in front of this one is in
+    // front of it too. `content_rect()` is window-local, so a desktop popup
+    // placed there sat at the desktop's corner instead.
+    copy_mode_ = surface.get();
+    window->set_content_cover(std::move(surface));
     // F1 here is about copy mode, not about the terminal underneath it: its
     // keys are its own, they are fixed rather than bindable, and a reader who
     // asks for help while reading history is asking about what they are doing
@@ -3429,7 +3508,6 @@ void ClientApp::enter_copy_mode() {
     // refresh below runs on a timer, and the window can be taken down under it
     // by a server that ends the terminal while its reader is reading.
     copy_mode_window_alive_ = window->lifetime_token();
-    copy_mode_->set_bounds(window->content_rect());
     app_.set_focus(copy_mode_);
     refresh_copy_mode_caption();
     refresh_footer();
@@ -3437,9 +3515,11 @@ void ClientApp::enter_copy_mode() {
 
 void ClientApp::leave_copy_mode() {
     if (copy_mode_ == nullptr || desktop_ == nullptr) return;
-    CopyModeView* const surface = copy_mode_;
     copy_mode_ = nullptr;
-    desktop_->remove_popup(surface);
+    // The surface is the window's cover and goes with the window; only a
+    // window that still exists has one to take down.
+    if (copy_mode_window_ != nullptr && !copy_mode_window_alive_.expired())
+        (void)copy_mode_window_->set_content_cover(nullptr);
     // The caption goes back only if there is still a window to put it on: copy
     // mode outlives its window whenever the server ends the terminal underneath
     // it, and an expired token is the proof of exactly that.
@@ -3470,6 +3550,60 @@ void ClientApp::refresh_copy_mode_caption() {
     const int from_bottom = copy_mode_->cursor().y - (copy_mode_->history_size() - 1);
     copy_mode_window_->set_title(base + " — COPY " + std::to_string(from_bottom) + "/" +
                                  std::to_string(copy_mode_->history_size()));
+}
+
+void ClientApp::show_big_clock(w::BigClockContent content) {
+    if (desktop_ == nullptr || !options_.local_now) return;
+    w::Window* const window = active_terminal();
+    if (window == nullptr) return;
+    // Asked again over the same window: the same face answers the new
+    // question. Asked over a different one: the clock moves there, because a
+    // reader has one clock and it is where they last asked for it.
+    if (big_clock_ != nullptr && big_clock_window_ == window) {
+        big_clock_->set_content(content);
+        app_.set_focus(big_clock_);
+        refresh_footer();
+        return;
+    }
+    if (big_clock_ != nullptr) hide_big_clock();
+    if (copy_mode_ != nullptr && copy_mode_window_ == window) leave_copy_mode();
+
+    auto face = std::make_unique<w::BigClockView>();
+    face->set_content(content);
+    // Seconds follow the menu-bar clock's own setting, so the two clocks on
+    // one screen agree about what a reader asked to see. `off` hides the bar's
+    // clock, not this one: this one was asked for by name.
+    face->set_show_seconds(options_.settings.clock != ClockMode::Minutes);
+    // Copied rather than reached through `this`, like the bar's clock: the
+    // face ticks on the application's timer.
+    face->set_moment_provider([now = options_.local_now] { return now(); });
+    face->on_dismiss = [this] {
+        // Posted: this runs inside the face's own key or mouse handler, and
+        // hiding destroys it.
+        app_.post([this] { hide_big_clock(); });
+    };
+    face->set_help_context_key("ckmux.clock");
+    // The window's own cover, like copy mode's surface: it stays on the
+    // window's interior as the window moves and resizes, and under any window
+    // in front of it.
+    big_clock_ = face.get();
+    window->set_content_cover(std::move(face));
+    big_clock_window_ = window;
+    big_clock_window_alive_ = window->lifetime_token();
+    app_.set_focus(big_clock_);
+    refresh_footer();
+}
+
+void ClientApp::hide_big_clock() {
+    if (big_clock_ == nullptr || desktop_ == nullptr) return;
+    w::Window* const window = big_clock_window_;
+    const bool window_alive = !big_clock_window_alive_.expired();
+    big_clock_ = nullptr;
+    big_clock_window_ = nullptr;
+    big_clock_window_alive_.reset();
+    if (window != nullptr && window_alive) (void)window->set_content_cover(nullptr);
+    focus_active_terminal();
+    refresh_footer();
 }
 
 void ClientApp::copy_to_targets(std::string text) {
@@ -4093,6 +4227,25 @@ void ClientApp::populate_help() {
                          prefix_text +
                          " ] pastes into any terminal here. The program you were "
                          "running is untouched and still there when you leave.",
+                     {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
+
+    // The big clock. Its chord is read from the keymap like every other page's,
+    // so a reader who rebound it is told their key, not ours.
+    std::string clock_route = "View ▸ Show Time";
+    for (const KeyBinding& binding : keymap_.bindings())
+        if (binding.key == commands::kShowClock && !binding.chord.empty())
+            clock_route = binding_label(options_.settings.prefix, binding) + " or " + clock_route;
+    help_.add_topic(
+        "ckmux.clock",
+        w::HelpTopic{"Big clock",
+                     "The time, the date, or both, drawn large over this terminal. " +
+                         clock_route +
+                         " shows the time; View ▸ Show Date and Show Date and Time show "
+                         "the others.\n\nIt stays up while you work in other windows. Back "
+                         "in this one, any key puts it away and does nothing else; the prefix "
+                         "still works, so you can switch windows without losing it. The "
+                         "program in the terminal keeps running underneath, and nobody else "
+                         "watching this session sees the clock.",
                      {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
 
     // The picker, which is also the first thing a new reader sees.

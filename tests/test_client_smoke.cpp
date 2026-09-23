@@ -314,14 +314,19 @@ CK_TEST(every_menu_offers_the_commands_its_name_promises) {
     // The window list is a list of windows, so it lives under Window with the
     // commands that arrange them — not under Terminal, where M1 left it.
     CK_CHECK(!menu_has_command(bar->menus()[1], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
-    // View (WP-39): the three readout toggles, checkable, and nothing else —
-    // in particular no theme items, which stay a stored setting.
+    // View (WP-39): the three readout toggles, checkable, then the big
+    // clock's three faces — and nothing else, in particular no theme items,
+    // which stay a stored setting.
     CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowCpuUsage)));
     CK_CHECK(
         menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowMemoryRss)));
     CK_CHECK(
         menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowMemoryReal)));
-    CK_CHECK(bar->menus()[2].items.size() == 3U);
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowClock)));
+    CK_CHECK(menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowDate)));
+    CK_CHECK(
+        menu_has_command(bar->menus()[2], id_of(f.app, ckm::client::commands::kShowDateTime)));
+    CK_CHECK(bar->menus()[2].items.size() == 7U);  // three toggles, a separator, three faces
     CK_CHECK(menu_has_command(bar->menus()[3], id_of(f.app, ckv::ui::std_command_keys::kWindowList)));
     // The three tilings by name (WP-31), and NOT the library's unqualified
     // Tile: it produces exactly what Tile Vertically produces, so a menu

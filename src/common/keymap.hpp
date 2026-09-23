@@ -102,6 +102,14 @@ enum class Action : unsigned char {
     Quit,
     // The session model's `kill-terminal`. Last, per the note at the top of the enum.
     KillTerminal,
+    // The time, the date, or both, drawn large over the focused terminal
+    // until the next key — tmux's clock mode, and `^B t` for the same
+    // reason `^B ,` renames: it is the chord a reader arriving from tmux
+    // already has. Three actions because they are three faces a reader
+    // chooses between, not one setting; only the time has a default chord.
+    ShowClock,
+    ShowDate,
+    ShowDateTime,
 };
 
 // Where a binding applies. `terminal` is the key *after* the prefix, which is

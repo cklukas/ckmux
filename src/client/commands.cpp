@@ -39,8 +39,8 @@ using ckv::ui::std_command_keys::kZoom;
 // never add or remove a row, because a row is a command that exists and a
 // binding is only how it is reached. A command with no chord is still listed:
 // the help pages and the menus name it.
-const std::array<KeyBinding, 36>& default_bindings() {
-    static const std::array<KeyBinding, 36> kBindings{{
+const std::array<KeyBinding, 39>& default_bindings() {
+    static const std::array<KeyBinding, 39> kBindings{{
         {"c", commands::kNewTerminal, "&New Terminal", "new term", 90, Action::NewTerminal},
         {"x", commands::kCloseTerminal, "&Close Terminal", "close term", 40, Action::CloseTerminal},
         // No chord, on purpose, and for a stronger reason than Fit Desktop's:
@@ -79,11 +79,9 @@ const std::array<KeyBinding, 36>& default_bindings() {
         {"_", kMinimize, "Mi&nimize", "minimize", 0, Action::Minimize},
         {"M", commands::kMoveResize, "&Move / Resize", "move/size", 0, Action::MoveResize},
         // Each tiling answers to the first letter of its own name, which is
-        // the whole rule: h, v, g. `t` used to be the unqualified Tile and is
-        // now nothing — `^B v` produces exactly the arrangement `^B t` always
-        // did, under the name that says which one it is. Keeping `t` as a
-        // fourth chord for the same behaviour would put the one thing this
-        // package removes back into the reader's hands.
+        // the whole rule: h, v, g. `t` used to be the unqualified Tile — `^B v`
+        // produces exactly the arrangement `^B t` always did, under the name
+        // that says which one it is — and is now the big clock's, below.
         {"h", kTileHorizontally, "Tile &Horizontally", "tile rows", 0, Action::TileHorizontally},
         {"v", kTileVertically, "Tile &Vertically", "tile columns", 0, Action::TileVertically},
         {"g", kTileGrid, "Tile &Grid", "tile grid", 0, Action::TileGrid},
@@ -122,6 +120,14 @@ const std::array<KeyBinding, 36>& default_bindings() {
          Action::ShowMemoryRss},
         {"", commands::kShowMemoryReal, "Show Memory Usage (R&eal)", "real", 0,
          Action::ShowMemoryReal},
+        // The big clock. `t` is tmux's own chord for its clock, so it is the
+        // one a reader arriving from tmux already has in their fingers. The
+        // date and both-at-once are menu-only: the same face asked a
+        // different question, and one chord for the face is enough.
+        {"t", commands::kShowClock, "Show &Time", "clock", 0, Action::ShowClock},
+        {"", commands::kShowDate, "Show &Date", "date", 0, Action::ShowDate},
+        {"", commands::kShowDateTime, "Show Date &and Time", "date+time", 0,
+         Action::ShowDateTime},
         {"", commands::kAbout, "&About ckmux…", "about", 0, Action::About},
     }};
     return kBindings;
@@ -163,6 +169,9 @@ std::string_view command_for_action(Action action) {
         case Action::ShowCpuUsage: return commands::kShowCpuUsage;
         case Action::ShowMemoryRss: return commands::kShowMemoryRss;
         case Action::ShowMemoryReal: return commands::kShowMemoryReal;
+        case Action::ShowClock: return commands::kShowClock;
+        case Action::ShowDate: return commands::kShowDate;
+        case Action::ShowDateTime: return commands::kShowDateTime;
         case Action::About: return commands::kAbout;
         case Action::SendPrefix: return commands::kSendPrefix;
         case Action::Quit: return kQuit;

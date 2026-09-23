@@ -10,6 +10,7 @@ set(CKMUX_TEST_SOURCES
     test_commands.cpp
     test_command_reachability.cpp
     test_attach.cpp
+    test_big_clock.cpp
     test_budgets.cpp
     test_cli.cpp
     test_capability_grace.cpp
@@ -182,6 +183,7 @@ set(CKMUX_LABELS_test_stats_wire "pty")
 # forked its child before the first case in the file runs.
 set(CKMUX_LABELS_test_client_smoke "pty")
 set(CKMUX_LABELS_test_command_reachability "pty")
+set(CKMUX_LABELS_test_big_clock "pty")
 set(CKMUX_LABELS_test_copy_mode "pty")
 set(CKMUX_LABELS_test_minimize_chrome "pty")
 set(CKMUX_LABELS_test_notifications "pty")

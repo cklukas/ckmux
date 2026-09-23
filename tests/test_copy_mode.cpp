@@ -251,6 +251,36 @@ CK_TEST(the_prefix_key_opens_copy_mode_over_the_focused_terminal) {
     CK_CHECK(says_copy);
 }
 
+CK_TEST(copy_mode_sits_over_its_own_window_and_moves_with_it) {
+    // Measured on the screen, with the window away from the origin: copy
+    // mode was a desktop popup placed at the window's content_rect(), which
+    // is in the window's own coordinates, so it sat at the desktop's corner
+    // while every comparison with content_rect() agreed with it.
+    Fixture f;
+    f.settle();
+    ckv::widgets::Window* window = nullptr;
+    for (ckv::widgets::Window* candidate : f.client.desktop().windows())
+        if (dynamic_cast<ckv::widgets::TerminalView*>(candidate->content()) != nullptr) window = candidate;
+    CK_CHECK(window != nullptr);
+    if (window == nullptr) return;
+    window->set_bounds(ckv::Rect{15, 6, 60, 18});
+    f.settle();
+    f.enter_copy_mode();
+    ckm::client::CopyModeView* const copy = f.client.copy_mode();
+    CK_CHECK(copy != nullptr);
+    if (copy == nullptr) return;
+    const auto interior = [&] {
+        const ckv::Rect frame = window->absolute_bounds();
+        const ckv::Rect local = window->content_rect();
+        return ckv::Rect{frame.x + local.x, frame.y + local.y, local.width, local.height};
+    };
+    CK_CHECK(window->content_cover() == copy);
+    CK_CHECK(copy->absolute_bounds() == interior());
+    window->set_bounds(ckv::Rect{25, 3, 50, 14});
+    f.settle();
+    CK_CHECK(copy->absolute_bounds() == interior());
+}
+
 CK_TEST(q_leaves_copy_mode_and_gives_the_caption_back) {
     Fixture f;
     f.settle();
