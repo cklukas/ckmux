@@ -42,6 +42,7 @@
 #include "cvision/ui/application.hpp"
 #include "cvision/ui/layout.hpp"
 #include "cvision/ui/standard_roles.hpp"
+#include "cvision/widgets/big_clock.hpp"
 #include "cvision/widgets/common_components.hpp"
 #include "cvision/widgets/desktop.hpp"
 #include "cvision/widgets/help_viewer.hpp"
@@ -53,12 +54,10 @@
 namespace ckm::client {
 
 // The reader's local date and time, read together. One reading rather than
-// two, so the clock on the menu bar and the calendar under it can never
-// disagree about which day it is.
-struct LocalMoment {
-    ckv::widgets::DateValue date;
-    ckv::widgets::TimeValue time;
-};
+// two, so the clock on the menu bar, the calendar under it and the big clock
+// can never disagree about which day it is. ckVision's own value, because the
+// big clock is ckVision's and takes exactly this.
+using LocalMoment = ckv::widgets::DateTimeValue;
 
 // What ckmux would run, handed to whatever provides the terminal.
 //
@@ -739,6 +738,10 @@ public:
     // The clock at the right end of the menu bar, or nullptr when `[general]
     // clock` is off or nothing can tell it the time.
     ckv::widgets::ClockView* clock() noexcept { return clock_; }
+    // The big clock over the focused terminal (`^B t`, View ▸ Show Time…),
+    // or nullptr. Client-local like copy mode: it covers this reader's view of
+    // one window and tells nobody else anything.
+    ckv::widgets::BigClockView* big_clock() noexcept { return big_clock_; }
     // What `^B ]` would paste: text yanked in copy mode, held here so it
     // survives a copy that no system clipboard accepted.
     const std::string& internal_clipboard() const noexcept { return internal_clipboard_; }
@@ -965,6 +968,17 @@ private:
     // its window, and takes it away again.
     void enter_copy_mode();
     void leave_copy_mode();
+    // Puts the big clock over the focused terminal's window, showing
+    // `content`, and takes it away again. Showing it while it is up changes
+    // what it shows rather than stacking a second face.
+    void show_big_clock(ckv::widgets::BigClockContent content);
+    void hide_big_clock();
+    // Where the reader's keys go in `window`: its content cover (the big
+    // clock, copy mode) when it has one, otherwise its terminal.
+    ckv::ui::View* keyboard_target_of(ckv::widgets::Window* window);
+    // Moves a keyboard that is in a terminal to `window`, which has just
+    // been activated.
+    void follow_activation_with_keyboard(ckv::widgets::Window& window);
     // Sends the internal clipboard to the focused terminal, bracketed if the
     // program in it asked for bracketed paste.
     void paste_into_terminal();
@@ -1170,6 +1184,13 @@ private:
     // that follows is into freed memory (ckVision View::lifetime_token).
     ckv::widgets::Window* copy_mode_window_ = nullptr;
     std::weak_ptr<void> copy_mode_window_alive_;
+    // The big clock, the window whose content it covers, and the proof that
+    // window still exists — the same trio as copy mode's and for the same
+    // reason: a server can end the terminal under it, and the face goes with
+    // the window.
+    ckv::widgets::BigClockView* big_clock_ = nullptr;
+    ckv::widgets::Window* big_clock_window_ = nullptr;
+    std::weak_ptr<void> big_clock_window_alive_;
     // ckmux's own clipboard: what `^B ]` pastes. Separate from the system
     // clipboard because a reader copying inside ckmux over SSH may have no
     // system clipboard that ckmux can reach at all.

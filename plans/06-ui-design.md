@@ -24,8 +24,10 @@ ckVision (what exists vs. what we add) is in
 ```
 
 - **Row 1 — menu bar** (permanent): ckVision MenuBar with drop-down menus.
-  **View** (WP-39) holds exactly three checkable items — Show CPU Usage,
-  Show Memory Usage (RSS), Show Memory Usage (Real) — which write what the
+  **View** (WP-39) holds three checkable items — Show CPU Usage,
+  Show Memory Usage (RSS), Show Memory Usage (Real) — then, below a
+  separator, the big clock's three faces (WP-51): Show Time (`^B t`), Show
+  Date and Show Date and Time. The checkable three write what the
   processes under each terminal cost onto that terminal window's own frame
   footer (bottom border, left), sampled about once a second, formatted like
   `CPU 37% · RSS 210 MB · Real 96 MB`. They are live display toggles rather
@@ -201,6 +203,7 @@ the chord state machine from there (details in
 | `^B x` | Close terminal (dialog while the child is alive: quit + optional kill, or move) |
 | `^B .` | Move terminal to session… (picker) |
 | `^B P` | Print output… (captured printer output for this terminal) |
+| `^B t` | Big clock — implemented, WP-51. tmux's clock mode: the time in block digits over the focused terminal's content. It stays up while the reader works in other windows (owner, 2026-09-23: a reader shows the time and goes on working elsewhere); back in its window, any key puts it away and does nothing else, except keys bound to commands — the prefix — which run as usual. A click that returns to it only focuses it; a click on the focused clock puts it away. Asking again in another terminal moves it there. View ▸ Show Date and Show Date and Time show the others, menu-only. Seconds follow `[general] clock` (`minutes` drops them). A window too small for the digits shows the same lines as text. The face is the window's own content cover (ckVision `Window::set_content_cover`), so it moves and resizes with the window, a window in front of it hides it, a minimized window keeps it for its return, and it goes when the window ends. Whichever route activates a terminal window, the keyboard follows it — to the clock if one covers that window. Copy mode rides the same cover. Client-local: nobody else watching the session sees it |
 | `^B m` | Open menu bar |
 | `^B ?` | Context help window (all current bindings) |
 | `^B q` | Quit ckmux client (= detach; never kills anything) |
@@ -784,7 +787,8 @@ removes.
   exactly what `^B t` always did — and ckVision's unqualified `ckv.window.tile`
   stays in the library for the applications that bind it while ckmux's own
   surface leaves it out: listing it beside `Tile Vertically` would offer one
-  behaviour twice under two names, and `^B t` therefore reaches nothing.
+  behaviour twice under two names, and `^B t` was therefore left free — it
+  is now the big clock (WP-51), which is tmux's own `t`.
 - Zoom maximizes to the desktop (layout remembered for restore). While any
   window is zoomed, `^B n/p` cycles zoomed (tmux-like flow). A terminal opened
   while the active window is maximized **opens maximized too** (WP-33, over

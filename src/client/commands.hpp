@@ -83,6 +83,14 @@ inline constexpr std::string_view kFitDesktop = "ckmux.session.fit-desktop";
 inline constexpr std::string_view kShowCpuUsage = "ckmux.view.show-cpu";
 inline constexpr std::string_view kShowMemoryRss = "ckmux.view.show-memory-rss";
 inline constexpr std::string_view kShowMemoryReal = "ckmux.view.show-memory-real";
+// The big clock (tmux's clock mode): the time, the date, or both, drawn in
+// block digits over the focused terminal until the reader presses a key. Under
+// `ckmux.view.*` because they change what this reader SEES and nothing about
+// the session: the program underneath keeps running and nobody else watching
+// is shown anything.
+inline constexpr std::string_view kShowClock = "ckmux.view.clock";
+inline constexpr std::string_view kShowDate = "ckmux.view.date";
+inline constexpr std::string_view kShowDateTime = "ckmux.view.date-time";
 inline constexpr std::string_view kDetach = "ckmux.session.detach";
 inline constexpr std::string_view kSessions = "ckmux.session.list";
 inline constexpr std::string_view kNewSession = "ckmux.session.new";

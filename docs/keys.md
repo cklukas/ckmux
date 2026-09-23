@@ -53,6 +53,9 @@ default. A `bind` or `unbind` line can change any row with an action name.
 | `Menu only` | Show CPU Usage | `show-cpu` |
 | `Menu only` | Show Memory Usage (RSS) | `show-memory-rss` |
 | `Menu only` | Show Memory Usage (Real) | `show-memory-real` |
+| `^B t` | Show Time | `show-clock` |
+| `Menu only` | Show Date | `show-date` |
+| `Menu only` | Show Date and Time | `show-date-time` |
 | `Menu only` | About ckmux... | `about` |
 
 ## Copy mode and paste
@@ -78,3 +81,16 @@ Inside copy mode:
 Where a copy goes — the outer terminal's clipboard, `pbcopy`, or a command of
 your own — is the `[terminal] clipboard` setting in the
 [configuration](configuration.md).
+
+## The big clock
+
+`^B t` shows the time in big digits over the focused terminal, the way tmux's
+clock mode does; View ▸ Show Date and View ▸ Show Date and Time show the date,
+or both. The clock stays up while you work in other windows: switch away with
+`^B n`, `^B p` or the mouse and it is still there when you look across. Back in
+its window, any key puts it away and does nothing else — except the prefix,
+which works as usual. A click that brings the window back only returns you to
+the clock; a second click puts it away. The program underneath keeps running,
+and nobody else watching the session sees the clock. Seconds are shown unless the `[general] clock` setting is
+`minutes`; a window too small for the digits shows the same lines as plain
+text.

@@ -54,10 +54,13 @@ CK_TEST(a_chord_resolves_to_the_binding_the_reader_was_shown) {
 
     // Case matters: `t` was the unqualified Tile and `T` is Cascade, so a
     // reader pressing one when they meant the other rearranged every window
-    // instead of restacking them. `t` reaches nothing now (WP-31), and the
-    // shifted chord beside it still does what it always did — which is the
-    // half of that pair a rebinding must not have quietly swallowed.
-    CK_CHECK(defaults().find("t") == nullptr);
+    // instead of restacking them. `t` stopped tiling (WP-31) and is now the big
+    // clock, tmux's own `t`, which rearranges nothing; the shifted chord beside
+    // it still does what it always did — which is the half of that pair a
+    // rebinding must not have quietly swallowed.
+    const KeyBinding* const clock = defaults().find("t");
+    CK_CHECK(clock != nullptr);
+    CK_CHECK(clock != nullptr && clock->key == ckm::client::commands::kShowClock);
     const KeyBinding* const cascade = defaults().find("T");
     CK_CHECK(cascade != nullptr);
     CK_CHECK(cascade->key == ckv::ui::std_command_keys::kCascade);

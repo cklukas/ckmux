@@ -370,4 +370,38 @@ CK_TEST(the_digits_cannot_be_rebound_because_they_carry_a_value) {
     CK_CHECK(keymap.find("4") == nullptr);
 }
 
+
+CK_TEST(the_keyboard_goes_with_the_window_next_and_previous_bring_forward) {
+    // `^B n` brought the next terminal to the front and left the reader's
+    // typing arriving in the one behind it: nothing moved the keyboard after
+    // the activation. Asserted on where a key actually goes — the focused
+    // view — in both directions.
+    Fixture f;
+    f.settle();
+    f.press_prefix();
+    f.press_char("c");
+    f.settle();
+    f.settle();
+    const auto keyboard_in_front = [&] {
+        ckv::widgets::Window* const active = f.client.desktop().active_window();
+        return active != nullptr && f.app.focused() != nullptr && f.app.focused() == active->content();
+    };
+    CK_CHECK(keyboard_in_front());
+    ckv::widgets::Window* const second = f.client.desktop().active_window();
+
+    f.press_prefix();
+    f.press_char("n");
+    f.settle();
+    f.settle();
+    CK_CHECK(f.client.desktop().active_window() != second);
+    CK_CHECK(keyboard_in_front());
+
+    f.press_prefix();
+    f.press_char("p");
+    f.settle();
+    f.settle();
+    CK_CHECK(f.client.desktop().active_window() == second);
+    CK_CHECK(keyboard_in_front());
+}
+
 #endif
