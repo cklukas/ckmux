@@ -408,10 +408,10 @@ around the library.
   `CKVISION_GRAPHICS_LOG` itself (D-077), so `src/main.cpp` now reads both
   and hands the sinks to `PosixTerminal` and the `Application` — which is
   what keeps `test_client_pacing`'s capture evidence real. The server's own
-  sessions are not traced. The pin moved to 0.1.7 the same day, the version
-  ckVision `main` carries from `ed74803`; until ckVision publishes the
-  `v0.1.7` tag, a build that fetches it has nothing to clone (R2 in
-  [10](10-roadmap.md)).
+  sessions are not traced. The pin moved to 0.1.7 the same day, and
+  ckVision published `v0.1.7` on GitHub that day (public snapshot
+  `ece9142` of private `d8f96be`; the two differ in compiled files only by
+  comments).
 - **License**: both repositories are MIT. Their `LICENSE` files are
   authoritative; `CONTRIBUTING.md` carries the shared DCO, patent-grant and
   relicense-grant terms (WP-26 / ckVision D-OPEN-1).
