@@ -374,9 +374,23 @@ belief is at, and a `DiffEngine` that flushes them.
 
 Measured, Release, 120×40 with a row rewritten every tick: **15.6 µs/tick**
 with no history and **15.3 µs/tick** with two thousand lines of it — flat, which
-is the property. **Sixty terminals**, each 120×40 and each holding two thousand
-lines, each with news every tick: **598 µs per flush tick**, 10 µs apiece, which
-is under two per cent of a 33 ms frame at 30 fps.
+is the property. **Sixty terminals**, each 120×40 with room for two thousand
+lines and a hundred and sixty in it (the test writes two hundred), each with
+news every tick: **598 µs per flush tick**, 10 µs apiece, which is under two
+per cent of a 33 ms frame at 30 fps. Both were single means, timed one after
+the other.
+
+Re-measured 2026-09-27 after the check flaked on a shared CI runner (131 µs
+bare against 214 µs deep, Debug, with the sixty-terminal figure in the same
+run flat at 133 µs each): the two terminals are now built first and ticked in
+alternating batches, each judged by its cheapest of 25 batches of 20 ticks, and
+the fleet by the median of its 3 600 per-terminal samples. Pinned ckmux
+`ee98607` × ckVision `v0.1.7`, Apple M1 Max host: **Release 10.2 / 10.2
+µs/tick**, fleet 8.1 µs each; **Debug 89 / 89 µs/tick**, fleet 65 µs each;
+Debug under ASan/UBSan 274 / 278 µs/tick, fleet 194 µs each. Linux (ckdev VM), GCC 13.3,
+Debug: 69.7 / 69.7 µs/tick, fleet 51 µs each. The old sequential form read
+90 against 850 µs at load 45–60 on the same Debug build; the new one reads
+89 against 89 at load 90–117.
 
 Five decisions, three of them found by the tests rather than by thinking:
 

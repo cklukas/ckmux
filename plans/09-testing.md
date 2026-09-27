@@ -60,7 +60,14 @@ those matrices.
   3 with nothing missing and nothing repeated, because a false gap is a reattach
   storm and a missed gap is a screen that quietly stops matching), and the two
   measurements the package is accepted on — printed, not asserted, with only
-  their shape checked so the numbers stay meaningful on a busier machine.
+  their shape checked so the numbers stay meaningful on a busier machine. The
+  shape is taken from samples interleaved in time and judged by their minimum
+  (one terminal against another) or median (a terminal inside the fleet),
+  never from two means taken one after the other: a scheduler only adds time,
+  and back-to-back means hand whatever the machine did in the second half to
+  the second subject. A history walked on every tick is in every batch,
+  cheapest included, so the minimum still sees it (mutation-checked: a copy of
+  the history per tick, and a read of every history cell, both fail).
 
 ### 2. Emulator conformance pins (label `golden`)
 

@@ -7,6 +7,7 @@
 // only these bytes holds what the terminal holds".
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <cstdio>
 #include <span>
@@ -414,7 +415,24 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
     // scheduling in the number would make the number about the shell. What is
     // checked is the RATIO, which stays true on a machine faster or busier than
     // this one; the absolute figures are printed for the record.
-    const auto cost_per_tick = [](std::size_t history_lines, double* out_cost) {
+    //
+    // And the ratio is of two measurements taken side by side, not one after
+    // the other. Timed back to back, a single mean each, the pair read 131 us
+    // against 214 us on a shared CI runner and 90 us against 850 us on a host
+    // at load 60, with nothing in the code between them — whatever the machine
+    // did during the second half landed on the history. So both terminals are
+    // built first and ticked in alternating batches, first one then the other
+    // leading, and each is judged by its cheapest batch: a scheduler can only
+    // ever add time, so the minimum is the cost the code itself imposes, and a
+    // cost the history adds to every tick is in every batch, the cheapest
+    // included.
+    struct Subject {
+        std::unique_ptr<ckv::term::TerminalEmulator> emulator;
+        ckm::server::DiffEngine engine;
+        int ticks = 0;
+        int deltas = 0;
+    };
+    const auto make_subject = [](std::size_t history_lines) {
         ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
         profile.cells = ckv::Size{120, 40};
         profile.cell_pixels = ckv::PixelSize{9, 18};
@@ -422,7 +440,8 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
         options.max_scrollback_lines = history_lines;
         options.max_output_bytes = 1U << 20U;
         options.max_parser_work_per_step = 128U << 10U;
-        ckv::term::TerminalEmulator emulator(profile, options);
+        auto subject = std::make_unique<Subject>();
+        subject->emulator = std::make_unique<ckv::term::TerminalEmulator>(profile, options);
 
         // Fill the history first: the steady state is what a long-lived session
         // pays, not what its first frame costs.
@@ -430,51 +449,63 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
         for (std::size_t line = 0; line < history_lines + 40; ++line) {
             chunk += "history line " + std::to_string(line) + " already scrolled away\r\n";
             if (chunk.size() < (32U << 10U)) continue;
-            emulator.feed_output(chunk);
+            subject->emulator->feed_output(chunk);
             chunk.clear();
         }
-        if (!chunk.empty()) emulator.feed_output(chunk);
+        if (!chunk.empty()) subject->emulator->feed_output(chunk);
 
         // Through the engine, not a bare differ: the engine is what clears the
         // damage, and a loop that never clears it re-reads everything the
         // terminal has ever done on every tick.
-        ckm::server::DiffEngine engine;
-        (void)engine.snapshot(1, emulator);
-        emulator.clear_damage();  // the snapshot said everything
-
-        const int ticks = 500;
-        int deltas = 0;
+        (void)subject->engine.snapshot(1, *subject->emulator);
+        subject->emulator->clear_damage();  // the snapshot said everything
+        return subject;
+    };
+    const auto cost_per_tick = [](Subject& subject, int ticks) {
         const auto start = std::chrono::steady_clock::now();
-        for (int tick = 0; tick < ticks; ++tick) {
-            emulator.feed_output("\x1b[5;1H status: frame " + std::to_string(tick) + " of a line a "
-                                 "program rewrites every frame ");
-            if (engine.flush(1, emulator).delta.has_value()) ++deltas;
+        for (int tick = 0; tick < ticks; ++tick, ++subject.ticks) {
+            subject.emulator->feed_output("\x1b[5;1H status: frame " + std::to_string(subject.ticks) +
+                                          " of a line a program rewrites every frame ");
+            if (subject.engine.flush(1, *subject.emulator).delta.has_value()) ++subject.deltas;
         }
-        *out_cost = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
-                        .count() /
-                    ticks;
-        return deltas;
+        return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
+                   .count() /
+               ticks;
     };
 
+    const std::unique_ptr<Subject> bare_subject = make_subject(0);
+    const std::unique_ptr<Subject> deep_subject = make_subject(2000);
+    const int batches = 25;
+    const int ticks_per_batch = 20;
     double bare = 0.0;
     double deep = 0.0;
-    const int bare_deltas = cost_per_tick(0, &bare);
-    const int deep_deltas = cost_per_tick(2000, &deep);
+    for (int batch = 0; batch < batches; ++batch) {
+        const bool bare_first = batch % 2 == 0;
+        Subject& first = bare_first ? *bare_subject : *deep_subject;
+        Subject& second = bare_first ? *deep_subject : *bare_subject;
+        const double first_cost = cost_per_tick(first, ticks_per_batch);
+        const double second_cost = cost_per_tick(second, ticks_per_batch);
+        const double bare_cost = bare_first ? first_cost : second_cost;
+        const double deep_cost = bare_first ? second_cost : first_cost;
+        bare = batch == 0 ? bare_cost : std::min(bare, bare_cost);
+        deep = batch == 0 ? deep_cost : std::min(deep, deep_cost);
+    }
     std::printf("  [diff engine] 120x40, one row rewritten: %.1f us/tick with no history, "
-                "%.1f us/tick with 2000 lines\n",
-                bare, deep);
+                "%.1f us/tick with 2000 lines (cheapest of %d interleaved batches of %d)\n",
+                bare, deep, batches, ticks_per_batch);
     // Every tick had news, so both numbers are the cost of a delta and not the
     // cost of deciding there was nothing to send.
-    CK_CHECK(bare_deltas == 500);
-    CK_CHECK(deep_deltas == 500);
+    CK_CHECK(bare_subject->deltas == batches * ticks_per_batch);
+    CK_CHECK(deep_subject->deltas == batches * ticks_per_batch);
     CK_CHECK(bare > 0.0);
     // Flat, not merely bounded: twice the cost would still be fast and would
     // still mean the history is being touched every tick.
     CK_CHECK(deep < bare * 1.5 + 5.0);
 
     // And the other half of the criterion: N terminals at a flush tick. Sixty
-    // of them, each 120x40 with two thousand lines of history and each with a
-    // row rewritten every tick — a server busier than any reader will make it.
+    // of them, each 120x40 with room for two thousand lines of history and a
+    // hundred and sixty in it, and each with a row rewritten every tick — a
+    // server busier than any reader will make it.
     const int fleet = 60;
     std::vector<std::unique_ptr<ckv::term::TerminalEmulator>> terminals_under_test;
     ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
@@ -496,31 +527,39 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
         terminals_under_test.back()->clear_damage();
     }
 
+    // Each terminal timed on its own, inside the rotation, so that what the
+    // other fifty-nine did to the caches is in its number; judged by the
+    // median. A whole flush tick is long enough for a busy scheduler to cut
+    // into most of them, and one terminal's share is not.
     const int fleet_ticks = 60;
     int fleet_deltas = 0;
-    const auto fleet_start = std::chrono::steady_clock::now();
+    std::vector<double> each;
+    each.reserve(static_cast<std::size_t>(fleet * fleet_ticks));
     for (int tick = 0; tick < fleet_ticks; ++tick)
         for (int index = 0; index < fleet; ++index) {
+            const auto start = std::chrono::steady_clock::now();
             terminals_under_test[static_cast<std::size_t>(index)]->feed_output(
                 "\x1b[7;1H frame " + std::to_string(tick) + " on a busy server ");
             if (fleet_engine.flush(static_cast<TerminalId>(index + 1),
                                    *terminals_under_test[static_cast<std::size_t>(index)])
                     .delta.has_value())
                 ++fleet_deltas;
+            each.push_back(
+                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start)
+                    .count());
         }
-    const double per_tick = std::chrono::duration<double, std::micro>(
-                                std::chrono::steady_clock::now() - fleet_start)
-                                .count() /
-                            fleet_ticks;
-    std::printf("  [diff engine] %d terminals, each 120x40 with 2000 lines of history: "
-                "%.0f us per flush tick (%.1f us each)\n",
-                fleet, per_tick, per_tick / fleet);
+    std::nth_element(each.begin(), each.begin() + static_cast<std::ptrdiff_t>(each.size() / 2),
+                     each.end());
+    const double per_terminal = each[each.size() / 2];
+    std::printf("  [diff engine] %d terminals, each 120x40 with 160 lines of history: "
+                "%.1f us each (median of %d), %.0f us per flush tick\n",
+                fleet, per_terminal, fleet * fleet_ticks, per_terminal * fleet);
     // Every terminal had news on every tick, so this is the cost of sixty
     // deltas and not of sixty terminals being found to be idle.
     CK_CHECK(fleet_deltas == fleet * fleet_ticks);
     // Linear in the number of terminals, which is the only shape that can be
     // reasoned about: each terminal's cost is its own.
-    CK_CHECK(per_tick / fleet < deep * 3.0 + 20.0);
+    CK_CHECK(per_terminal < deep * 3.0 + 20.0);
 }
 
 CK_TEST(the_history_a_child_scrolled_away_reaches_the_client_as_lines) {
