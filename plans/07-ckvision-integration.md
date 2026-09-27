@@ -388,7 +388,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.6 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.7 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins
@@ -408,8 +408,10 @@ around the library.
   `CKVISION_GRAPHICS_LOG` itself (D-077), so `src/main.cpp` now reads both
   and hands the sinks to `PosixTerminal` and the `Application` — which is
   what keeps `test_client_pacing`'s capture evidence real. The server's own
-  sessions are not traced. Until ckVision releases these, the v0.1.6 pin
-  does not build (R2 in [10](10-roadmap.md)).
+  sessions are not traced. The pin moved to 0.1.7 the same day, the version
+  ckVision `main` carries from `ed74803`; until ckVision publishes the
+  `v0.1.7` tag, a build that fetches it has nothing to clone (R2 in
+  [10](10-roadmap.md)).
 - **License**: both repositories are MIT. Their `LICENSE` files are
   authoritative; `CONTRIBUTING.md` carries the shared DCO, patent-grant and
   relicense-grant terms (WP-26 / ckVision D-OPEN-1).
