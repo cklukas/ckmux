@@ -4,22 +4,38 @@ title: Getting started
 
 ## Install
 
-From the [releases page](https://github.com/cklukas/ckmux/releases):
+Packages for Linux (x86_64) and macOS (Apple Silicon) are on the
+[latest release](https://github.com/cklukas/ckmux/releases/latest).
 
-**Debian / Ubuntu (x86_64):**
-
-```sh
-sudo apt install ./ckmux_0.1.1_amd64.deb
-```
-
-**Linux tarball (x86_64) or macOS (Apple Silicon):**
+**macOS, with [Homebrew](https://brew.sh/):**
 
 ```sh
-tar xzf ckmux-0.1.1-*.tar.gz
-sudo cp ckmux-0.1.1-*/bin/ckmux /usr/local/bin/
+brew install cklukas/ckmux/ckmux
 ```
 
-Every archive ships with a `.sha256` checksum file alongside it.
+**Debian / Ubuntu:** download the `.deb` and install it with APT, so its
+dependencies are resolved. On Ubuntu 20.04, take the file whose name
+contains `ubuntu20.04`; the other one needs a newer glibc.
+
+```sh
+sudo apt install ./ckmux_*_amd64.deb
+```
+
+**Fedora, RHEL, and other RPM distributions:**
+
+```sh
+sudo dnf install ./ckmux-*.x86_64.rpm
+```
+
+**Any Linux (x86_64) or macOS (Apple Silicon), without a package manager:**
+
+```sh
+tar xzf ckmux-*.tar.gz
+sudo cp ckmux-*/bin/ckmux /usr/local/bin/
+```
+
+Every file ships with a `.sha256` checksum beside it. `ckmux --version`
+confirms what you installed.
 
 **From source** (CMake ≥ 3.28, a C++20 compiler, POSIX only — macOS or
 Linux):

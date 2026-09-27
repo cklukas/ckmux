@@ -103,6 +103,6 @@ Actions: `new-terminal`, `close-terminal`, `kill-terminal`, `move-terminal`,
 yet acted on by this version, with the work it waits for — so "I set this,
 why did nothing happen?" always has an answer.
 
-Known v0.1.1 diagnostic defect: `check-config` still lists `ask-cache`,
+Known diagnostic defect, since v0.1.1: `check-config` still lists `ask-cache`,
 `save-format`, `save-folder`, and `save-ask-name` as waiting for printer work.
 The runtime does honor all four; only that report is stale.

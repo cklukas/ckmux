@@ -1,0 +1,32 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# The documentation site, built by ckdocs (the documentation-site generator
+# of ck-git-hosting) from docs/, and published on GitHub Pages
+# (.github/workflows/pages.yml) and on the self-hosted ck-git Pages
+# (.ckgit/ci.yml). docs/index.md is the home page; the same pages are
+# installed as the browser guide (CMakeLists.txt) and docs/keys.md is
+# generated from the compiled key registry, gated by tests/test_docs.cpp.
+version: 1
+site:
+  title: ckmux
+  description: A terminal multiplexer with a visible interface — menu bar, key footer, and every terminal in a movable window.
+  footer: "© 2026 C. Klukas · MIT License"
+  links:
+    - title: GitHub
+      url: https://github.com/cklukas/ckmux
+    - title: Releases
+      url: https://github.com/cklukas/ckmux/releases
+    - title: ckVision
+      url: https://cklukas.github.io/ckVision/
+search: true
+nav:
+  - title: Home
+    page: docs/index.md
+  - title: Getting started
+    page: docs/getting-started.md
+  - title: Reference
+    pages:
+      - docs/cli.md
+      - docs/keys.md
+      - docs/configuration.md

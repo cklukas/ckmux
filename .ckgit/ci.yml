@@ -1,0 +1,31 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# The self-hosted ck-git-hosting lane: every push to main builds the
+# documentation site with ckdocs and `pages:` publishes it on this server's
+# Pages once the step has passed. It builds nothing else. The gating build
+# and test lanes are the GitHub matrix (.github/workflows/ci.yml), which
+# fetches the pinned ckVision release over the network this sandbox does not
+# have.
+#
+# ckdocs is compiled from the ck-git-hosting sister project at the same
+# pinned commit .github/workflows/pages.yml uses, so the LAN and GitHub
+# Pages publish the same site. `--strict` fails the run on a broken link or
+# heading fragment before `pages:` ever sees "public". The checkout comes
+# from `git archive` and has no .git, so ckdocs walks the tree rather than
+# listing tracked files — the same set, since the archive holds only those.
+version: 1
+on:
+  branches: [main]
+sisters:
+  - name: ck-git-hosting
+    ref: 2e53443b6d156df4ffd767f956bd16461cca4021
+jobs:
+  - name: docs
+    steps:
+      - name: site
+        script: |
+          make -C ../ck-git-hosting BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/ckdocs" client
+          "$TMPDIR/ckdocs/bin/ckdocs" build --root "$PWD" --out "$PWD/public" --strict
+pages:
+  path: public

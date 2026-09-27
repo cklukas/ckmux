@@ -114,6 +114,16 @@ Run the suite:
 ctest --test-dir build --output-on-failure
 ```
 
+The documentation site is built from `docs/` by
+[ckdocs](https://cklukas.github.io/ck-git-hosting/operations/07-docs-sites.html),
+configured in `ckdocs.yml`. To preview it, or to check its links as the Pages
+workflow does:
+
+```bash
+ckdocs serve --root .
+ckdocs check --root .
+```
+
 ## Status
 
 Pre-1.0, with **v0.1.5** published for macOS arm64 and Linux x86_64, including
