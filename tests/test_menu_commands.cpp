@@ -611,6 +611,47 @@ CK_TEST(a_mouse_click_on_the_terminal_report_close_button_closes_it) {
     forget(socket);
 }
 
+CK_TEST(a_drag_past_the_hosts_edge_leaves_later_clicks_where_they_are_made) {
+    // Owner report, 2026-09-27 (ckmux 0.1.6 on ckVision 0.1.7, Terminal.app):
+    // after resizing windows, every click landed in the top-left corner and
+    // opened the menu there. Resizing a window by its bottom or right edge
+    // carries the pointer past the host's edge, and the host reports that
+    // position as a cell beyond the grid; ckVision took it as proof of pixel
+    // coordinates and divided every later click by the cell size (ckVision
+    // D-116). This harness's host is that shape of host: it answers the
+    // cell-size query and never enters mode 1016.
+    const std::filesystem::path socket = private_socket("mouseedge");
+    forget(socket);
+    if (binary_path().empty()) return;
+    const ::pid_t server = start_server(socket);
+    CK_CHECK(wait_for_socket(socket));
+
+    Reader reader;
+    CK_CHECK(reader.start(socket, ckv::Size{110, 32}));
+    CK_CHECK(reader.sees("Terminal 1"));
+    // Past the capability probe window and the grace after it for pixel
+    // reports already in flight (250 ms each): from here the host is known to
+    // be sending cells.
+    reader.settle(1000);
+
+    reader.press("\x1b[<32;125;12M");  // a left-button drag, reported past the right edge
+    reader.settle(200);
+
+    // Then a click on the Help menu's title, which must open Help. Read as
+    // pixels, the same click lands near the corner and opens the first menu.
+    const std::optional<std::pair<int, int>> help = reader.find_cell("Help");
+    CK_CHECK(help.has_value());
+    if (help.has_value()) {
+        CK_CHECK(help->first == 0);  // the menu bar's own title, not a hint lower down
+        reader.click(help->first, help->second + 1);
+        CK_CHECK(reader.sees("Terminal Report", 3000));
+    }
+
+    reader.quit();
+    end_process(server);
+    forget(socket);
+}
+
 CK_TEST(a_shift_click_on_ckmuxs_own_button_still_activates_it) {
     // TerminalView::on_mouse reserves Shift+Left for host-side selection —
     // but ckmux's own dialogs are plain widgets::Button, not TerminalView,

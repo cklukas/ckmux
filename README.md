@@ -122,7 +122,7 @@ ckdocs check --root .
 
 ## Status
 
-Pre-1.0, with **v0.1.6** published for macOS arm64 and Linux x86_64. The core
+Pre-1.0, with **v0.1.7** published for macOS arm64 and Linux x86_64. The core
 promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
 Sessions are plural, named and killable. The interface is real and usable:
@@ -150,6 +150,10 @@ switches, `CKVISION_OUTPUT_CAPTURE` and `CKVISION_GRAPHICS_LOG`, are now read
 by ckmux itself and keep working as before. It drops the Ubuntu 20.04
 package: ckVision 0.1.7 requires the exact floating-point `<charconv>`
 conversions that 20.04's GCC 10 standard library lacks.
+v0.1.7 moves to ckVision 0.1.8, which fixes clicks landing in the top-left
+corner, on the menu, after a drag carried the pointer past the terminal
+window's edge (as resizing a window by its edge does) in terminals that report
+the mouse in cells, such as macOS Terminal.
 The remaining v1 work is M4's three-host/vttest acceptance, the
 `ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
 rough edges, and expect the interface to move.
@@ -167,7 +171,7 @@ rough edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are both gating platforms. The v0.1.6 release matrix runs all
+macOS and Linux are both gating platforms. The v0.1.7 release matrix runs all
 54 suites in its native package jobs before the release can publish. The local
 Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
