@@ -14,8 +14,8 @@ brew install cklukas/ckmux/ckmux
 ```
 
 **Debian / Ubuntu:** download the `.deb` and install it with APT, so its
-dependencies are resolved. On Ubuntu 20.04, take the file whose name
-contains `ubuntu20.04`; the other one needs a newer glibc.
+dependencies are resolved. Ubuntu 20.04 is no longer supported; v0.1.5 is
+the last release with a package for it.
 
 ```sh
 sudo apt install ./ckmux_*_amd64.deb
