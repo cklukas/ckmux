@@ -790,9 +790,11 @@ CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
     reader.settle(1500);
     const bool interface_answers = reader.sees("w windows", 8000);
     CK_CHECK(interface_answers);
+    // Esc dismisses it. Asked as "does it leave", with the same budget the
+    // interface had to show it: a pending prefix never expires by itself, so
+    // the footer can only go because Esc was answered.
     reader.press("\x1b");
-    reader.settle(800);
-    CK_CHECK(!reader.sees("w windows", 1500));
+    CK_CHECK(reader.stops_seeing("w windows", 8000));
 
     // And the flood can be stopped, which is the other half of usable.
     reader.press("\x03");
