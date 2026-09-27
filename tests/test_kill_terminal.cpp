@@ -273,7 +273,7 @@ CK_TEST(killing_a_terminal_is_not_answered_with_a_refusal_any_more) {
     // still be refused, so the harness is demonstrably able to see a refusal.
     Fixture f("refusal");
     ckm::server::Session& session = f.server.create_session("victim");
-    ckm::server::Terminal& doomed = f.server.open_terminal(session.id, spec_running("sleep 30"));
+    ckm::server::Terminal& doomed = f.server.open_terminal(session.id, spec_running("sleep 3600"));
     const std::uint64_t term = doomed.id();
     f.attach(session.id);
     f.pump(10);
@@ -333,7 +333,7 @@ CK_TEST(killing_a_terminal_that_is_already_gone_is_not_an_error) {
     // different answer for the neighbouring operation.
     Fixture f("gone");
     ckm::server::Session& session = f.server.create_session("victim");
-    ckm::server::Terminal& survivor = f.server.open_terminal(session.id, spec_running("sleep 30"));
+    ckm::server::Terminal& survivor = f.server.open_terminal(session.id, spec_running("sleep 3600"));
     const std::uint64_t alive = survivor.id();
     f.attach(session.id);
     f.pump(10);

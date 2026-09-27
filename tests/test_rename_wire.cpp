@@ -140,7 +140,7 @@ CK_TEST(a_name_a_reader_gives_a_terminal_outlives_the_client_that_gave_it) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     const ckm::server::TerminalId id = terminal.id();
 
     Client watcher;
