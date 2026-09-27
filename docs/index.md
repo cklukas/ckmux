@@ -12,8 +12,9 @@ window on a desktop. Everything works by mouse or by keyboard, and nothing
 has to be memorized before it can be found.
 
 - Repository: [github.com/cklukas/ckmux](https://github.com/cklukas/ckmux)
-- Install: [v0.1.1 and other releases](https://github.com/cklukas/ckmux/releases)
-  — Debian package and tarballs for Linux (x86_64) and macOS (arm64)
+- Install: [the latest release](https://github.com/cklukas/ckmux/releases/latest)
+  — Homebrew, DEB, RPM, and tarballs for Linux (x86_64) and macOS (arm64);
+  see [Getting started](getting-started.md#install)
 - Built on [ckVision](https://cklukas.github.io/ckVision/), a C++ library for
   full terminal user interfaces
 

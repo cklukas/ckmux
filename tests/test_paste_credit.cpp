@@ -387,7 +387,7 @@ CK_TEST(a_second_clients_paste_waits_for_the_first_to_finish) {
     ckv::ManualClock clock;
     ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     WireClient first;
     WireClient second;
@@ -432,7 +432,7 @@ CK_TEST(a_client_that_goes_away_mid_paste_does_not_wedge_the_terminal) {
     ckv::ManualClock clock;
     ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     WireClient waiting;
     ckm::proto::Hello hello;

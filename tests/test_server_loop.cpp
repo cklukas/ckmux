@@ -194,7 +194,7 @@ CK_TEST(a_terminals_output_reaches_a_client_when_the_tick_is_due_and_not_before)
 
     // A terminal with something to say. Fed through the seam rather than run as
     // a child, so this test is about the loop's timing and not a shell's.
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     terminal.session().feed_output("what the child printed\r\n");
 
     // The tick is not due: the clock has not moved since the pass that consumed
@@ -253,7 +253,7 @@ CK_TEST(a_cli_client_is_not_sent_a_screenful_of_deltas) {
     CK_CHECK(pump(server, utility, attached));
     CK_CHECK(std::holds_alternative<ckm::proto::Attached>(attached));
 
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     terminal.session().feed_output("output no CLI asked for\r\n");
     clock.advance(34'000'000);
     CK_CHECK(pump_expecting_silence(server, utility));
@@ -272,7 +272,7 @@ CK_TEST(a_client_that_goes_away_is_a_detach_and_the_terminals_stay) {
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
 
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     const ckm::server::TerminalId id = terminal.id();
 
     {
@@ -316,7 +316,7 @@ CK_TEST(the_loop_survives_a_client_that_never_reads_what_it_asked_for) {
 
     // A terminal producing a great deal, and a client that never reads a byte of
     // it. Enough ticks that the socket's own buffers are long past full.
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     const auto started = std::chrono::steady_clock::now();
     for (int tick = 0; tick < 400; ++tick) {
         std::string burst;
@@ -748,7 +748,7 @@ CK_TEST(a_terminal_cannot_be_asked_to_be_larger_than_a_grid_may_be) {
     CK_CHECK(greet_and_attach(server, client));
 
     ckm::proto::NewTerminal wide;
-    wide.command = "sleep 30";
+    wide.command = "sleep 3600";
     wide.rect.width = 65535;
     wide.rect.height = 2;
     client.say(wide);
@@ -1053,7 +1053,7 @@ CK_TEST(a_flood_in_one_session_does_not_re_snapshot_another) {
 
     // The noisy terminal, in the FIRST session — the one the silent watcher
     // holds and the other reader has never seen.
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     std::string burst;
     for (int line = 0; line < 24; ++line)
         burst += "a line of output that fills the screen " + std::to_string(line) + "\r\n";
@@ -1125,7 +1125,7 @@ CK_TEST(a_client_that_drains_slowly_is_healed_once_and_not_forever) {
     CK_CHECK(client.connect(socket));
     CK_CHECK(greet_and_attach(server, client));
 
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     std::string flood;
     for (int line = 0; line < 400; ++line)
         flood += "scrolled away " + std::to_string(line) + "\r\n";
@@ -1183,7 +1183,7 @@ CK_TEST(a_snapshot_that_fills_the_queue_is_not_asked_for_twice) {
     // A terminal with a history worth sending: two hundred columns of text with
     // no two neighbours alike, because a screenful of blanks run-length encodes
     // to almost nothing and would make this measure nothing.
-    ckm::server::TerminalSpec spec = spec_running("sleep 30");
+    ckm::server::TerminalSpec spec = spec_running("sleep 3600");
     spec.columns = 200;
     spec.rows = 10;
     spec.pixel_width = 200 * 9;
@@ -1569,7 +1569,7 @@ CK_TEST(new_session_spawns_its_first_terminal_and_the_command_reaches_the_child)
 
     ckm::proto::NewSession request;
     request.name = "work";
-    request.command = "printf NS-STAMP; sleep 30";
+    request.command = "printf NS-STAMP; sleep 3600";
     client.say(request);
     ckm::proto::Message answer;
     CK_CHECK(pump(server, client, answer));

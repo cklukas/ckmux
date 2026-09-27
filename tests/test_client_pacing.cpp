@@ -15,9 +15,11 @@
 // ckVision closes that loop when an application asks it to
 // (`Application::set_frame_completion_tracking`), and the asking is ckmux's
 // decision to make, so it is ckmux's to pin. The evidence is the bytes the
-// reader's terminal is actually given: ckVision's own raw-output capture
-// (CKVISION_OUTPUT_CAPTURE) records them from inside the real client process,
-// which is the only place they exist.
+// reader's terminal is actually given: the raw-output capture src/main.cpp
+// hands ckVision's `PosixTerminal::set_output_capture` when
+// CKVISION_OUTPUT_CAPTURE names a file (ckVision reads no environment itself,
+// its D-077) records them from inside the real client process, which is the
+// only place they exist.
 #include <tuple>  // std::ignore
 #include <chrono>
 #include <cstdio>
@@ -96,7 +98,7 @@ CK_TEST(the_client_asks_the_readers_terminal_whether_it_took_the_frame) {
                         {"CKVISION_OUTPUT_CAPTURE", capture.string()}};
     spec.profile = ckv::term::embedded_xterm_sixel_profile();
     spec.profile.cells = ckv::Size{110, 32};
-    spec.profile.cell_pixels = ckv::Size{9, 18};
+    spec.profile.cell_pixels = ckv::PixelSize{9, 18};
     spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
     ckv::term::TerminalSubsessionOptions options;
     options.max_output_bytes = 1u << 20u;

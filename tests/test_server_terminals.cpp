@@ -146,7 +146,7 @@ CK_TEST(a_resize_reaches_the_pty_with_its_pixel_fields) {
     terminal.resize(100, 30, 900, 540);
     CK_CHECK(terminal.columns() == 100);
     CK_CHECK(terminal.rows() == 30);
-    CK_CHECK(terminal.cell_pixels() == (ckv::Size{9, 18}));
+    CK_CHECK(terminal.cell_pixels() == (ckv::PixelSize{9, 18}));
 
     // Read back from the pty itself rather than from the emulator's copy: the
     // claim is about what the child was told.

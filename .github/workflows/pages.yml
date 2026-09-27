@@ -1,0 +1,69 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# The documentation site: ckdocs, the documentation-site generator of
+# ck-git-hosting, builds docs/ with ckdocs.yml and publishes it on GitHub
+# Pages. ckdocs is compiled here from its source at a pinned commit, never
+# downloaded as a binary; .ckgit/ci.yml pins the same commit for the
+# self-hosted Pages, so both hosts publish the same bytes. The site is built
+# only from a commit whose `ci` workflow succeeded, because that run is what
+# proves docs/keys.md identical to the compiled key registry
+# (tests/test_docs.cpp); `--strict` fails the build on a broken link or
+# heading fragment.
+name: pages
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  CKDOCS_REPOSITORY: cklukas/ck-git-hosting
+  CKDOCS_REF: 2e53443b6d156df4ffd767f956bd16461cca4021
+
+jobs:
+  build:
+    name: Build the site
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.CKDOCS_REPOSITORY }}
+          ref: ${{ env.CKDOCS_REF }}
+          path: .ckdocs-source
+      - name: Build ckdocs
+        run: make -C .ckdocs-source BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/ckdocs" client
+      - name: Build the site
+        run: '"$RUNNER_TEMP/ckdocs/bin/ckdocs" build --root "$PWD" --out "$RUNNER_TEMP/site" --strict'
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

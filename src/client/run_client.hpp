@@ -19,6 +19,7 @@
 #include <string>
 
 #include "client/client_app.hpp"
+#include "cvision/core/diagnostics.hpp"
 
 namespace ckv {
 class Clock;
@@ -55,6 +56,9 @@ struct RunOptions {
     // and the session would end up owned by whoever's terminal resized last —
     // which is precisely what WP-40 took away from `ClientResize`.
     bool adopt_session_size = false;
+    // Where the Application reports its graphics work (ckVision D-077), handed
+    // on to every terminal it adopts. Borrowed; empty traces nothing.
+    ckv::GraphicsTrace graphics_trace;
 };
 
 // Runs until the reader quits or the server goes away. Returns a process exit

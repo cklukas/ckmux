@@ -97,6 +97,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // able to tell why it happened.
     session.set_attach_mode(options.attach_mode);
     ckv::ui::Application app(host, clock);
+    app.set_graphics_trace(options.graphics_trace);
     // Pace against the reader's own terminal (ckVision's architecture §4,
     // docs/graphics.md "Knowing the terminal took it"). Writing a frame proves
     // its bytes left this process and nothing more; a host that accepts Sixel

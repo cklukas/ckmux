@@ -146,7 +146,7 @@ CK_TEST(stats_flow_only_to_a_client_that_asked_and_the_sampler_is_idle_until_the
     WireClient client;
     CK_CHECK(client.connect(socket));
     CK_CHECK(greet_and_attach(server, client));
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     // Three virtual seconds with nobody subscribed: no TermStats arrives, and
     // — the stronger claim — the sampler never ran at all. Messages could be
@@ -184,7 +184,7 @@ CK_TEST(unsubscribing_stops_the_flow_while_the_connection_lives_on) {
     WireClient client;
     CK_CHECK(client.connect(socket));
     CK_CHECK(greet_and_attach(server, client));
-    (void)server.open_terminal(0, spec_running("sleep 30"));
+    (void)server.open_terminal(0, spec_running("sleep 3600"));
 
     std::vector<ckm::proto::TermStats> stats;
     client.say(ckm::proto::WatchStats{1});
@@ -231,7 +231,7 @@ CK_TEST(the_cadence_is_one_second_on_the_injected_clock) {
     WireClient client;
     CK_CHECK(client.connect(socket));
     CK_CHECK(greet_and_attach(server, client));
-    (void)server.open_terminal(0, spec_running("sleep 30"));
+    (void)server.open_terminal(0, spec_running("sleep 3600"));
 
     std::vector<ckm::proto::TermStats> stats;
     client.say(ckm::proto::WatchStats{1});
@@ -264,7 +264,7 @@ CK_TEST(a_spinning_child_reads_busy_and_an_idle_shell_reads_idle) {
     CK_CHECK(greet_and_attach(server, client));
     ckm::server::Terminal& spinner =
         server.open_terminal(0, spec_running("while :; do :; done"));
-    ckm::server::Terminal& idle = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& idle = server.open_terminal(0, spec_running("sleep 3600"));
 
     std::vector<ckm::proto::TermStats> stats;
     client.say(ckm::proto::WatchStats{1});

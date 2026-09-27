@@ -168,7 +168,7 @@ CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     AttachRecorder shared;
     shared.session.set_attach_mode(ckm::proto::AttachMode::Join);
     CK_CHECK(shared.session.shares());
-    shared.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
+    shared.session.attach(7, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
     CK_CHECK(shared.attaches.size() == 1);
     CK_CHECK(shared.attaches[0].mode == static_cast<std::uint8_t>(ckm::proto::AttachMode::Join));
 
@@ -176,8 +176,8 @@ CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     // dropped the flag would silently convert a reader who chose to share into
     // a reader who took the session over — and the moment it happens is the
     // moment they are least able to tell why.
-    shared.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
-    shared.session.attach(9, ckv::Size{80, 24}, ckv::Size{9, 18});
+    shared.session.attach(7, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
+    shared.session.attach(9, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(shared.attaches.size() == 3);
     for (const ckm::proto::Attach& attach : shared.attaches)
         CK_CHECK(attach.mode == static_cast<std::uint8_t>(ckm::proto::AttachMode::Join));
@@ -187,7 +187,7 @@ CK_TEST(the_share_flag_reaches_the_wire_on_every_attach_not_only_the_first) {
     // decide between joining and taking over.
     AttachRecorder alone;
     CK_CHECK(!alone.session.shares());
-    alone.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
+    alone.session.attach(7, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
     CK_CHECK(alone.attaches.size() == 1);
     CK_CHECK(alone.attaches[0].mode ==
              static_cast<std::uint8_t>(ckm::proto::AttachMode::TakeOver));
@@ -206,9 +206,9 @@ CK_TEST(the_watch_flag_reaches_the_wire_and_never_decays_into_a_takeover) {
     // that asks the coarser question.
     CK_CHECK(watching.session.shares());
 
-    watching.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
-    watching.session.attach(7, ckv::Size{100, 30}, ckv::Size{9, 18});
-    watching.session.attach(9, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watching.session.attach(7, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
+    watching.session.attach(7, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
+    watching.session.attach(9, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(watching.attaches.size() == 3);
     // Every one of them, because a heal that dropped the mode would hand a
     // reader who asked only to look a session they can type into — and the

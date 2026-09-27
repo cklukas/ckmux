@@ -121,7 +121,7 @@ ckv::Cell cell_of(std::string_view text) {
 ckv::term::TerminalEmulator crowded_emulator(int columns, int rows, std::size_t lines) {
     ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
     profile.cells = ckv::Size{columns, rows};
-    profile.cell_pixels = ckv::Size{9, 18};
+    profile.cell_pixels = ckv::PixelSize{9, 18};
     ckv::term::TerminalSubsessionOptions options;
     options.max_scrollback_lines = lines;
     options.max_output_bytes = 1U << 20U;
@@ -417,7 +417,7 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
     const auto cost_per_tick = [](std::size_t history_lines, double* out_cost) {
         ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
         profile.cells = ckv::Size{120, 40};
-        profile.cell_pixels = ckv::Size{9, 18};
+        profile.cell_pixels = ckv::PixelSize{9, 18};
         ckv::term::TerminalSubsessionOptions options;
         options.max_scrollback_lines = history_lines;
         options.max_output_bytes = 1U << 20U;
@@ -479,7 +479,7 @@ CK_TEST(a_tick_costs_what_changed_rather_than_what_the_terminal_remembers) {
     std::vector<std::unique_ptr<ckv::term::TerminalEmulator>> terminals_under_test;
     ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
     profile.cells = ckv::Size{120, 40};
-    profile.cell_pixels = ckv::Size{9, 18};
+    profile.cell_pixels = ckv::PixelSize{9, 18};
     ckv::term::TerminalSubsessionOptions options;
     options.max_scrollback_lines = 2000;
     options.max_output_bytes = 1U << 20U;
@@ -972,7 +972,7 @@ public:
         return profile_;
     }
     void feed_output(std::string_view) override {}
-    void resize(ckv::Size, ckv::Size) override {}
+    void resize(ckv::Size, ckv::PixelSize) override {}
     void send_input(std::string_view) override {}
     std::string take_pending_input() override { return {}; }
     ckv::core::TerminalSubsessionState state() const noexcept override {
@@ -998,7 +998,7 @@ CK_TEST(pixels_equal_to_the_believed_ones_do_not_travel_again) {
     // its session (field report, 2026-08-19).
     RasterSource source(ckv::Size{20, 6});
     DiffEngine engine;
-    auto first = std::make_shared<ckv::Image>(8, 12);
+    auto first = std::make_shared<ckv::Image>(ckv::PixelSize{8, 12});
     for (int y = 0; y < 12; ++y)
         for (int x = 0; x < 8; ++x) first->set_pixel(x, y, ckv::Image::Rgba{200, 30, 40, 255});
     source.place(first, ckv::Point{0, 0}, ckv::Size{2, 2});
@@ -1027,7 +1027,7 @@ namespace {
 ckv::term::TerminalEmulator talkative_emulator() {
     ckv::term::TerminalCapabilityProfile profile = ckv::term::embedded_xterm_sixel_profile();
     profile.cells = ckv::Size{40, 8};
-    profile.cell_pixels = ckv::Size{9, 18};
+    profile.cell_pixels = ckv::PixelSize{9, 18};
     profile.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
     profile.clipboard_policy = ckv::core::TerminalClipboardPolicy::AllowWrite;
     profile.printer_policy = ckv::core::TerminalPrinterPolicy::Capture;

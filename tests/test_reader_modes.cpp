@@ -22,6 +22,8 @@
 #include <system_error>
 #include <vector>
 
+#include <unistd.h>
+
 #include "common/config.hpp"
 #include "common/proto.hpp"
 #include "cvision/testing/cktest.hpp"
@@ -178,13 +180,24 @@ struct Session {
     // because a negative answer must not be a race: a case asserting that text
     // never arrived has to have waited longer than the case asserting that it
     // did.
+    //
+    // The window is REAL time, not passes. The clock is manual but `cat` is a
+    // real process, and whether it has echoed is up to the scheduler: sixty
+    // unpaused passes finish in a fraction of a millisecond in an optimized
+    // build on an idle machine, before the child has run at all (Linux, g++-13
+    // Release: 13 of 20 runs failed, 2026-09-27; test_attach's run_until met
+    // the same thing on 2026-08-19). So an unsatisfied pass pauses, giving the
+    // child about 1.8 s, while the virtual schedule stays sixty passes of four
+    // ticks and a satisfied pass still returns at once.
     bool child_saw(std::string_view needle, int passes = 60) {
         for (int pass = 0; pass < passes; ++pass) {
             settle(4);
             if (screen().find(needle) != std::string::npos) return true;
+            ::usleep(kChildPauseMicroseconds);
         }
         return false;
     }
+    static constexpr useconds_t kChildPauseMicroseconds = 30'000;
 
     // The first `Error` this reader is given, or code 0 for none.
     std::uint16_t error_for(WireClient& who, int passes = 16) {

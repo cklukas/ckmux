@@ -61,6 +61,13 @@ ckm::Settings test_settings() {
     return settings;
 }
 
+// A child meant to run for the whole test sleeps for an hour, not thirty
+// seconds. The server reaps a child that exits and destroys its Terminal, so a
+// test holding a `Terminal&` across `server.step()` must not race the child's
+// clock: under a loaded machine the animation test below ran 38 s against a
+// `sleep 30` and dereferenced the freed terminal. Teardown closes every
+// terminal, and a crashed test's children get SIGHUP from their PTY, so the
+// hour is never actually spent.
 ckm::server::TerminalSpec spec_running(std::string command) {
     ckm::server::TerminalSpec spec;
     spec.command = std::move(command);
@@ -190,8 +197,8 @@ CK_TEST(attaching_hands_over_every_terminal_whole) {
 
     // Two terminals with something on their screens before anybody attaches —
     // which is the ordinary case, because the server was running first.
-    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 30"));
-    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 3600"));
     first.session().feed_output("the first terminal\r\n");
     second.session().feed_output("the second terminal\r\n");
 
@@ -200,7 +207,7 @@ CK_TEST(attaching_hands_over_every_terminal_whole) {
     client.greet();
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }, 5) ||
              true);
-    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
 
     CK_CHECK(client.session.terminal_ids().size() == 2U);
@@ -226,13 +233,13 @@ CK_TEST(a_second_client_takes_the_session_and_the_first_is_told_why) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     terminal.session().feed_output("a program that outlives its clients\r\n");
 
     Client early;
     CK_CHECK(early.connect(socket));
     early.greet();
-    early.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    early.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
 
     ckm::proto::DetachReason reason = ckm::proto::DetachReason::User;
@@ -245,7 +252,7 @@ CK_TEST(a_second_client_takes_the_session_and_the_first_is_told_why) {
     Client late;
     CK_CHECK(late.connect(socket));
     late.greet();
-    late.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    late.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, late, [&] { return late.session.attached(); }));
     for (int pass = 0; pass < 5; ++pass) {
         clock.advance(34'000'000);
@@ -282,8 +289,8 @@ CK_TEST(reattaching_announces_the_terminals_a_client_stopped_showing) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 30"));
-    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& first = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& second = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
@@ -294,14 +301,14 @@ CK_TEST(reattaching_announces_the_terminals_a_client_stopped_showing) {
     watcher.session.on_terminal_opened = [&](ckm::client::RemoteTerminalSubsession& remote) {
         announced.push_back(remote.terminal_id());
     };
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
     CK_CHECK(announced.size() == 2U);
 
     // A heal is the same message down the same path, and it must announce
     // nothing at all: those windows are still on screen, and a second one per
     // terminal is the other way to get this wrong.
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return watcher.session.attachments() >= 2U; }));
     CK_CHECK(announced.size() == 2U);
@@ -310,7 +317,7 @@ CK_TEST(reattaching_announces_the_terminals_a_client_stopped_showing) {
     // what it does when it is taken over, and when a reader switches away.
     watcher.session.windows_forgotten();
     announced.clear();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return watcher.session.attachments() >= 3U; }));
 
@@ -334,12 +341,12 @@ CK_TEST(a_heal_asks_for_one_snapshot_however_many_passes_it_takes_to_arrive) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
     const std::uint64_t before = watcher.session.resnapshots();
 
@@ -379,14 +386,14 @@ CK_TEST(a_client_that_dies_is_a_detach_and_its_terminals_do_not_notice) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     const ckm::server::TerminalId id = terminal.id();
 
     {
         Client client;
         CK_CHECK(client.connect(socket));
         client.greet();
-        client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+        client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
         CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
     }  // the socket closes with no goodbye, which is what `kill -9` looks like
 
@@ -415,12 +422,12 @@ CK_TEST(a_client_that_falls_behind_is_healed_by_a_snapshot_when_it_drains) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client client;
     CK_CHECK(client.connect(socket));
     client.greet();
-    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
 
     // From here the client reads nothing at all. The terminal keeps producing —
@@ -500,12 +507,12 @@ CK_TEST(a_mirror_that_lost_track_asks_for_the_terminal_whole) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client client;
     CK_CHECK(client.connect(socket));
     client.greet();
-    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
 
     // A delta from nowhere, with a sequence that cannot follow.
@@ -541,7 +548,7 @@ CK_TEST(a_resize_over_the_wire_reaches_the_mirror_both_ways) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::TerminalSpec spec = spec_running("sleep 30");
+    ckm::server::TerminalSpec spec = spec_running("sleep 3600");
     spec.columns = 100;
     spec.rows = 30;
     spec.pixel_width = 100 * 9;
@@ -551,7 +558,7 @@ CK_TEST(a_resize_over_the_wire_reaches_the_mirror_both_ways) {
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{100, 30}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{100, 30}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(terminal.id());
@@ -588,7 +595,7 @@ CK_TEST(a_resize_over_the_wire_reaches_the_mirror_both_ways) {
     // the server acting on it, and what changes this mirror is the delta that
     // comes back (WP-3).
     const std::size_t asked_once = watcher.sent_count(ckm::proto::MessageType::MoveResize) + 1;
-    mirror->resize(ckv::Size{60, 20}, ckv::Size{9, 18});
+    mirror->resize(ckv::Size{60, 20}, ckv::PixelSize{9, 18});
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once);
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return mirror->mirror().cells() == ckv::Size{60, 20}; }));
@@ -606,7 +613,7 @@ CK_TEST(a_resize_over_the_wire_reaches_the_mirror_both_ways) {
     // Bigger, and it is the same code both ways — a shrink and a grow differ
     // only in which numbers are larger, so a test that only shrank would leave
     // half of the op untested.
-    mirror->resize(ckv::Size{100, 30}, ckv::Size{9, 18});
+    mirror->resize(ckv::Size{100, 30}, ckv::PixelSize{9, 18});
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::MoveResize) == asked_once + 1);
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return mirror->mirror().cells() == ckv::Size{100, 30}; }));
@@ -637,14 +644,14 @@ CK_TEST(a_picture_a_child_draws_reaches_the_mirror_with_its_pixels) {
     // alive. The spec's host_sixel default (true) advertises graphics, so the
     // child's DCS is decoded rather than dropped.
     ckm::server::Terminal& terminal = server.open_terminal(
-        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30"));
+        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 3600"));
     (void)terminal;
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
     watcher.session.set_host_sixel(true);
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     const std::vector<std::uint64_t> ids = watcher.session.terminal_ids();
@@ -696,11 +703,11 @@ CK_TEST(a_host_that_shows_no_graphics_opens_children_that_are_told_not_to_draw) 
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
     watcher.session.set_host_sixel(false);
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     ckm::proto::NewTerminal request;
-    request.command = "printf '\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30";
+    request.command = "printf '\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 3600";
     watcher.session.request(request);
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return !watcher.session.terminal_ids().empty(); }));
@@ -746,14 +753,14 @@ CK_TEST(a_pane_opened_after_the_hosts_sixel_probe_resolves_still_gets_told_it_ca
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
     watcher.session.set_host_sixel(false);  // unknown yet, at attach time
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     // The probe answers, after the attach already went out.
     watcher.session.set_host_sixel(true);
 
     ckm::proto::NewTerminal request;
-    request.command = "printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30";
+    request.command = "printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 3600";
     request.host_sixel = watcher.session.host_sixel() ? 1 : 0;
     watcher.session.request(request);
     CK_CHECK(run_until(server, clock, watcher,
@@ -796,14 +803,14 @@ CK_TEST(a_heal_under_steady_news_converges_instead_of_looping) {
     // second is busy — so the session's backlog is real while the picture
     // itself never legitimately goes away.
     ckm::server::Terminal& pictured = server.open_terminal(
-        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 30"));
-    ckm::server::Terminal& busy = server.open_terminal(0, spec_running("sleep 30"));
+        0, spec_running("printf '\\033[2;3H\\033Pq#0;2;100;0;0!8~-!8~\\033\\\\'; sleep 3600"));
+    ckm::server::Terminal& busy = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client client;
     CK_CHECK(client.connect(socket));
     client.greet();
     client.session.set_host_sixel(true);
-    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
     ckm::client::RemoteTerminalSubsession* mirrored = nullptr;
     CK_CHECK(run_until(server, clock, client, [&] {
@@ -880,13 +887,13 @@ CK_TEST(a_child_that_animates_owes_a_reader_its_newest_frame_not_a_history_of_th
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& animating = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& animating = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client client;
     CK_CHECK(client.connect(socket));
     client.greet();
     client.session.set_host_sixel(true);
-    client.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, client, [&] { return client.session.attached(); }));
     ckm::client::RemoteTerminalSubsession* mirrored = nullptr;
     animating.session().feed_output(sixel_frame(0));
@@ -1001,7 +1008,7 @@ CK_TEST(a_child_that_animates_owes_a_reader_its_newest_frame_not_a_history_of_th
     // it for as long as the child stayed quiet: forever, in a demo that has
     // finished. Nothing more is fed below; the reader simply catches up, and
     // what it must land on is the last thing the child drew.
-    ckv::Image expected(1, 1);
+    ckv::Image expected(ckv::PixelSize{1, 1});
     CK_CHECK(run_until(server, clock, client, [&] {
         ckm::server::Terminal* const source = server.terminals().find(animating.id());
         if (source == nullptr) return false;
@@ -1056,7 +1063,7 @@ CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_de
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& living = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& living = server.open_terminal(0, spec_running("sleep 3600"));
     ckm::server::Terminal& dying = server.open_terminal(0, spec_running("exit 7"));
     const ckm::server::TerminalId living_id = living.id();
     const ckm::server::TerminalId dead_id = dying.id();
@@ -1064,7 +1071,7 @@ CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_de
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     // The child asks for the kitty protocol, puts "hello" on the clipboard, and
@@ -1098,7 +1105,7 @@ CK_TEST(a_reattach_brings_back_the_keyboard_the_clipboard_the_printer_and_the_de
     watcher.session.request(ckm::proto::Detach{});
     CK_CHECK(run_until(server, clock, watcher, [&] { return !watcher.session.attached(); }));
     const std::uint64_t attachments = watcher.session.attachments();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return watcher.session.attachments() > attachments; }));
 
@@ -1151,15 +1158,15 @@ CK_TEST(a_terminal_the_reader_is_not_in_marks_what_they_missed) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& here = server.open_terminal(0, spec_running("sleep 30"));
-    ckm::server::Terminal& elsewhere = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& here = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& elsewhere = server.open_terminal(0, spec_running("sleep 3600"));
     const ckm::server::TerminalId here_id = here.id();
     const ckm::server::TerminalId elsewhere_id = elsewhere.id();
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     ckm::client::RemoteTerminalSubsession* mine = watcher.session.terminal(here_id);
@@ -1222,22 +1229,22 @@ CK_TEST(a_host_terminal_that_grows_says_so_while_the_client_is_attached) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
     const ckm::server::TerminalId id = terminal.id();
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 0U);
 
     // The reader's own window, bigger and with larger cells under it.
-    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::Size{10, 20});
+    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::PixelSize{10, 20});
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 1U);
     // Idempotent: the client's loop asks on every pass, and a message per pass
     // would be a resize storm nobody asked for.
-    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::Size{10, 20});
+    watcher.session.desktop_resized(ckv::Size{100, 30}, ckv::PixelSize{10, 20});
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::ClientResize) == 1U);
 
     // The server took it, and the proof is what a terminal is told next: its
@@ -1250,10 +1257,10 @@ CK_TEST(a_host_terminal_that_grows_says_so_while_the_client_is_attached) {
         forget(socket);
         return;
     }
-    mirror->resize(ckv::Size{50, 10}, ckv::Size{10, 20});
+    mirror->resize(ckv::Size{50, 10}, ckv::PixelSize{10, 20});
     CK_CHECK(run_until(server, clock, watcher, [&] {
         const ckm::server::Terminal* held = server.terminals().find(id);
-        return held != nullptr && held->cell_pixels() == ckv::Size{10, 20};
+        return held != nullptr && held->cell_pixels() == ckv::PixelSize{10, 20};
     }));
 
     server.terminals().close_all();
@@ -1271,7 +1278,7 @@ CK_TEST(a_request_the_server_refuses_reaches_the_reader) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    (void)server.open_terminal(0, spec_running("sleep 30"));
+    (void)server.open_terminal(0, spec_running("sleep 3600"));
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
@@ -1282,7 +1289,7 @@ CK_TEST(a_request_the_server_refuses_reaches_the_reader) {
         refused = error;
         told = true;
     };
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     // A terminal this server has never had. The id is not recycled, so this can
@@ -1316,7 +1323,7 @@ CK_TEST(a_layout_report_goes_out_once_per_change_and_never_while_unattached) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
@@ -1357,7 +1364,7 @@ CK_TEST(a_layout_report_goes_out_once_per_change_and_never_while_unattached) {
     watcher.session.report_layout({placed});
     CK_CHECK(watcher.sent_count(ckm::proto::MessageType::SetLayout) == 0U);
 
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     watcher.session.report_layout({placed});
@@ -1407,12 +1414,12 @@ CK_TEST(an_arrangement_is_news_again_after_a_takeover_took_the_session_away) {
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client early;
     CK_CHECK(early.connect(socket));
     early.greet();
-    early.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    early.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
 
     ckm::proto::LayoutEntry placed;
@@ -1424,7 +1431,7 @@ CK_TEST(an_arrangement_is_news_again_after_a_takeover_took_the_session_away) {
     Client late;
     CK_CHECK(late.connect(socket));
     late.greet();
-    late.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    late.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, late, [&] { return late.session.attached(); }));
     CK_CHECK(run_until(server, clock, early, [&] { return !early.session.attached(); }));
 
@@ -1435,7 +1442,7 @@ CK_TEST(an_arrangement_is_news_again_after_a_takeover_took_the_session_away) {
 
     // Back again — and the arrangement it is holding is worth stating even
     // though nothing about it changed while it was away.
-    early.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    early.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, early, [&] { return early.session.attached(); }));
     early.session.report_layout({placed});
     CK_CHECK(early.sent_count(ckm::proto::MessageType::SetLayout) == 2U);
@@ -1455,12 +1462,12 @@ CK_TEST(a_tile_share_survives_the_server_and_comes_back_on_the_reattach_snapshot
     ckv::ManualClock clock;
     Server server(Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 30"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
 
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     // The left half of a filled 50/50 tiling, reported as ckVision's own query
@@ -1495,7 +1502,7 @@ CK_TEST(a_tile_share_survives_the_server_and_comes_back_on_the_reattach_snapshot
     // to contain it; the pump the attach runs through is what carries it.
     CK_CHECK(run_until(server, clock, watcher,
                        [&] { return terminal.layout().tile.filled(); }));
-    returning.session.attach(0, ckv::Size{120, 40}, ckv::Size{9, 18});
+    returning.session.attach(0, ckv::Size{120, 40}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, returning, [&] { return returning.session.attached(); }));
 
     CK_CHECK(restored.size() == 1U);

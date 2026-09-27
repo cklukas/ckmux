@@ -184,7 +184,7 @@ public:
     int columns() const noexcept { return columns_; }
     int rows() const noexcept { return rows_; }
     // What one cell measures, derived from the text area and the grid.
-    ckv::Size cell_pixels() const noexcept;
+    ckv::PixelSize cell_pixels() const noexcept;
 
     ckv::core::TerminalSubsessionState state() const noexcept { return session_->state(); }
     bool live() const noexcept;
