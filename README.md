@@ -55,9 +55,9 @@ program in the window, exactly as it would without ckmux.
 
 Release packages are available from the
 [latest GitHub release](https://github.com/cklukas/ckmux/releases/latest).
-The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Starting
-with v0.1.3, each release also includes a separately named Ubuntu 20.04 DEB
-built and install-tested inside the actual 20.04 userspace. Starting with
+The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Ubuntu
+20.04 is no longer supported: v0.1.3 to v0.1.5 carried a separately named
+Ubuntu 20.04 DEB, and v0.1.5 remains the release to use there. Starting with
 v0.1.2, each release also carries a Homebrew formula that builds ckmux from
 that exact release source.
 
@@ -76,10 +76,6 @@ it with APT so system dependencies are resolved:
 ```bash
 sudo apt install ./ckmux_*_amd64.deb
 ```
-
-On Ubuntu 20.04, choose the file whose name contains
-`ubuntu20.04`; the generic Linux package is built on a newer distribution and
-may require a newer glibc.
 
 On Fedora, RHEL, or another RPM-based distribution, download the `.rpm` and
 install it with the distribution package manager:
@@ -126,8 +122,7 @@ ckdocs check --root .
 
 ## Status
 
-Pre-1.0, with **v0.1.6** published for macOS arm64 and Linux x86_64, including
-a dedicated Ubuntu 20.04 package. The core
+Pre-1.0, with **v0.1.6** published for macOS arm64 and Linux x86_64. The core
 promise works and is proven by a test that forks a real
 server, kills the client mid-run, and shows the program kept going unwatched.
 Sessions are plural, named and killable. The interface is real and usable:
@@ -152,7 +147,9 @@ v0.1.6 moves to ckVision 0.1.7. Help now opens beside your work instead of
 holding the keyboard, and Move / Resize is one keyboard mode in which Enter
 keeps the new place and Esc puts the window back. ckVision's diagnostic
 switches, `CKVISION_OUTPUT_CAPTURE` and `CKVISION_GRAPHICS_LOG`, are now read
-by ckmux itself and keep working as before.
+by ckmux itself and keep working as before. It drops the Ubuntu 20.04
+package: ckVision 0.1.7 requires the exact floating-point `<charconv>`
+conversions that 20.04's GCC 10 standard library lacks.
 The remaining v1 work is M4's three-host/vttest acceptance, the
 `ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
 rough edges, and expect the interface to move.
@@ -171,9 +168,8 @@ rough edges, and expect the interface to move.
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
 macOS and Linux are both gating platforms. The v0.1.6 release matrix runs all
-54 suites in its native package jobs and in an Ubuntu 20.04/GCC 10 container;
-the latter also installs and launches its own compatibility DEB before the
-release can publish. The local Debian gate additionally sweeps GCC 13, GCC 14
+54 suites in its native package jobs before the release can publish. The local
+Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
 Windows is a design target — `src/platform` is written against a seam that
 ConPTY can fill — and no more.
