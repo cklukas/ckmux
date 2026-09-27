@@ -1595,6 +1595,18 @@ Homebrew tap had still served 0.1.2: the release workflow tests the formula
 in a throwaway tap and never updates `cklukas/homebrew-ckmux`, so it was
 updated by hand (`51ec9b6`) and has to be after every release until that
 step is automated.
+v0.1.7 (2026-09-27, the same day) pairs ckmux with ckVision v0.1.8 (public
+`338d950`, CI `36327426822` green on all seven lanes) for one owner-reported
+defect: in Terminal.app, after resizing windows, every click landed top-left
+on the menu. ckVision D-116 (`0991f3c`) stops a drag past the host's edge
+proving SGR-pixel mode; ckmux pins it (`20c7675`) with an end-to-end row,
+`a_drag_past_the_hosts_edge_leaves_later_clicks_where_they_are_made`, that
+fails against v0.1.7 and passes against v0.1.8. Public snapshot `d0826da`; CI
+`36328944244` green on all four lanes; release run `36330482979` succeeded on
+its first attempt and published nine assets. Downloaded afterwards, the RPM,
+DEB and both TGZs matched their SHA-256 files, the formula's source hashes
+matched the v0.1.7 and ckVision v0.1.8 archives, and the macOS binary reports
+0.1.7. The tap was updated by hand again (`682330a`).
 WP-24 subsequently
 extended the install set with `ckmux(1)` and the browser guide without changing
 the executable's runtime dependencies.
