@@ -13,7 +13,7 @@ ServerSession::ServerSession(Send send) : send_(std::move(send)) {
     profile_ = ckv::term::embedded_xterm_sixel_profile();
 }
 
-void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels) {
+void ServerSession::attach(std::uint64_t session, ckv::Size desktop, ckv::PixelSize cell_pixels) {
     // What was reported described the arrangement of the session being left, so
     // it stops being an answer to "has this changed?" the moment another one is
     // asked for. A re-`attach` to the SAME session is a heal (see
@@ -61,7 +61,7 @@ void ServerSession::adopt_session_desktop(std::uint16_t columns, std::uint16_t r
     if (on_session_desktop) on_session_desktop(world);
 }
 
-void ServerSession::desktop_resized(ckv::Size desktop, ckv::Size cell_pixels) {
+void ServerSession::desktop_resized(ckv::Size desktop, ckv::PixelSize cell_pixels) {
     if (desktop.width <= 0 || desktop.height <= 0) return;
     if (desktop == desktop_ && cell_pixels == cell_pixels_) return;
     desktop_ = desktop;
@@ -508,8 +508,8 @@ bool ServerSession::handle(const proto::Message& message) {
         const std::size_t total = static_cast<std::size_t>(pending->second.width) *
                                   static_cast<std::size_t>(pending->second.height) * 4U;
         if (total != 0 && pending->second.bytes.size() == total) {
-            auto image = std::make_shared<ckv::Image>(pending->second.width,
-                                                      pending->second.height);
+            auto image = std::make_shared<ckv::Image>(
+                ckv::PixelSize{pending->second.width, pending->second.height});
             std::memcpy(image->data(), pending->second.bytes.data(), total);
             completed_images_[end->id] = std::move(image);
         }

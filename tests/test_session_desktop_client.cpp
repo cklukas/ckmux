@@ -92,7 +92,7 @@ CK_TEST(zeros_are_a_server_that_has_not_said_and_shrink_nothing) {
 
     // And this client's own resize is the VIEW: it says nothing about the
     // world, however often it is stated (WP-40's rule, read from this side).
-    session.desktop_resized(ckv::Size{80, 24}, ckv::Size{9, 18});
+    session.desktop_resized(ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(session.session_desktop() == (ckv::Size{200, 60}));
 }
 

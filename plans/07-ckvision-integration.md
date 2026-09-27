@@ -388,11 +388,28 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.5 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.6 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins
   when behavior changed intentionally.
+- **Following ckVision `main` past v0.1.6** (2026-09-27, at ckVision
+  `fbd7897`): standard-dialog calls name their modality (D-087:
+  `present_modal_dialog`, `present_modal_message_box`,
+  `present_modal_terminal_report_dialog`, and `present_modeless_help_viewer` —
+  help no longer scopes input to itself); cell metrics and image extents are
+  `ckv::PixelSize`, never a cell `Size`; a help topic's body is a list of
+  `HelpSpan` runs (D-101); `Window::enter_move_size_mode()` replaces the move
+  and resize modes with one (D-093), in which Esc restores the starting
+  bounds, and the "Moving a window" help page now says so;
+  `TerminalSubsession::set_graphics_trace()` is pure (D-077), and the client's
+  mirror session answers it by saying the server decodes its pictures. The
+  library also stopped reading `CKVISION_OUTPUT_CAPTURE` and
+  `CKVISION_GRAPHICS_LOG` itself (D-077), so `src/main.cpp` now reads both
+  and hands the sinks to `PosixTerminal` and the `Application` — which is
+  what keeps `test_client_pacing`'s capture evidence real. The server's own
+  sessions are not traced. Until ckVision releases these, the v0.1.6 pin
+  does not build (R2 in [10](10-roadmap.md)).
 - **License**: both repositories are MIT. Their `LICENSE` files are
   authoritative; `CONTRIBUTING.md` carries the shared DCO, patent-grant and
   relicense-grant terms (WP-26 / ckVision D-OPEN-1).

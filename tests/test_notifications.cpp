@@ -268,6 +268,14 @@ CK_TEST(a_toast_never_takes_the_keyboard_from_the_program) {
 
 namespace {
 
+// A page's prose as one string: its runs laid end to end, as the viewer lays
+// them out (a body is a list of spans since ckVision D-101).
+std::string body_text(const ckv::widgets::HelpTopic& topic) {
+    std::string text;
+    for (const ckv::widgets::HelpSpan& span : topic.body) text += span.text;
+    return text;
+}
+
 bool topic_exists(const ClientApp& client, const std::string& key) {
     // MemoryHelpProvider answers an unknown key with a "Not Found" topic
     // rather than failing, so the check is whether the page is real.
@@ -296,7 +304,7 @@ CK_TEST(every_surface_that_names_a_help_page_has_one) {
 CK_TEST(the_complete_listing_covers_chorded_and_menu_only_commands) {
     Fixture f;
     f.settle();
-    const std::string body = f.client.help().topic("ckmux.keys.all").body;
+    const std::string body = body_text(f.client.help().topic("ckmux.keys.all"));
 
     // A chorded one, with its chord.
     CK_CHECK(body.find("^B c") != std::string::npos);
@@ -325,7 +333,7 @@ CK_TEST(a_rebinding_is_marked_with_what_it_replaced) {
         ckm::BindDirective{ckm::KeyContext::Terminal, "C", ckm::Action::NewTerminal});
     ConfiguredFixture f{std::move(options)};
     f.settle();
-    const std::string body = f.client.help().topic("ckmux.keys.all").body;
+    const std::string body = body_text(f.client.help().topic("ckmux.keys.all"));
 
     CK_CHECK(body.find("Changed by your configuration") != std::string::npos);
     // Both halves: what it is now, and what it was.
@@ -341,7 +349,7 @@ CK_TEST(the_window_bar_page_describes_the_bar_as_it_now_behaves) {
     // month's application is worse than none, because a reader believes it.
     Fixture f;
     f.settle();
-    const std::string body = f.client.help().topic("ckmux.switcher").body;
+    const std::string body = body_text(f.client.help().topic("ckmux.switcher"));
 
     CK_CHECK(body.find("put away") != std::string::npos);
     CK_CHECK(body.find("only way back") != std::string::npos);
@@ -450,3 +458,15 @@ CK_TEST(no_menu_offers_one_letter_twice) {
 }
 
 #endif  // !defined(_WIN32)
+
+CK_TEST(the_move_page_says_what_esc_does_in_the_move_size_mode) {
+    // ckVision's one keyboard move/size mode (its D-093) restores the starting
+    // bounds on Esc. The page used to say Esc does not undo; a reader who
+    // believed it would lose a window's position by pressing the key they were
+    // told was harmless.
+    Fixture f;
+    f.settle();
+    const std::string body = body_text(f.client.help().topic("ckmux.move"));
+    CK_CHECK(body.find("Esc puts the window back") != std::string::npos);
+    CK_CHECK(body.find("does not undo") == std::string::npos);
+}

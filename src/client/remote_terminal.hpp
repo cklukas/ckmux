@@ -88,7 +88,7 @@ public:
     // PTY, so a resize here is a request: what makes the child's `TIOCSWINSZ`
     // change is the server acting on it (WP-3), and what makes this mirror
     // change size is the snapshot or delta that comes back.
-    void resize(ckv::Size cells, ckv::Size cell_pixels) override;
+    void resize(ckv::Size cells, ckv::PixelSize cell_pixels) override;
 
     void send_input(std::string_view bytes) override;
     // A mirror answers no queries: DA, DSR and XTWINOPS are answered by the
@@ -116,6 +116,13 @@ public:
     }
     int raster_identity() const noexcept { return raster_identity_; }
 
+    // Where the Application's graphics trace goes (D-077). The child's pictures
+    // are decoded by the server's emulator, not here, so this session has no
+    // decode to report; it says so once on adoption, so a reader of the trace
+    // does not take an empty section for a terminal that drew nothing, and it
+    // reports the resizes it forwards.
+    void set_graphics_trace(ckv::GraphicsTrace trace) noexcept override;
+
 private:
     std::uint64_t terminal_;
     ckv::term::TerminalCapabilityProfile profile_;
@@ -123,6 +130,7 @@ private:
     TerminalMirror mirror_;
     int raster_identity_ = 0;
     std::size_t stray_output_ = 0;
+    ckv::GraphicsTrace trace_;
     bool closed_ = false;
 };
 

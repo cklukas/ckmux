@@ -217,7 +217,7 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     app_.set_help_provider([this](const std::string& key) {
         if (desktop_ == nullptr) return;
         retain_dialog(std::make_shared<w::HelpViewerPresentation>(
-            w::present_help_viewer(help_, key, app_, *desktop_, roles_)));
+            w::present_modeless_help_viewer(help_, key, app_, *desktop_, roles_)));
     });
     footer_->set_hint_provider([](const std::string& key) -> std::string {
         if (key == "ckmux.prefix") return "choose a key, or Esc to cancel";
@@ -399,7 +399,7 @@ void ClientApp::register_commands() {
                                            [this] { return active_terminal() != nullptr; });
         } else if (binding.key == commands::kMoveResize) {
             declare(binding.key, binding.title, "Window", [this] {
-                if (w::Window* const window = desktop_->active_window()) window->enter_move_mode();
+                if (w::Window* const window = desktop_->active_window()) window->enter_move_size_mode();
             });
         } else if (binding.key == commands::kKeyReference) {
             declare(binding.key, binding.title, "Help", [this] { show_key_reference(); });
@@ -988,14 +988,14 @@ std::vector<ckv::widgets::MenuItem> ClientApp::switcher_menu(
                                         target.bind([this, alive](w::Window& clicked) {
                                             if (alive.expired() || desktop_ == nullptr) return;
                                             // Raised first, unlike the two
-                                            // above: keyboard move mode is a
+                                            // above: keyboard move/size mode is a
                                             // reader steering a window with the
                                             // arrow keys, and one still behind
                                             // another would slide about out of
                                             // sight.
                                             desktop_->activate(&clicked);
                                             focus_active_terminal();
-                                            clicked.enter_move_mode();
+                                            clicked.enter_move_size_mode();
                                         }))
                         .with_help("ckmux.switcher"));
     items.push_back(w::MenuItem::separator());
@@ -1320,7 +1320,7 @@ void ClientApp::show_new_session_dialog(std::string suggested_name) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.values.empty()) return;
         // An empty field means "you name it": the server's own rule, rather
@@ -1341,7 +1341,7 @@ void ClientApp::show_rename_session_dialog(std::string current_name) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.values.empty() || result.values.front().empty()) return;
         if (options_.rename_session) options_.rename_session(result.values.front());
@@ -1386,7 +1386,7 @@ void ClientApp::show_kill_session_dialog() {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler([this, presentation, force_field](const w::DialogResult& result) {
         if (!result.accepted || result.checked.size() <= force_field) return;
         if (options_.kill_session)
@@ -1510,7 +1510,7 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         attached_session_ == 0 ? "&Without a session" : "&Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.selected.empty()) return;
         const int index = result.selected.front();
@@ -1929,7 +1929,7 @@ void ClientApp::confirm_then_kill(w::Window* window) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"&Kill terminal", w::ButtonRole::Accept, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler([this, presentation, terminal](
                                              const w::DialogResult& result) {
         if (!result.accepted) return;
@@ -2012,7 +2012,7 @@ void ClientApp::confirm_then_close(w::Window* window) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, terminal, force_field](const w::DialogResult& result) {
             if (!result.accepted) return;
@@ -2083,7 +2083,7 @@ void ClientApp::show_move_terminal_dialog(ckv::term::TerminalSubsession* termina
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, terminal, to_field](const w::DialogResult& result) {
             if (!result.accepted || result.selected.size() <= to_field) return;
@@ -2426,7 +2426,7 @@ void ClientApp::show_rename_terminal_dialog(ckv::term::TerminalSubsession* termi
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, alive, named](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted || result.values.empty()) return;
@@ -2625,7 +2625,7 @@ void ClientApp::show_printer_ask_dialog(ckv::term::TerminalSubsession* terminal)
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, alive, asked, owner, answer_field](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted) return;
@@ -2764,7 +2764,7 @@ void ClientApp::show_printer_settings_dialog(ckv::term::TerminalSubsession* term
     ckv::term::TerminalSubsession* const target = terminal;
     const std::weak_ptr<void> alive = alive_;
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, alive, target, scope_field, mode_field, ask_cache_field, spool_field,
          format_field, folder_field, ask_name_field](const w::DialogResult& result) {
@@ -2839,7 +2839,7 @@ void ClientApp::show_print_output_dialog(ckv::term::TerminalSubsession* terminal
                                                         }});
         descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
         auto empty = std::make_shared<w::DescriptorDialogPresentation>(
-            w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+            w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
         retain_dialog(empty);
         return;
     }
@@ -2890,7 +2890,7 @@ void ClientApp::show_print_output_dialog(ckv::term::TerminalSubsession* terminal
     descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, presentation, alive, source, listed, choice_field](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted) return;
@@ -2960,7 +2960,7 @@ void ClientApp::save_print_job(ckv::term::TerminalSubsession& terminal, std::uin
 
 void ClientApp::show_printer_problem(const std::string& what) {
     if (desktop_ == nullptr) return;
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Print output", what,
                                 w::MessageBoxButtons::Ok})));
@@ -3436,7 +3436,7 @@ void ClientApp::show_all_keys() {
     // precisely to be the page that does NOT depend on where the reader is.
     if (desktop_ == nullptr) return;
     retain_dialog(std::make_shared<w::HelpViewerPresentation>(
-        w::present_help_viewer(help_, "ckmux.keys.all", app_, *desktop_, roles_)));
+        w::present_modeless_help_viewer(help_, "ckmux.keys.all", app_, *desktop_, roles_)));
 }
 
 void ClientApp::show_about() {
@@ -3447,7 +3447,7 @@ void ClientApp::show_about() {
     // hand that word their own authorship differently read as programs from
     // different hands, so this one follows the suite rather than deciding
     // again. Last, after a blank line, where the suite puts it too.
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Info, "About ckmux",
                                 std::string("ckmux ") + kVersion +
@@ -3466,7 +3466,7 @@ void ClientApp::show_terminal_report() {
     ckv::widgets::TerminalReportDialogOptions options;
     options.mouse_reports_decoded = options_.mouse_reports_probe;
     retain_dialog(std::make_shared<w::TerminalReportDialogPresentation>(
-        w::present_terminal_report_dialog(*desktop_, app_, roles_, std::move(options))));
+        w::present_modal_terminal_report_dialog(*desktop_, app_, roles_, std::move(options))));
 }
 
 void ClientApp::enter_copy_mode() {
@@ -3647,7 +3647,7 @@ void ClientApp::show_server_error(std::uint16_t code, const std::string& context
     std::string body = human.empty() ? std::string("The server could not do that.") : human;
     if (!context.empty()) body += "\n\nRequest: " + context;
     body += "\nCode: " + std::to_string(static_cast<unsigned>(code));
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "ckmux server", std::move(body),
                                 w::MessageBoxButtons::Ok})));
@@ -3680,7 +3680,7 @@ void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused
     body += paste_chord.empty()
                 ? "\n\nckmux kept it — Terminal ▸ Paste puts it into a terminal."
                 : "\n\nckmux kept it — " + paste_chord + " pastes it into a terminal.";
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Copy", std::move(body),
                                 w::MessageBoxButtons::Ok})));
@@ -3808,7 +3808,7 @@ void ClientApp::show_settings() {
     descriptor.anchor_buttons_to_bottom = true;
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
     presentation->set_completion_handler(
         [this, login_field, sixel_field, grace_field, fit_field, clock_field, theme_field](
             w::DialogResult result) {
@@ -4051,7 +4051,7 @@ bool ClientApp::apply_theme(Theme theme) {
 void ClientApp::report_settings_not_saved() {
     if (desktop_ == nullptr) return;
     const std::filesystem::path path = ckm::platform::config_file_path();
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{
             w::MessageBoxKind::Warning, "Settings not saved",
@@ -4079,11 +4079,20 @@ void ClientApp::report_config_warnings() {
     body += " was not understood:\n";
     for (const std::string& warning : options_.config_warnings)
         body += "\n  " + without_prefix(warning, file);
-    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_message_box(
+    retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
         app_, *desktop_, roles_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Configuration", std::move(body),
                                 w::MessageBoxButtons::Ok})));
 }
+
+namespace {
+
+// A help page's prose as one plain run. These pages link through their
+// see-also lists rather than from inside the text (ckVision D-101), so each
+// body is a single span.
+std::vector<w::HelpSpan> prose(std::string text) { return {w::HelpSpan{std::move(text)}}; }
+
+}  // namespace
 
 void ClientApp::populate_help() {
     // Generated from the keymap table, never hand-copied: a rebinding changes
@@ -4142,53 +4151,53 @@ void ClientApp::populate_help() {
     // table below keeps its own line breaks, because its columns are aligned.
     help_.add_topic("ckmux.terminal",
                     w::HelpTopic{"Terminal window",
-                                 "Everything you type goes to the program running in this "
-                                 "window. ckmux keeps only one key for itself: " +
-                                     prefix_text + ".\n\nPress it, then one of:\n\n" + keys +
-                                     "\nPress " + prefix_text + " twice to send a literal " +
-                                     prefix_text + " to the program.",
+                                 prose("Everything you type goes to the program running in this "
+                                       "window. ckmux keeps only one key for itself: " +
+                                           prefix_text + ".\n\nPress it, then one of:\n\n" + keys +
+                                           "\nPress " + prefix_text + " twice to send a literal " +
+                                           prefix_text + " to the program."),
                                  {{"ckmux.keys", "All keys"}, {"ckmux.prefix", "The prefix key"}}});
     help_.add_topic("ckmux.prefix", w::HelpTopic{"Prefix pending",
-                                                 "ckmux is waiting for one key:\n\n" + keys +
-                                                     "\nEsc cancels without doing anything.",
+                                                 prose("ckmux is waiting for one key:\n\n" + keys +
+                                                           "\nEsc cancels without doing anything."),
                                                  {{"ckmux.keys", "All keys"}}});
     help_.add_topic("ckmux.keys",
                     w::HelpTopic{"All keys",
-                                 "Every ckmux command is also in the menu bar, and every "
-                                 "menu entry shows the key that reaches it.\n\nPrefix: " +
-                                     prefix_text + "\n\n" + keys +
-                                     "\nInside a terminal, all other keys — function keys, Alt "
-                                     "combinations, the mouse — belong to the program you are "
-                                     "running, exactly as they would without ckmux.",
+                                 prose("Every ckmux command is also in the menu bar, and every "
+                                       "menu entry shows the key that reaches it.\n\nPrefix: " +
+                                           prefix_text + "\n\n" + keys +
+                                           "\nInside a terminal, all other keys — function keys, Alt "
+                                           "combinations, the mouse — belong to the program you are "
+                                           "running, exactly as they would without ckmux."),
                                  {{"ckmux.terminal", "Terminal window"},
                                   {"ckmux.prefix", "The prefix key"}}});
     help_.add_topic(
         "ckmux.switcher",
         w::HelpTopic{
             "Window bar",
-            "The row above the footer lists every open terminal by its caption. It is on "
-            "screen while more than one terminal is open, and also whenever any terminal is "
-            "put away — with one terminal hidden and none showing, this row is the only way "
-            "back to it.\n\nEach entry carries the terminal's own window control as a mark, "
-            "so a row and the window it stands for wear the same chrome: " +
-                std::string(w::WindowSwitcherBar::status_glyph(
-                    w::WindowSwitcherBar::Status::Visible)) +
-                " for a terminal that is on the desktop, and " +
-                std::string(w::WindowSwitcherBar::status_glyph(
-                    w::WindowSwitcherBar::Status::Minimized)) +
-                " — the mark on a window's minimize button — for one that has been put "
-                "away.\n\nWhich one you are working in is shown the way the windows "
-                "themselves show it: that entry's mark is lit in the control colour and its "
-                "row is highlighted, exactly as the frame of the terminal you are in lights "
-                "its own controls. The ones behind it draw the same mark plainly.\n\nClicking "
-                "does what the mark says: the "
-                "terminal you are in is put away, one behind comes forward and takes the "
-                "keyboard, and one that was put away comes back in front. Right-click an entry "
-                "for the rest — Minimize or Show, Maximize or Restore, Move / Resize, Rename…, "
-                "Move to session…, and Close. Every one of them acts on the terminal whose "
-                "entry you clicked, never on the one in front.\n\nThe ▼ at the far left hides "
-                "the status bar and drops this row onto the last line of the screen, which is "
-                "a row of terminal back. ▲ brings both back, and so does Window ▸ Status Bar.",
+            prose("The row above the footer lists every open terminal by its caption. It is on "
+                  "screen while more than one terminal is open, and also whenever any terminal is "
+                  "put away — with one terminal hidden and none showing, this row is the only way "
+                  "back to it.\n\nEach entry carries the terminal's own window control as a mark, "
+                  "so a row and the window it stands for wear the same chrome: " +
+                      std::string(w::WindowSwitcherBar::status_glyph(
+                          w::WindowSwitcherBar::Status::Visible)) +
+                      " for a terminal that is on the desktop, and " +
+                      std::string(w::WindowSwitcherBar::status_glyph(
+                          w::WindowSwitcherBar::Status::Minimized)) +
+                      " — the mark on a window's minimize button — for one that has been put "
+                      "away.\n\nWhich one you are working in is shown the way the windows "
+                      "themselves show it: that entry's mark is lit in the control colour and its "
+                      "row is highlighted, exactly as the frame of the terminal you are in lights "
+                      "its own controls. The ones behind it draw the same mark plainly.\n\nClicking "
+                      "does what the mark says: the "
+                      "terminal you are in is put away, one behind comes forward and takes the "
+                      "keyboard, and one that was put away comes back in front. Right-click an entry "
+                      "for the rest — Minimize or Show, Maximize or Restore, Move / Resize, Rename…, "
+                      "Move to session…, and Close. Every one of them acts on the terminal whose "
+                      "entry you clicked, never on the one in front.\n\nThe ▼ at the far left hides "
+                      "the status bar and drops this row onto the last line of the screen, which is "
+                      "a row of terminal back. ▲ brings both back, and so does Window ▸ Status Bar."),
             {{"ckmux.terminal", "Terminal window"},
              {"ckmux.keys", "All keys"},
              {"ckmux.keys.all", "Every command"}}});
@@ -4210,7 +4219,7 @@ void ClientApp::populate_help() {
         every += "\nChanged by your configuration:\n\n" + rebound;
     }
     help_.add_topic("ckmux.keys.all",
-                    w::HelpTopic{"Every command", std::move(every),
+                    w::HelpTopic{"Every command", prose(std::move(every)),
                                  {{"ckmux.keys", "All keys"},
                                   {"ckmux.terminal", "Terminal window"}}});
 
@@ -4219,14 +4228,14 @@ void ClientApp::populate_help() {
     help_.add_topic(
         "ckmux.copy",
         w::HelpTopic{"Copy mode",
-                     "You are reading this terminal's history rather than typing into it. The "
-                     "window's title bar says COPY while you are.\n\n↑ ↓ PgUp PgDn Home End "
-                     "move; Space or v starts a selection and moves extend it; Enter or y "
-                     "copies what is selected and leaves; Esc or q leaves without copying.\n\n"
-                     "What you copy goes to ckmux's own clipboard, which " +
-                         prefix_text +
-                         " ] pastes into any terminal here. The program you were "
-                         "running is untouched and still there when you leave.",
+                     prose("You are reading this terminal's history rather than typing into it. The "
+                           "window's title bar says COPY while you are.\n\n↑ ↓ PgUp PgDn Home End "
+                           "move; Space or v starts a selection and moves extend it; Enter or y "
+                           "copies what is selected and leaves; Esc or q leaves without copying.\n\n"
+                           "What you copy goes to ckmux's own clipboard, which " +
+                               prefix_text +
+                               " ] pastes into any terminal here. The program you were "
+                               "running is untouched and still there when you leave."),
                      {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
 
     // The big clock. Its chord is read from the keymap like every other page's,
@@ -4238,39 +4247,39 @@ void ClientApp::populate_help() {
     help_.add_topic(
         "ckmux.clock",
         w::HelpTopic{"Big clock",
-                     "The time, the date, or both, drawn large over this terminal. " +
-                         clock_route +
-                         " shows the time; View ▸ Show Date and Show Date and Time show "
-                         "the others.\n\nIt stays up while you work in other windows. Back "
-                         "in this one, any key puts it away and does nothing else; the prefix "
-                         "still works, so you can switch windows without losing it. The "
-                         "program in the terminal keeps running underneath, and nobody else "
-                         "watching this session sees the clock.",
+                     prose("The time, the date, or both, drawn large over this terminal. " +
+                               clock_route +
+                               " shows the time; View ▸ Show Date and Show Date and Time show "
+                               "the others.\n\nIt stays up while you work in other windows. Back "
+                               "in this one, any key puts it away and does nothing else; the prefix "
+                               "still works, so you can switch windows without losing it. The "
+                               "program in the terminal keeps running underneath, and nobody else "
+                               "watching this session sees the clock."),
                      {{"ckmux.terminal", "Terminal window"}, {"ckmux.keys", "All keys"}}});
 
     // The picker, which is also the first thing a new reader sees.
     help_.add_topic(
         "ckmux.picker",
         w::HelpTopic{"Sessions",
-                     "A session is a set of terminals the server keeps running whether or not "
-                     "anybody is watching them. This list is every session on this "
-                     "server.\n\nEnter or [ Attach ] takes you to the highlighted one — even "
-                     "one somebody else is watching, which is not refused: the newest client "
-                     "wins and the other one is told so and handed this same list. [ New… ] "
-                     "makes one, [ Rename… ] and [ End… ] act on the highlighted one, and "
-                     "ending a session ends the programs in it.\n\nClosing this window "
-                     "leaves ckmux running with nothing attached, which is a perfectly good "
-                     "state: the commands that need a session simply go grey.",
+                     prose("A session is a set of terminals the server keeps running whether or not "
+                           "anybody is watching them. This list is every session on this "
+                           "server.\n\nEnter or [ Attach ] takes you to the highlighted one — even "
+                           "one somebody else is watching, which is not refused: the newest client "
+                           "wins and the other one is told so and handed this same list. [ New… ] "
+                           "makes one, [ Rename… ] and [ End… ] act on the highlighted one, and "
+                           "ending a session ends the programs in it.\n\nClosing this window "
+                           "leaves ckmux running with nothing attached, which is a perfectly good "
+                           "state: the commands that need a session simply go grey."),
                      {{"ckmux.keys", "All keys"}, {"ckmux.terminal", "Terminal window"}}});
 
     // Move/resize mode, which is modal and therefore worth saying out loud.
     help_.add_topic(
         "ckmux.move",
         w::HelpTopic{"Moving a window",
-                     "The arrow keys move this window; Shift with them resizes it. Enter or "
-                     "Esc finishes — Esc does not undo, because the window is already where "
-                     "you put it.\n\nThe mouse does the same thing without a mode: drag the "
-                     "title bar to move, drag an edge or a corner to resize.",
+                     prose("The arrow keys move this window; Shift with them resizes it. Enter keeps "
+                           "where you put it, and Esc puts the window back where it was.\n\nThe "
+                           "mouse does the same thing without a mode: drag the title bar to move, "
+                           "drag an edge or a corner to resize."),
                      {{"ckmux.switcher", "Window bar"}, {"ckmux.keys", "All keys"}}});
 
     // And the surface WP-14 itself added, because a reader who has just been
@@ -4278,15 +4287,15 @@ void ClientApp::populate_help() {
     help_.add_topic(
         "ckmux.notice",
         w::HelpTopic{"Notices",
-                     "A line over the desktop reporting something that happened without you "
-                     "asking: a session taken over from another terminal, a session that "
-                     "ended, a server that stopped.\n\nMost take themselves away after a few "
-                     "seconds. The ones that matter — the ones that explain where your "
-                     "terminals went — stay until you dismiss them, because the reader they "
-                     "are for is the one who was not at the keyboard when it happened. Click "
-                     "a line to dismiss it.\n\nNothing here ever takes the keyboard from the "
-                     "program you are typing into. A notice is news, not a question; anything "
-                     "ckmux needs an answer to is a dialog.",
+                     prose("A line over the desktop reporting something that happened without you "
+                           "asking: a session taken over from another terminal, a session that "
+                           "ended, a server that stopped.\n\nMost take themselves away after a few "
+                           "seconds. The ones that matter — the ones that explain where your "
+                           "terminals went — stay until you dismiss them, because the reader they "
+                           "are for is the one who was not at the keyboard when it happened. Click "
+                           "a line to dismiss it.\n\nNothing here ever takes the keyboard from the "
+                           "program you are typing into. A notice is news, not a question; anything "
+                           "ckmux needs an answer to is a dialog."),
                      {{"ckmux.picker", "Sessions"}, {"ckmux.terminal", "Terminal window"}}});
 }
 

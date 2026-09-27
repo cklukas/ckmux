@@ -36,6 +36,7 @@
 #include "platform/process.hpp"
 #include "platform/socket.hpp"
 #include "server/server.hpp"
+#include "cvision/term/file_trace_sink.hpp"
 #include "cvision/term/posix_clock.hpp"
 #include "cvision/term/posix_terminal.hpp"
 #include "cvision/term/terminal_clipboard.hpp"
@@ -248,7 +249,38 @@ int main(int argc, char** argv) {
     }
 
     ckv::term::PosixClock clock;
+
+    // ckVision's two diagnostic switches. The library reads no environment to
+    // decide what to do (its D-077), so a host that wants them opens the sinks
+    // itself; the names are ckVision's own, which its examples honour too, so
+    // one variable captures the same thing whichever program is under it.
+    //
+    //   CKVISION_OUTPUT_CAPTURE=<file>  every byte written to the reader's terminal
+    //   CKVISION_GRAPHICS_LOG=<file>    this client's graphics trace
+    //
+    // Both are opened before the terminal and so outlive it: the terminal
+    // writes its restore sequence on the way out, and that belongs in the
+    // capture too.
+    struct CloseFile {
+        void operator()(std::FILE* stream) const noexcept { std::fclose(stream); }
+    };
+    std::unique_ptr<std::FILE, CloseFile> output_capture;
+    if (const char* const path = std::getenv("CKVISION_OUTPUT_CAPTURE"); path != nullptr && *path != '\0')
+        output_capture.reset(std::fopen(path, "wb"));
+    std::unique_ptr<ckv::term::FileTraceSink> graphics_log;
+    if (const char* const path = std::getenv("CKVISION_GRAPHICS_LOG"); path != nullptr && *path != '\0')
+        graphics_log = ckv::term::FileTraceSink::open(path, ckv::term::FileTraceSink::OpenMode::Truncate, clock);
+    const ckv::GraphicsTrace graphics_trace{graphics_log.get(), &clock};
+
     ckv::term::PosixTerminal terminal(clock);
+    terminal.set_graphics_trace(graphics_trace);
+    if (output_capture != nullptr) {
+        std::FILE* const stream = output_capture.get();
+        terminal.set_output_capture([stream](std::string_view bytes) {
+            std::fwrite(bytes.data(), 1, bytes.size(), stream);
+            std::fflush(stream);
+        });
+    }
 
     ckm::client::ClientOptions options;
     // Reading the environment is an application's job, never the library's:
@@ -315,5 +347,6 @@ int main(int argc, char** argv) {
     run.preselected_session = attach_to;
     run.attach_mode = attach_mode;
     run.adopt_session_size = attach_adopts_size;
+    run.graphics_trace = graphics_trace;
     return ckm::client::run_attached_client(terminal, clock, std::move(run));
 }

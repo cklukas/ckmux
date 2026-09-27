@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -22,6 +23,8 @@
 #include "common/proto.hpp"
 #include "server/diff_engine.hpp"
 
+#include "cvision/core/clock.hpp"
+#include "cvision/core/diagnostics.hpp"
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/term/virtual_display.hpp"
 #include "cvision/term/terminal_emulator.hpp"
@@ -40,7 +43,7 @@ struct FakeServer {
     ckv::term::TerminalCapabilityProfile profile = [] {
         ckv::term::TerminalCapabilityProfile value = ckv::term::embedded_xterm_sixel_profile();
         value.cells = ckv::Size{40, 8};
-        value.cell_pixels = ckv::Size{9, 18};
+        value.cell_pixels = ckv::PixelSize{9, 18};
         value.osc_policy = ckv::core::TerminalOscPolicy::StoreMetadata;
         // What a real server's terminals are opened with when the reader's
         // `[terminal] osc52` is on and the printer is not off (server/
@@ -248,7 +251,7 @@ CK_TEST(two_simultaneous_placed_pictures_on_one_mirror_get_distinct_scene_ids) {
     remote.mirror().adopt(server.snapshot());
     remote.mirror().set_raster_identity(99);
 
-    auto image = std::make_shared<ckv::Image>(4, 6);
+    auto image = std::make_shared<ckv::Image>(ckv::PixelSize{4, 6});
     remote.mirror().place_image(1, image, ckv::Point{0, 0}, ckv::Size{1, 1});
     remote.mirror().place_image(2, image, ckv::Point{4, 0}, ckv::Size{1, 1});
     CK_CHECK(remote.mirror().rasters().size() == 2U);
@@ -288,7 +291,7 @@ CK_TEST(a_heal_keeps_the_pictures_a_mirror_holds_until_they_are_restated) {
     TerminalMirror mirror;
     mirror.set_history_limit(200);
     mirror.set_raster_identity(99);
-    auto pixels = std::make_shared<ckv::Image>(8, 12);
+    auto pixels = std::make_shared<ckv::Image>(ckv::PixelSize{8, 12});
     mirror.place_image(begin->id, pixels, ckv::Point{2, 1}, ckv::Size{1, 1});
     CK_CHECK(mirror.rasters().size() == 1U);
 
@@ -529,7 +532,7 @@ CK_TEST(a_resize_tells_the_server_the_size_of_this_terminals_view) {
                                     });
     remote.mirror().adopt(server.snapshot());
 
-    remote.resize(ckv::Size{100, 30}, ckv::Size{9, 18});
+    remote.resize(ckv::Size{100, 30}, ckv::PixelSize{9, 18});
     CK_CHECK(sent.size() == 1U);
     if (!sent.empty()) {
         const auto* resize = std::get_if<ckm::proto::MoveResize>(&sent.front());
@@ -1043,4 +1046,41 @@ CK_TEST(a_childs_clipboard_write_reaches_the_readers_clipboard_targets) {
     for (const std::pair<std::string, std::string>& asked : helpers)
         if (asked.first == "pbcopy" && asked.second == "hello") the_helper_was_asked = true;
     CK_CHECK(the_helper_was_asked);
+}
+
+CK_TEST(a_remote_terminal_tells_the_graphics_trace_whose_pictures_they_are) {
+    // ckVision hands an Application's graphics trace to every session it adopts
+    // (its D-077), and a session that dropped it would leave the trace reading
+    // empty — which looks exactly like a terminal that drew nothing. A mirror
+    // decodes no pictures, so what it owes the trace is to say where they are
+    // decoded, and to report the resizes it asks of the server.
+    FakeServer server;
+    ckv::term::HeadlessTerminal host(ckv::Size{80, 24});
+    ckv::ManualClock clock;
+    ckv::ui::Application app(host, clock);
+    ckv::BufferedDiagnostics trace;
+    app.set_graphics_trace(ckv::GraphicsTrace{&trace, &clock});
+
+    auto owned = std::make_unique<RemoteTerminalSubsession>(server.id, server.profile,
+                                                            [](const ckm::proto::Message&) {});
+    RemoteTerminalSubsession& remote = *owned;
+    ckv::term::TerminalSubsession& adopted = app.adopt_terminal_subsession(std::move(owned));
+
+    const auto lines_mentioning = [&trace](std::string_view needle) {
+        return std::count_if(trace.entries().begin(), trace.entries().end(),
+                             [needle](const ckv::DiagnosticsEntry& entry) {
+                                 return entry.text.find(needle) != std::string::npos;
+                             });
+    };
+    CK_CHECK(lines_mentioning("server's emulator decodes") == 1);
+    remote.resize(ckv::Size{50, 10}, ckv::PixelSize{9, 18});
+    CK_CHECK(lines_mentioning("resize to 50x10") == 1);
+
+    // The partner: released, the session has had its trace withdrawn, so a
+    // resize after that writes nothing — the line above was the trace being
+    // honoured, not the session writing somewhere of its own.
+    std::unique_ptr<ckv::term::TerminalSubsession> released = app.release_terminal_subsession(adopted);
+    CK_CHECK(released != nullptr);
+    remote.resize(ckv::Size{60, 12}, ckv::PixelSize{9, 18});
+    CK_CHECK(lines_mentioning("resize to 60x12") == 0);
 }

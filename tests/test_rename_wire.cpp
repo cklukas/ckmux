@@ -146,7 +146,7 @@ CK_TEST(a_name_a_reader_gives_a_terminal_outlives_the_client_that_gave_it) {
     Client watcher;
     CK_CHECK(watcher.connect(socket));
     watcher.greet();
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
     ckm::client::RemoteTerminalSubsession* mirror = watcher.session.terminal(id);
     CK_CHECK(mirror != nullptr);
@@ -194,7 +194,7 @@ CK_TEST(a_name_a_reader_gives_a_terminal_outlives_the_client_that_gave_it) {
     Client returning;
     CK_CHECK(returning.connect(socket));
     returning.greet();
-    returning.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    returning.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, returning, [&] { return returning.session.attached(); }));
     ckm::client::RemoteTerminalSubsession* again = returning.session.terminal(id);
     CK_CHECK(again != nullptr);
@@ -235,7 +235,7 @@ CK_TEST(naming_a_terminal_that_is_gone_is_answered_rather_than_ignored) {
         refused = error;
         told = true;
     };
-    watcher.session.attach(0, ckv::Size{80, 24}, ckv::Size{9, 18});
+    watcher.session.attach(0, ckv::Size{80, 24}, ckv::PixelSize{9, 18});
     CK_CHECK(run_until(server, clock, watcher, [&] { return watcher.session.attached(); }));
 
     // An id this server has never had. Ids are never recycled, so this can only

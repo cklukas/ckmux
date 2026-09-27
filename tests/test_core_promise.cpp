@@ -154,7 +154,7 @@ struct WireClient {
         ckm::proto::Hello hello;
         hello.build = "a test";
         (void)stream.send(ckm::proto::encode(hello));
-        session.attach(0, desktop, ckv::Size{9, 18});
+        session.attach(0, desktop, ckv::PixelSize{9, 18});
         return pump_until([this] { return session.attached(); });
     }
 
@@ -352,7 +352,7 @@ CK_TEST(a_rehydrated_frame_is_the_frame_the_server_holds) {
     // snapshot and the delta stream disagreed about anything at all, these
     // would differ.
     const ckv::core::TerminalSnapshot before = client.session.terminal(terminal)->snapshot();
-    client.session.attach(0, ckv::Size{40, 6}, ckv::Size{9, 18});
+    client.session.attach(0, ckv::Size{40, 6}, ckv::PixelSize{9, 18});
     CK_CHECK(client.pump_until([&] { return client.session.attachments() >= 2; }));
     const ckv::core::TerminalSnapshot after = client.session.terminal(terminal)->snapshot();
 
@@ -409,7 +409,7 @@ CK_TEST(a_reader_sees_their_shells_prompt_in_the_window_ckmux_drew) {
                         {"CKMUX_SOCKET", socket.string()}};
     spec.profile = ckv::term::embedded_xterm_sixel_profile();
     spec.profile.cells = ckv::Size{100, 30};
-    spec.profile.cell_pixels = ckv::Size{9, 18};
+    spec.profile.cell_pixels = ckv::PixelSize{9, 18};
     spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
     ckv::term::TerminalSubsessionOptions options;
     options.max_output_bytes = 1u << 20u;

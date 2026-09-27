@@ -114,7 +114,7 @@ public:
     // client resnapshots — the server answers an `Attach` with the terminals
     // whole, which is exactly what a client that has lost track needs and is why
     // healing needs no message of its own.
-    void attach(std::uint64_t session, ckv::Size desktop, ckv::Size cell_pixels);
+    void attach(std::uint64_t session, ckv::Size desktop, ckv::PixelSize cell_pixels);
     // What this client's `Attach`es ask of the readers already there — take
     // the session, join them, or join and only watch (WP-44, WP-49).
     //
@@ -146,7 +146,7 @@ public:
     // detached and came back (`ClientResize` had a server handler and no
     // sender at all). Idempotent: called from the client's loop on every pass,
     // it sends a message only when the size has actually moved.
-    void desktop_resized(ckv::Size desktop, ckv::Size cell_pixels);
+    void desktop_resized(ckv::Size desktop, ckv::PixelSize cell_pixels);
 
     // Where this client's windows now are: the whole arrangement of the session
     // it is attached to, in one `SetLayout` (WP-29).
@@ -337,7 +337,7 @@ private:
     std::size_t history_limit_ = 0;
     std::uint64_t session_ = 0;
     ckv::Size desktop_{0, 0};
-    ckv::Size cell_pixels_{0, 0};
+    ckv::PixelSize cell_pixels_{0, 0};
     // The arrangement this client last put on the wire, so that reporting the
     // same one again costs nothing (WP-29). Forgotten whenever what it was
     // describing stops being true: an `attach` to another session, a detach, a

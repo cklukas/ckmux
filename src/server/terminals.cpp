@@ -75,8 +75,8 @@ ckv::term::TerminalLaunchSpec launch_spec_for(const Settings& settings, const Te
     // The same division as `Terminal::cell_pixels()`: the spec carries the
     // text area, the profile wants one cell.
     if (spec.pixel_width > 0 && spec.pixel_height > 0)
-        launch.profile.cell_pixels = ckv::Size{spec.pixel_width / std::max(1, spec.columns),
-                                              spec.pixel_height / std::max(1, spec.rows)};
+        launch.profile.cell_pixels = ckv::PixelSize{spec.pixel_width / std::max(1, spec.columns),
+                                                   spec.pixel_height / std::max(1, spec.rows)};
     // What this terminal will tell its child it can do. The server owns the
     // emulator, so the server owns these — a client cannot be trusted with
     // them, and a program asks a terminal what it supports and then behaves as
@@ -155,7 +155,7 @@ void Terminal::resize(int columns, int rows, int pixel_width, int pixel_height) 
     session_->resize(ckv::Size{columns_, rows_}, cell_pixels());
 }
 
-ckv::Size Terminal::cell_pixels() const noexcept {
+ckv::PixelSize Terminal::cell_pixels() const noexcept {
     // A cell is the text area divided by the grid. ckVision multiplies back up
     // for TIOCSWINSZ and for the child's XTWINOPS answers, so handing it the
     // window size here would tell a child its terminal is columns-times too
@@ -164,8 +164,8 @@ ckv::Size Terminal::cell_pixels() const noexcept {
     // A division that floors to zero is a text area smaller than its own grid,
     // which is not a measurement; it reads as "unknown", which is what zero
     // means to ckVision too.
-    if (pixel_width_ <= 0 || pixel_height_ <= 0) return ckv::Size{0, 0};
-    return ckv::Size{pixel_width_ / std::max(1, columns_), pixel_height_ / std::max(1, rows_)};
+    if (pixel_width_ <= 0 || pixel_height_ <= 0) return ckv::PixelSize{0, 0};
+    return ckv::PixelSize{pixel_width_ / std::max(1, columns_), pixel_height_ / std::max(1, rows_)};
 }
 
 bool Terminal::live() const noexcept {

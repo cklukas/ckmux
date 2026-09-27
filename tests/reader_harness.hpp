@@ -261,7 +261,7 @@ struct Reader {
             spec.environment.push_back({entry.first, entry.second});
         spec.profile = host_profile;
         spec.profile.cells = cells;
-        spec.profile.cell_pixels = ckv::Size{9, 18};
+        spec.profile.cell_pixels = ckv::PixelSize{9, 18};
         spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
         ckv::term::TerminalSubsessionOptions options;
         options.max_output_bytes = 1u << 20u;

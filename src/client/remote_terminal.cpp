@@ -133,11 +133,14 @@ void RemoteTerminalSubsession::feed_output(std::string_view bytes) {
     ++stray_output_;
 }
 
-void RemoteTerminalSubsession::resize(ckv::Size cells, ckv::Size cell_pixels) {
+void RemoteTerminalSubsession::resize(ckv::Size cells, ckv::PixelSize cell_pixels) {
     // The profile's cell metric is the client's own measurement and is used for
     // drawing pictures at the right size, so it is kept locally even though the
     // grid size is the server's to confirm.
     if (cell_pixels.width > 0 && cell_pixels.height > 0) profile_.cell_pixels = cell_pixels;
+    if (trace_)
+        trace_.line("ckmux remote terminal " + std::to_string(terminal_) + ": resize to " +
+                    std::to_string(cells.width) + "x" + std::to_string(cells.height) + " cells asked of the server");
     if (!send_) return;
     // THIS terminal's size, not the client's desktop.
     //
@@ -152,6 +155,13 @@ void RemoteTerminalSubsession::resize(ckv::Size cells, ckv::Size cell_pixels) {
     resize.rect.width = static_cast<std::uint16_t>(std::max(0, cells.width));
     resize.rect.height = static_cast<std::uint16_t>(std::max(0, cells.height));
     send_(resize);
+}
+
+void RemoteTerminalSubsession::set_graphics_trace(ckv::GraphicsTrace trace) noexcept {
+    trace_ = trace;
+    if (trace_)
+        trace_.line("ckmux remote terminal " + std::to_string(terminal_) +
+                    ": a mirror; the server's emulator decodes this terminal's pictures and its trace is the server's");
 }
 
 void RemoteTerminalSubsession::send_input(std::string_view bytes) {
