@@ -20,7 +20,7 @@ terminal output — after weeks of clean builds here.
 | Resources | 4 CPUs, 6 GiB RAM, 40 GiB sparse disk |
 | Where it lives | `/Volumes/PRO-BLADE/lima/ckdev` (`~/.lima` is a symlink there; the download cache is `/Volumes/PRO-BLADE/lima-cache`). Nothing on the system disk but the 78 MB `lima` binary. |
 | Source | `/Volumes/PRO-BLADE/git` is mounted **at the same path** inside the VM, writable (virtiofs). Edit on the Mac, build on Linux. |
-| Builds | `~/build/<Type>-<compiler>/{ckvision,ckmux}` on the VM's own disk — never on the mount, which is slow for a build's many small writes. |
+| Builds | `~/build/<Type>-<compiler>-<head\|wt>/{ckvision,ckmux}` on the VM's own disk — never on the mount, which is slow for a build's many small writes. HEAD and `--worktree` never share a directory: a CMake cache remembers its source. |
 
 Definition: [ckdev.yaml](ckdev.yaml). Recreate from scratch with
 `limactl delete ckdev && limactl create --name ckdev tools/linux/ckdev.yaml && limactl start ckdev`.
@@ -38,7 +38,12 @@ tools/linux/linux-test.sh --only ckmux    # one repository
 
 Each run prints `ok`/`FAIL` per step — configure, build, ctest, ckVision then
 ckmux — with the first diagnostics and a by-warning tally under every failure,
-and leaves the full logs in the build directory it names. The exit status is
+and leaves the full logs in the build directory it names. A step whose
+predecessor failed is reported `skip`, not run: a build after a failed
+configure compiles whatever source the old cache named, and a ctest after a
+failed build answers from stale binaries. Under each header, `from` is the
+source directory read back out of the CMake cache, so the SHA the header
+names is checked against what was actually compiled. The exit status is
 the number of failing steps. The default is **HEAD**, a fresh clone of each
 repository's committed state — the same bytes CI and a stranger's `git clone`
 would get — because a gate should judge what is landed, not what is on the
@@ -63,9 +68,9 @@ limactl shell ckdev                       # a Linux shell, in this terminal
 ```
 
 ```bash
-~/build/Release-clang/ckmux/ckmux         # after a --clang run
-~/build/Release-clang/ckvision/examples/ckvision_gallery
-~/build/Release-clang/ckvision/examples/ckvision_terminal
+~/build/Release-clang-head/ckmux/ckmux    # after a --clang run
+~/build/Release-clang-head/ckvision/examples/ckvision_gallery
+~/build/Release-clang-head/ckvision/examples/ckvision_terminal
 ```
 
 `limactl shell ckdev -- <command>` runs one command and returns. The ckmux
