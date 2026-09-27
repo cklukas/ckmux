@@ -1564,6 +1564,23 @@ The exact v0.1.4 tag run `33446774634` at public snapshot `f0ea0f6` passed
 all four build/test/package lanes and the publication job. Its eleven release
 assets were downloaded afterwards; the RPM, both TGZs and both DEBs matched
 their published SHA-256 files, and the tested formula pins ckVision v0.1.5.
+v0.1.6 (2026-09-27) pairs ckmux with ckVision v0.1.7 (public `ece9142`): the
+D-087 modality names, `PixelSize`, span help bodies and injected traces
+(`6c0355a`), the pin (`a611b2b`), and three test races found on the way
+(`5b8a3c8`, `53875dd`, `aaaa766`). It drops Ubuntu 20.04 (`ee98607`, owner
+decision): ckVision 0.1.7 requires floating-point `<charconv>`, which focal's
+GCC 10 lacks, so v0.1.5 is the last release with an `ubuntu20.04` DEB.
+Public snapshot `352a690`; CI `36319685766` green on all four lanes (attempt 2;
+attempt 1's macOS lane missed test_diff_engine's per-tick ratio by 6% on the
+shared runner). Release run `36321691937` succeeded on attempt 2 (attempt 1's
+macOS package job hit the flood row's Esc race, fixed afterwards in `aaaa766`)
+and published nine assets. Downloaded afterwards, the RPM, DEB and both TGZs
+matched their SHA-256 files, the formula's two source hashes matched the
+v0.1.6 and ckVision v0.1.7 archives, and the macOS binary reports 0.1.6. The
+Homebrew tap had still served 0.1.2: the release workflow tests the formula
+in a throwaway tap and never updates `cklukas/homebrew-ckmux`, so it was
+updated by hand (`51ec9b6`) and has to be after every release until that
+step is automated.
 WP-24 subsequently
 extended the install set with `ckmux(1)` and the browser guide without changing
 the executable's runtime dependencies.
