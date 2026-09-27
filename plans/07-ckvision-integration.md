@@ -341,6 +341,12 @@ audit:
 | L-66 | **`BigClockView`** (`widgets/big_clock.hpp`): the time, the date, or both (`BigClockContent`) in five-row block glyphs — the seven-segment shapes, drawn as cells of the theme's lit colour — centred in whatever bounds it is given, falling back to the same lines as plain text when the glyphs do not fit, and re-deciding on every draw. It ticks once a second off an injected **`DateTimeValue`** provider (new beside `DateValue`/`TimeValue`: one reading, so a face cannot pair one day's date with the next day's time) and repaints only when what it shows changed. A face stays up when it loses the focus; a key fires `on_dismiss` unless the application binds it to a command (that key is left to the keymap), and so does a completed click that began on an already-focused face — the click that returns to it only focuses it. The face never removes itself. `big_glyph_rows()`/`big_glyph_width()` expose the glyph masks. | The owner asked for tmux's `^B t` (2026-09-23). A big-digit face is a widget any ckVision application with a desktop could want, and ckVision had no block glyphs at all, so it was built there rather than drawn by hand in ckmux. ckmux's `LocalMoment` is now an alias of `DateTimeValue`. |
 | L-67 | **`Window::set_content_cover()`**: a view laid over a window's content for a while, kept by the window exactly on `content_rect()` and above the content through every move, resize and margin change, stacked with the window and destroyed with it; `set_content()` re-raises it over new content. | The first big clock was a desktop popup placed at `window->content_rect()` — which is window-local — and drew at the desktop's corner (reported from the running client, 2026-09-23). Copy mode had been placed the same way since WP-17. A popup would also have floated over windows in front of its own and needed a poll to follow a resize; nothing in ckVision let an application put something over one window's content, so it was added there. Both ckmux surfaces now use it, and their tests measure the surface's screen position against the window's interior with the window away from the origin. |
 
+### Landed (a drag past the edge no longer moves every click to the corner)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-68 | **A report beyond the cell grid proves SGR-pixel mode only while the host can be sending pixels** (ckVision D-116, `0991f3c`, released in 0.1.8): `InputDecoder::set_pixel_reports_possible`, which `PosixTerminal` keeps true only while a probe window has mode 1016 enabled, once the mode is proved, and for 250 ms after it resets an unproved mode. | Owner report, 2026-09-27, ckmux 0.1.6 on ckVision 0.1.7 in Terminal.app: after resizing windows, every click landed top-left and opened the menu. Resizing a window by its edge carried the pointer past the host's edge; the host reported that as a cell beyond the grid, ckVision took it as proof of pixel coordinates for good, and divided every later click by the cell size. Reproduced end to end by `test_menu_commands` `a_drag_past_the_hosts_edge_leaves_later_clicks_where_they_are_made`, which fails against ckVision v0.1.7 and passes against 0.1.8. |
+
 ### Upstream status
 
 This table keeps the landed seams beside the genuinely open/deferred ones so
@@ -388,7 +394,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.7 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.8 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins
