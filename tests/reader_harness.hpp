@@ -319,6 +319,23 @@ struct Reader {
         }
     }
 
+    // Whether `needle` leaves the screen within the budget: true as soon as a
+    // drained screen no longer holds it. The partner of `sees` for "this key
+    // took it away", which `!sees(...)` cannot ask: that fails the moment the
+    // text is still showing, so it races the frame that removes it. Under a
+    // flooding child on a slow host that frame can take well over a second
+    // (release run 36321691937, macOS runner, 2026-09-27).
+    bool stops_seeing(std::string_view needle, int budget_ms = 6000) {
+        const clock_type::time_point deadline =
+            clock_type::now() + std::chrono::milliseconds(budget_ms);
+        for (;;) {
+            (void)client->drain(64 * 1024);
+            if (screen().find(needle) == std::string::npos) return true;
+            if (clock_type::now() >= deadline) return false;
+            ::usleep(20000);
+        }
+    }
+
     bool gone(int budget_ms = 5000) {
         const clock_type::time_point deadline =
             clock_type::now() + std::chrono::milliseconds(budget_ms);
