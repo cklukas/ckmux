@@ -35,6 +35,7 @@
 
 #include "cvision/core/golden.hpp"
 #include "cvision/testing/cktest.hpp"
+#include "scratch_directory.hpp"
 
 namespace {
 
@@ -400,11 +401,12 @@ CK_TEST(a_reader_sees_their_shells_prompt_in_the_window_ckmux_drew) {
     // The client hosted in a PTY, its screen decoded from what it drew — the
     // end-to-end pattern of the testing plan.
     ckv::term::TerminalLaunchSpec spec = ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
-    spec.working_directory = "/tmp";
+    ckmtest::ScratchDirectory home("core-promise-home");
+    spec.working_directory = home.path().string();
     spec.environment = {{"TERM", "xterm-256color"},
                         {"PATH", "/usr/bin:/bin"},
                         {"SHELL", "/bin/sh"},
-                        {"HOME", "/tmp"},
+                        {"HOME", home.path().string()},
                         {"LC_ALL", "C"},
                         {"CKMUX_SOCKET", socket.string()}};
     spec.profile = ckv::term::embedded_xterm_sixel_profile();

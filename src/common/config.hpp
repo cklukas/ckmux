@@ -28,6 +28,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include "cvision/core/filesystem.hpp"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -294,10 +295,10 @@ LoadedSettings load_settings(const std::filesystem::path& path);
 // deleted: their duplicate line is theirs, and load_settings says out loud
 // that the key is set twice.
 //
-// The write is atomic and durable: a scratch file (named per process, so two
-// clients saving at once cannot share one), flushed to disk, renamed over the
-// target, and the directory entry flushed after it. "Saved" therefore survives
-// a power loss, which is the only kind of promise a settings dialog can make.
+// Native atomic publication and flushing are supplied by ckVision's filesystem
+// backend. The write must still match the revision that supplied the original
+// lines, or create only when the original was absent. A concurrent edit/creation
+// is refused rather than overwritten. No application-owned scratch/rename code.
 //
 // Returns false if the file could not be written — a full disk, a read-only
 // home — so a dialog can say so rather than silently discarding the change.
@@ -306,6 +307,11 @@ LoadedSettings load_settings(const std::filesystem::path& path);
 // would replace the reader's whole configuration with this one key.
 bool save_setting(const std::filesystem::path& path, const std::string& section, const std::string& key,
                   const std::string& value);
+
+// Explicit injected service for deterministic configuration workflows. The
+// native overload above constructs the platform adapter at the host boundary.
+bool save_setting(ckv::FileSystem& filesystem, const std::filesystem::path& path,
+                  const std::string& section, const std::string& key, const std::string& value);
 
 // The spelling save_setting expects for a bool, and the one load_settings
 // accepts: the configuration spec says `true`/`false` and nothing else, so that a config

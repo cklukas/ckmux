@@ -17,6 +17,7 @@ set(CKMUX_TEST_SOURCES
     test_client_pacing.cpp
     test_client_smoke.cpp
     test_config.cpp
+    test_config_filesystem.cpp
     test_copy_mode.cpp
     test_core_promise.cpp
     test_diff_engine.cpp
@@ -37,6 +38,7 @@ set(CKMUX_TEST_SOURCES
     test_process_stats.cpp
     test_paths.cpp
     test_proto.cpp
+    test_scratch_directory.cpp
     test_reader_modes.cpp
     test_reader_modes_client.cpp
     test_reference_apps.cpp
@@ -57,6 +59,18 @@ set(CKMUX_TEST_SOURCES
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
+if(DEFINED ENV{TMPDIR} AND IS_ABSOLUTE "$ENV{TMPDIR}")
+    set(CKMUX_TEST_TEMP_DEFAULT "$ENV{TMPDIR}")
+else()
+    set(CKMUX_TEST_TEMP_DEFAULT "${CMAKE_CURRENT_BINARY_DIR}/scratch")
+endif()
+set(CKMUX_TEST_TEMP_ROOT "${CKMUX_TEST_TEMP_DEFAULT}" CACHE PATH
+    "Explicit root for test scratch files and child working directories")
+if(NOT IS_ABSOLUTE "${CKMUX_TEST_TEMP_ROOT}")
+    message(FATAL_ERROR "CKMUX_TEST_TEMP_ROOT must be absolute")
+endif()
+file(MAKE_DIRECTORY "${CKMUX_TEST_TEMP_ROOT}")
+target_compile_definitions(ckmux_tests PRIVATE CKMUX_TEST_TEMP_ROOT="${CKMUX_TEST_TEMP_ROOT}")
 # The lifecycle tests run the real binary — a server that is not a real process
 # is not a server (WP-2). The path is a definition rather than a search, so a
 # test never finds a stale one from another build directory.
@@ -219,5 +233,6 @@ foreach(source ${CKMUX_TEST_SOURCES})
         set(CKMUX_SUITE_TIMEOUT ${CKMUX_TIMEOUT_${suite}})
     endif()
     set_tests_properties(suite_${suite} PROPERTIES LABELS "${CKMUX_SUITE_LABELS}"
-                         TIMEOUT ${CKMUX_SUITE_TIMEOUT})
+                         TIMEOUT ${CKMUX_SUITE_TIMEOUT}
+                         ENVIRONMENT "TMPDIR=${CKMUX_TEST_TEMP_ROOT}")
 endforeach()

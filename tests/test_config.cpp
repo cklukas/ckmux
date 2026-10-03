@@ -27,6 +27,7 @@ using ckm::Settings;
 
 namespace {
 
+
 // Its own directory per test, removed when the test leaves however it leaves,
 // so nothing here depends on — or disturbs — the machine's real configuration.
 //
@@ -393,25 +394,22 @@ CK_TEST(the_picture_limit_round_trips_through_the_file_the_dialog_writes) {
 }
 
 CK_TEST(saving_leaves_no_temporary_file_behind) {
-    // Whatever the scratch file is called — the name carries a process id, so
-    // asking for one spelling would pass by not looking.
+    // The persistent library lock is synchronization state, not a disposable
+    // temporary. Every other sibling must be the actual configuration file.
     ScratchConfig scratch("atomic");
     CK_CHECK(save_setting(scratch.path(), "general", "login-shell", bool_setting(true)));
     std::size_t files = 0;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(scratch.directory())) {
         ++files;
-        CK_CHECK(entry.path() == scratch.path());
+        CK_CHECK(entry.path() == scratch.path() || entry.path().filename() == ".ckvision-write.lock");
     }
-    CK_CHECK(files == 1U);
+    CK_CHECK(files == 2U);
 }
 
-CK_TEST(two_savers_at_once_do_not_share_one_scratch_file) {
-    // The name of the file save_setting writes beside the target carries this
-    // process's id. Two ckmux clients saving at the same moment would
-    // otherwise write one scratch file between them, and the loser of that
-    // race would rename half of the winner's bytes over the reader's
-    // configuration. The id is what this asserts; the race is what it is for.
+CK_TEST(a_save_does_not_touch_another_processes_unrelated_scratch_file) {
+    // This case proves preservation of an unrelated sibling, not simultaneous
+    // execution. Competing revision behavior has its own injected race cases.
     ScratchConfig scratch("scratch-name");
     scratch.write("[general]\nlogin-shell = true\n");
     const std::string mine = std::to_string(static_cast<long long>(::getpid()));

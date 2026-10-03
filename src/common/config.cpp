@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: MIT
 #include "common/config.hpp"
 
-#include <fcntl.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include "cvision/term/windows_filesystem.hpp"
+#else
+#include "cvision/term/posix_filesystem.hpp"
+#endif
 
 #include <array>
 #include <cerrno>
@@ -16,6 +19,11 @@
 
 namespace ckm {
 namespace {
+
+std::string path_utf8(const std::filesystem::path& path) {
+    const auto bytes = path.u8string();
+    return {bytes.begin(), bytes.end()};
+}
 
 std::string_view trim(std::string_view text) {
     const auto is_space = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
@@ -190,40 +198,18 @@ ReadOutcome read_lines(const std::filesystem::path& path, std::vector<std::strin
     return ReadOutcome::Read;
 }
 
-// Force what has been written to `path` out to the disk itself. Opened
-// read-only purely for the descriptor: fsync is about the file, not about the
-// access mode of the handle it is asked through.
-bool flush_file(const std::filesystem::path& path) {
-    const int descriptor = ::open(path.c_str(), O_RDONLY);
-    if (descriptor < 0) return false;
-    const int flushed = ::fsync(descriptor);
-    ::close(descriptor);
-    return flushed == 0;
-}
-
-// The same for the directory entry, which is a different thing on disk from
-// the file it names. Best effort by contract: its only caller has already
-// renamed the new file into place, so there is no failure left to report and
-// nothing to undo.
-void flush_directory(const std::filesystem::path& directory) {
-    const int descriptor = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
-    if (descriptor < 0) return;
-    (void)::fsync(descriptor);
-    ::close(descriptor);
-}
-
 // Warnings name the file in full. The basename alone is ambiguous the moment
 // a reader has a `$CKMUX_CONFIG` for testing beside their real one — and it is
 // not a path they can paste into an editor (m-conf).
 std::string warning(const std::filesystem::path& path, std::size_t line_number, const std::string& text) {
     std::ostringstream out;
-    out << path.string() << ':' << line_number << ": " << text;
+    out << path_utf8(path) << ':' << line_number << ": " << text;
     return out.str();
 }
 
 // The same, for something wrong with the file rather than with a line in it.
 std::string file_warning(const std::filesystem::path& path, const std::string& text) {
-    return path.string() + ": " + text;
+    return path_utf8(path) + ": " + text;
 }
 
 // Every section name the file may contain, in the order the configuration spec's example
@@ -778,14 +764,30 @@ LoadedSettings load_settings(const std::filesystem::path& path) {
 
 bool save_setting(const std::filesystem::path& path, const std::string& section, const std::string& key,
                   const std::string& value) {
+#ifdef _WIN32
+    ckv::term::WindowsFileSystem filesystem;
+#else
+    ckv::term::PosixFileSystem filesystem;
+#endif
+    return save_setting(filesystem, path, section, key, value);
+}
+
+bool save_setting(ckv::FileSystem& filesystem, const std::filesystem::path& path,
+                  const std::string& section, const std::string& key, const std::string& value) {
     if (path.empty()) return false;
+    const std::string filename = path_utf8(path);
+    const auto original = filesystem.read_file(filename);
     std::vector<std::string> lines;
-    std::string reason;
     // A file that is there and unreadable is not an empty file. Reading it as
     // one would rewrite the reader's whole configuration as the single key
     // this call was asked to store — the worst thing this function could do,
     // and it would do it silently.
-    if (read_lines(path, lines, reason) == ReadOutcome::Unreadable) return false;
+    if (!original && filesystem.exists(filename)) return false;
+    if (original) {
+        std::istringstream input(original->contents);
+        std::string line;
+        while (std::getline(input, line)) lines.push_back(std::move(line));
+    }
 
     // The written line, and the place for it if the file has none yet.
     //
@@ -841,52 +843,17 @@ bool save_setting(const std::filesystem::path& path, const std::string& section,
         }
     }
 
-    std::error_code error;
     const std::filesystem::path directory =
         path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
-    if (path.has_parent_path()) {
-        std::filesystem::create_directories(directory, error);
-        if (error) return false;
-    }
-    // Written beside the target and renamed over it, so an interrupted save
-    // leaves the reader's existing configuration intact rather than a half
-    // file where their settings used to be. The scratch name carries this
-    // process's id: two ckmux clients saving at once would otherwise share one
-    // scratch file, and the loser of that race would rename half of the
-    // winner's bytes over the reader's configuration.
-    const std::filesystem::path temporary =
-        path.string() + ".tmp." + std::to_string(static_cast<long long>(::getpid()));
-    {
-        std::ofstream out(temporary, std::ios::trunc);
-        if (!out) return false;
-        for (const std::string& line : lines) out << line << '\n';
-        out.flush();
-        if (!out) {
-            std::filesystem::remove(temporary, error);
-            return false;
-        }
-    }
-    // A rename is atomic but not durable. After a power loss the directory can
-    // still name the old file, or name the new one with none of its bytes
-    // behind it — and a settings dialog that reports success and loses the
-    // setting is the defect this whole function exists to avoid. So both
-    // halves are flushed: the contents before the rename, where a failure can
-    // still be reported and the reader's file is still intact, and the
-    // directory entry after it, where nothing is left to undo and the flush is
-    // therefore best effort. (fsync, not F_FULLFSYNC: this is a text file a
-    // person edits, not a database, and the portable barrier is the one whose
-    // cost is proportionate.)
-    if (!flush_file(temporary)) {
-        std::filesystem::remove(temporary, error);
-        return false;
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-        std::filesystem::remove(temporary, error);
-        return false;
-    }
-    flush_directory(directory);
-    return true;
+    if (!filesystem.create_directories(path_utf8(directory))) return false;
+    std::string contents;
+    for (const auto& line : lines) { contents += line; contents += '\n'; }
+    // The revision comes from the very read that supplied these lines. Do not
+    // overwrite a newer edit or a file created after our missing-file query.
+    // Native publication/permissions/flushing belong to ckVision, not here.
+    const auto expectation = original ? ckv::FileWriteExpectation::matching(original->fingerprint)
+                                      : ckv::FileWriteExpectation::must_not_exist();
+    return filesystem.write_file_atomic(filename, contents, expectation).status == ckv::FileWriteStatus::Ok;
 }
 
 }  // namespace ckm
