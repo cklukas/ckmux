@@ -100,7 +100,7 @@ ckv::term::TerminalLaunchSpec launch_spec_for(const Settings& settings, const Te
     return launch;
 }
 
-Terminal::Terminal(TerminalId id, std::unique_ptr<ckv::term::PosixTerminalSubsession> session,
+Terminal::Terminal(TerminalId id, std::unique_ptr<ckv::term::TerminalSubsession> session,
                    const TerminalSpec& spec)
     : id_(id),
       session_(std::move(session)),
@@ -119,7 +119,7 @@ TerminalSpec Terminal::respawn_spec() const {
     return again;
 }
 
-void Terminal::relaunch(std::unique_ptr<ckv::term::PosixTerminalSubsession> session) noexcept {
+void Terminal::relaunch(std::unique_ptr<ckv::term::TerminalSubsession> session) noexcept {
     session_ = std::move(session);
     // Everything the exited child left behind. `exit_announced_` especially:
     // left true, the new child's own exit would never be announced, and the
@@ -186,7 +186,7 @@ void Terminal::observe_exit() {
     // "exited 0" are different windows to a reader — one holds with a banner
     // and one closes (the session model on-exit) — so a server that could not tell them
     // apart would have to guess, and would guess wrong half the time.
-    exit_status_ = session_->exit_code();
+    exit_status_ = session_->status().exit_code;
 }
 
 void Terminal::mark_bell() noexcept {
@@ -360,14 +360,14 @@ bool Terminals::respawn(TerminalId id) {
     // resized the window before pressing Enter meant the new child to fill it,
     // and the original spec remembers the size the old one started at.
     const TerminalSpec again = terminal->respawn_spec();
-    terminal->relaunch(ckv::term::PosixTerminalSubsession::launch(
+    terminal->relaunch(ckv::term::launch_terminal_subsession(
         launch_spec_for(settings_, again), subsession_options_for(settings_)));
     return true;
 }
 
 Terminal& Terminals::open(const TerminalSpec& spec) {
-    std::unique_ptr<ckv::term::PosixTerminalSubsession> session =
-        ckv::term::PosixTerminalSubsession::launch(launch_spec_for(settings_, spec),
+    std::unique_ptr<ckv::term::TerminalSubsession> session =
+        ckv::term::launch_terminal_subsession(launch_spec_for(settings_, spec),
                                                    subsession_options_for(settings_));
     // ckVision returns a session in Failed state rather than nothing when a
     // launch fails, which is what lets a client show the failure in the window

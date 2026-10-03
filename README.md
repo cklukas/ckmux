@@ -175,8 +175,11 @@ macOS and Linux are both gating platforms. The v0.1.7 release matrix runs all
 54 suites in its native package jobs before the release can publish. The local
 Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
-Windows is a design target — `src/platform` is written against a seam that
-ConPTY can fill — and no more.
+Native Windows compatibility is now in active development. Portable child
+ownership and lifecycle support are implemented in ckVision rather than
+worked around here. Named-pipe IPC, native readiness, host services, full
+interactive acceptance and Windows release packages remain to be completed;
+ckmux cannot yet be built or installed as a native Windows application.
 
 ## Provenance
 

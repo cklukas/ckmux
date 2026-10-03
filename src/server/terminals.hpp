@@ -3,9 +3,8 @@
 //
 // The terminals a ckmux server owns (the architecture spec, WP-3).
 //
-// One `PosixTerminalSubsession` per terminal — ckVision owns the PTY, the
-// `forkpty`+`execve`, the non-blocking master, `TIOCSWINSZ` with its pixel
-// fields, and the SIGHUP→SIGTERM→SIGKILL close policy on the process *group*.
+// One portable `TerminalSubsession` per terminal — ckVision owns POSIX PTYs
+// or Windows ConPTY, child launch, readiness and process-tree teardown.
 // What this file owns is everything a multiplexer adds around that: identity
 // that is never recycled, the collection, draining under a byte budget so one
 // noisy child cannot starve the others, and the guarantee that a child never
@@ -28,7 +27,7 @@
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
-#include "cvision/term/posix_terminal_subsession.hpp"
+#include "cvision/term/terminal_subsession.hpp"
 
 namespace ckm::server {
 
@@ -126,7 +125,7 @@ struct EffectivePrinterPolicy {
 // have to know which of its several read paths is the cheap one.
 class Terminal {
 public:
-    Terminal(TerminalId id, std::unique_ptr<ckv::term::PosixTerminalSubsession> session,
+    Terminal(TerminalId id, std::unique_ptr<ckv::term::TerminalSubsession> session,
              const TerminalSpec& spec);
 
     TerminalId id() const noexcept { return id_; }
@@ -221,7 +220,7 @@ public:
     // the client keeps the window it already has, and WP-3's "an id is never
     // reused" is not bent by it — this is the same terminal running again,
     // not a second terminal wearing the first one's number.
-    void relaunch(std::unique_ptr<ckv::term::PosixTerminalSubsession> session) noexcept;
+    void relaunch(std::unique_ptr<ckv::term::TerminalSubsession> session) noexcept;
 
     // What a reader who is not looking at this terminal has missed: a bell it
     // rang, and output it produced (the protocol spec's `TermMeta` flags).
@@ -410,7 +409,14 @@ public:
     std::span<const ckv::term::WaitHandle> wait_handles() const noexcept {
         return session_->wait_handles();
     }
-    int file_descriptor() const noexcept { return session_->file_descriptor(); }
+    // POSIX-only observation used by PTY acceptance. A Windows HANDLE is
+    // never narrowed into an fd; native callers use wait_handles().
+    int file_descriptor() const noexcept {
+        for (const auto handle : session_->wait_handles())
+            if (handle.kind == ckv::term::WaitHandleKind::PosixFileDescriptor)
+                return static_cast<int>(handle.value);
+        return -1;
+    }
 
     // Asks the child to end and returns at once — SIGHUP then SIGTERM, sent by
     // ckVision, which is the only thing here that knows the process group. A
@@ -430,7 +436,7 @@ public:
 
 private:
     TerminalId id_;
-    std::unique_ptr<ckv::term::PosixTerminalSubsession> session_;
+    std::unique_ptr<ckv::term::TerminalSubsession> session_;
     int columns_ = 0;
     int rows_ = 0;
     int pixel_width_ = 0;

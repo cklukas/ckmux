@@ -12,21 +12,20 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.8)
+set(CKMUX_CKVISION_VERSION 0.1.9)
 
-# Said once, plainly: ckmux builds on POSIX only. The server forks, opens
-# PTYs, polls file descriptors and speaks over a unix-domain socket, and
-# src/platform is written against those calls; the architecture spec puts Windows/ConPTY
-# out of scope and names the seams that would have to grow first. Guarding
+# Until the native port is complete, ckmux builds on POSIX only. The server
+# forks, polls file descriptors and speaks over a unix-domain socket, and
+# src/platform is written against those calls. The active Windows plan names
+# the backends still to implement. Guarding
 # the executable with if(UNIX) while the libraries built unconditionally
 # advertised a portability that does not exist — the libraries are the part
 # that cannot compile elsewhere. One honest check, here, instead.
 if(NOT UNIX)
     message(FATAL_ERROR
-        "ckmux builds on POSIX systems only (macOS, Linux). Windows/ConPTY is "
-        "out of scope: the server forks, opens PTYs, polls file descriptors "
-        "and speaks over a unix-domain socket, and src/platform is the seam "
-        "that would have to grow first.")
+        "ckmux currently builds on POSIX systems only (macOS, Linux). The "
+        "native Windows port is in progress: secure named-pipe IPC, native "
+        "readiness and host services are not yet implemented.")
 endif()
 
 # ckVision comes either from a sibling source checkout or from an installed
@@ -139,7 +138,7 @@ else()
         GIT_TAG        v${CKMUX_CKVISION_VERSION}
         GIT_SHALLOW    TRUE
         EXCLUDE_FROM_ALL
-        FIND_PACKAGE_ARGS ${CKMUX_CKVISION_VERSION} CONFIG)
+        FIND_PACKAGE_ARGS ${CKMUX_CKVISION_VERSION} EXACT CONFIG)
     FetchContent_MakeAvailable(ckvision)
 endif()
 
@@ -315,6 +314,13 @@ option(CKMUX_BUILD_TESTING "Build ckmux tests" ${PROJECT_IS_TOP_LEVEL})
 if(CKMUX_BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
+
+    add_test(NAME ckvision_release_pin
+        COMMAND ${CMAKE_COMMAND}
+            -DCKMUX_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DCKMUX_PIN_SCRATCH=${CMAKE_BINARY_DIR}/test-artifacts/ckvision-release-pin
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ckvision_release_pin.cmake)
+    set_tests_properties(ckvision_release_pin PROPERTIES LABELS "script;dependency" TIMEOUT 30)
 
     # The architecture rule fails like a test because it is one. REQUIRED, so
     # the gate can never vanish silently on a host without an interpreter —
