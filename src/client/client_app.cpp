@@ -45,6 +45,35 @@ constexpr const char* kVersion = CKMUX_VERSION_STRING;
 // fits the 80-column terminal the interface spec sizes every dialog against.
 constexpr int kDialogTitleColumns = 56;
 
+std::string host_clipboard_refusal(ckv::ClipboardWriteResult result) {
+    std::string detail;
+    switch (result.status) {
+        case ckv::ClipboardWriteStatus::Unsupported: detail = "not supported by this host"; break;
+        case ckv::ClipboardWriteStatus::InvalidText: detail = "text rejected"; break;
+        case ckv::ClipboardWriteStatus::Unavailable: detail = "currently unavailable"; break;
+        case ckv::ClipboardWriteStatus::Error: detail = "export failed"; break;
+        case ckv::ClipboardWriteStatus::Ok:
+        case ckv::ClipboardWriteStatus::Submitted: return "host clipboard";
+    }
+    if (result.native_error != 0) detail += "; native error " + std::to_string(result.native_error);
+    if (result.external_state_may_have_changed) detail += "; the external clipboard may have changed";
+    return "host clipboard (" + detail + ")";
+}
+
+// A configured copy collects native and helper refusals into one warning.
+// A nested copy gets its own collection and restores the outer one afterwards.
+class ClipboardRefusalScope {
+public:
+    ClipboardRefusalScope(std::vector<std::string>*& slot, std::vector<std::string>& refused)
+        : slot_(slot), previous_(std::exchange(slot, &refused)) {}
+    ~ClipboardRefusalScope() { slot_ = previous_; }
+    ClipboardRefusalScope(const ClipboardRefusalScope&) = delete;
+    ClipboardRefusalScope& operator=(const ClipboardRefusalScope&) = delete;
+private:
+    std::vector<std::string>*& slot_;
+    std::vector<std::string>* previous_;
+};
+
 // ckmux's own printer mode, in the wire's vocabulary. The two enums are
 // separate on purpose (proto::Rect's reasoning), so this is a stated mapping
 // rather than a cast that would follow a renumbering silently.
@@ -213,6 +242,16 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     }
     register_commands();
     build_chrome();
+    app_.set_clipboard_export_handler([this, alive = std::weak_ptr<void>(alive_)](auto result) {
+        if (alive.expired()) return;
+        // Standard widget copies and terminal selections use the same upstream
+        // bridge. Preserve them for terminal paste even if the host refuses.
+        internal_clipboard_ = app_.clipboard_text();
+        if (result.accepted()) return;
+        const std::string refused = host_clipboard_refusal(result);
+        if (clipboard_refusals_ != nullptr) clipboard_refusals_->push_back(refused);
+        else report_clipboard_problem({refused}, /*include_helper_diagnostic=*/false);
+    });
     populate_help();
     app_.set_help_provider([this](const std::string& key) {
         if (desktop_ == nullptr) return;
@@ -3617,24 +3656,33 @@ void ClientApp::copy_to_targets(std::string text) {
     // something else entirely — so the ones that refused are collected and
     // said once, at the moment they refused.
     std::vector<std::string> refused;
-    for (const ClipboardTarget& target : options_.settings.clipboard) {
-        switch (target.kind) {
-            case ClipboardTarget::Kind::Osc52:
-                // The outer terminal, through ckVision's clipboard writer —
-                // which emits OSC 52 and therefore works over a connection.
-                app_.set_clipboard_text(text);
-                break;
-            case ClipboardTarget::Kind::Pbcopy:
-                if (options_.clipboard_writer && !options_.clipboard_writer("pbcopy", text))
-                    refused.emplace_back("pbcopy");
-                break;
-            case ClipboardTarget::Kind::Exec:
-                if (options_.clipboard_writer && !options_.clipboard_writer(target.command, text))
-                    refused.push_back(target.command);
-                break;
+    bool helper_refused = false;
+    {
+        ClipboardRefusalScope collection(clipboard_refusals_, refused);
+        for (const ClipboardTarget& target : options_.settings.clipboard) {
+            switch (target.kind) {
+                case ClipboardTarget::Kind::Osc52:
+                    // The outer terminal, through ckVision's clipboard writer —
+                    // which uses native publication on Windows and OSC 52 on a
+                    // remote POSIX terminal. The observer collects its outcome.
+                    app_.set_clipboard_text(text);
+                    break;
+                case ClipboardTarget::Kind::Pbcopy:
+                    if (!options_.clipboard_writer || !options_.clipboard_writer("pbcopy", text)) {
+                        refused.emplace_back("pbcopy");
+                        helper_refused = true;
+                    }
+                    break;
+                case ClipboardTarget::Kind::Exec:
+                    if (!options_.clipboard_writer || !options_.clipboard_writer(target.command, text)) {
+                        refused.push_back(target.command);
+                        helper_refused = true;
+                    }
+                    break;
+            }
         }
     }
-    if (!refused.empty()) report_clipboard_problem(refused);
+    if (!refused.empty()) report_clipboard_problem(refused, helper_refused);
 }
 
 void ClientApp::show_server_error(std::uint16_t code, const std::string& context,
@@ -3653,20 +3701,20 @@ void ClientApp::show_server_error(std::uint16_t code, const std::string& context
                                 w::MessageBoxButtons::Ok})));
 }
 
-void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused) {
+void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused, bool include_helper_diagnostic) {
     if (desktop_ == nullptr || refused.empty()) return;
     std::string body;
     if (refused.size() == 1) {
         body = "The copy did not reach " + refused.front() + ".";
     } else {
-        body = "The copy did not reach these clipboard helpers:";
+        body = "The copy did not reach these clipboard targets:";
         for (const std::string& one : refused) body += "\n  " + one;
     }
     // What the helper itself said, which is the difference between "a copy
     // failed" and "xclip is not installed". It is captured rather than
     // inherited precisely so it can be shown here instead of landing in the
     // middle of a drawn frame (platform/clipboard.hpp).
-    if (options_.clipboard_problem) {
+    if (include_helper_diagnostic && options_.clipboard_problem) {
         const std::string said = options_.clipboard_problem();
         if (!said.empty()) body += "\n\n" + said;
     }
