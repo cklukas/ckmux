@@ -168,6 +168,32 @@ actual compile actions were checked. The Mac gate already had that pin.
 Release build: 14:17:52Z–14:18:26Z; ASan/UBSan build:
 14:20:08Z–14:20:49Z. These incremental times are not clean-build baselines.
 
+### Published source gate
+
+Private `c677676` was filtered to public `db46e1d`. A clean detached
+checkout of that public commit configured in adopter mode with source
+preference OFF and no FetchContent source override. The actual cold GitHub
+fetch of `v0.1.9` resolved to `aea4754a`, asserted clean inside its checkout.
+macOS Release passed all 55/55 tests (parallel 2, 253.34 s), CTest exit 0,
+zero warnings. Both source checkouts remained clean. The result is published
+on ckmux GitHub main; existing release packages are unchanged.
+
+Build record: 14:33:36Z–14:35:44Z, configure/fetch 11.836 s, build 116.033 s,
+186 Ninja actions including 176 compiled translation units. This was longer
+than the recent 29.371 s private and 38.645 s source-override clean builds.
+The outlier was checked: identical Apple Clang executable, Release -O3 and
+strict flags, no compiler launcher/cache, complete fresh compile actions,
+exact fetched tag identity, clean source/asset trees and successful full
+tests. Aggregate compiler user CPU was 248 s over 116 s wall, versus 193 s
+over 29 s in the private build; effective parallelism differed. The specific
+host-load cause was not measured and is not attributed to another task.
+Elapsed time is not the freshness proof.
+
+Verified output:
+`/Volumes/PRO-BLADE/tmp/ckmux-windows-20261003-01/mac-ckmux-cold-fetch/ckmux`,
+SHA256 `10607a3f79fab0d1172c646495176a97c198ae55cd7cf5bbb689aaa6499d8d5d`,
+reports ckmux 0.1.7. This is the current verified build, not a Windows binary.
+
 ## Verification instrument repairs during WP-52
 
 The first transferred archive included AppleDouble metadata sidecars. Linux
