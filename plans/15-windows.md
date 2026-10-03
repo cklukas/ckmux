@@ -83,7 +83,7 @@ passed all seven jobs (Windows/macOS/Linux Release, ASan, UBSan, TSan and
 fuzz). ckmux's exact release pin is now 0.1.9. Its existing v0.1.7 binary
 packages still use 0.1.8; changing main is not relabeling those packages.
 
-The latest library's real filesystem adapter is also POSIX-only
+At the initial host-service audit, the library's real filesystem adapter was POSIX-only
 (`term::PosixFileSystem`). WP-53 must add a native Windows implementation of
 the existing injected `FileSystem` contract upstream, including Unicode
 paths, revision-consistent reads and conditional atomic publication. Do not
@@ -116,8 +116,9 @@ The new upstream commit is unreleased; the ckmux GitHub release pin remains
 
 The filtered upstream GitHub snapshot is now `b3b304b3` (private source
 `987e0b68`), verified before push with 213 non-PTY and four PTY macOS Release
-tests plus a strict documentation-site build. GitHub CI `37136544479` was
-running at this checkpoint; it is not an attributed hosted-green claim.
+tests plus a strict documentation-site build. GitHub CI `37136544479`
+completed with all seven jobs successful (macOS, Linux GCC and Windows
+Release, ASan, UBSan, TSan and fuzz).
 Publication preparation/verification ran 16:18:44–16:21:21 UTC, 157 s. Its
 temporary verification tree was removed by the publication tool. The wrapper
 record retained the task-owned work root but not the tool-generated exact leaf
@@ -129,6 +130,47 @@ Release and Linux configurations are retained for WP-53. No peer workspace was
 removed. Future ckmux Windows code consumes the current upstream source during
 co-development, then the newly released tag; this checkpoint does not move the
 existing v0.1.9 tag or relabel ckmux v0.1.7 packages.
+
+The temporary-fixture audit found hard-coded `/tmp` constructors in ckVision
+and HOME/cwd/reference-app paths here that bypassed exported TMPDIR. The
+previous functional counts did not establish workspace-policy compliance.
+Library fixtures now use an explicitly configured root with unique scoped
+children; the reference instrument uses that root for scripts and sockets.
+Application fixtures pin isolated homes/cwd and allocate scoped less/vim/fzf/
+Sixel/lazygit data, without deleting a fixed shared repository path. New
+scratch-helper regressions check allocation, selected-root placement,
+prefix rejection, cleanup and quoting. This is test infrastructure, not a
+workaround for the still-missing native library filesystem adapter.
+
+ckmux-windows Codex candidate gates (isolated ckmux `65c2325` plus the owned
+fixture delta, against isolated ckVision `987e0b68` plus its owned fixture
+delta): Apple Clang strict Release 56/56, CTest exit 0, 235.51 s at parallel 2;
+Debian 13 ARM64 GCC 13.3 Release 56/56, exit 0, 99.77 s; Linux Clang 19 Debug
+ASan/UBSan 56/56, exit 0, 166.37 s. The last two use parallel 2. Mac focused
+scratch/core-promise/pacing suites passed 3/3. No app was launched or visually
+certified, and optional absent reference apps remain unexercised.
+
+Mac clean default-dependency build: 16:57:46–16:58:46 UTC, 60 s, 187 Ninja
+actions, from configure-log creation to final build-log write (second-resolution
+record). The earlier comparable 186-action public-adopter clean build took
+38.645 s; this run compiled alongside the library's test rebuild. Every
+expected action and input was checked; no compiler warnings or cache launcher.
+Linux ckmux rebuilds: Release 17:13:14–17:14:00 UTC, 46 s; Debug ASan/UBSan
+17:15:40–17:17:02 UTC, 82 s. A changed aggregate-test compile definition
+accounts for the translation-unit rebuilds, rather than a supposed no-work gate.
+Exact runnable/test outputs are under
+`/Volumes/PRO-BLADE/tmp/ckmux-windows-20261003-01/mac-ckmux-wp53`,
+`/home/klukas.guest/ckmux-windows-20261003-01/ckmux-release` and sibling
+`ckmux-asan`. Test executable SHA256 respectively:
+`aaa84826702a6c14c6665a1bda2b758e86aeefe1a6946c6f764a558c8f2eee8e`,
+`11c7e1be895626090adb42fdd7087ff255a1a4e79bc3493fb8cc32b590f9a044`,
+`3224af32fc7f89b995948208a96f2c09c234692aea7efec2c62ad48c5639612b`.
+The first Mac full application sweep was interrupted at 55 completed suites;
+it is not the 56/56 gate above. The completed repeat provides that evidence.
+Upstream library fixture gates: Mac/Linux Release 221/221, Linux ASan/UBSan
+plus fuzz 231/231, native Windows ARM64 MSVC Release 208/208, exits 0 and
+benchmark smoke passes. Final documentation is checked before landing; these
+candidate counts do not themselves certify a later commit or Windows ckmux.
 
 ### WP-52 candidate gates
 
@@ -226,6 +268,63 @@ SHA256 `10607a3f79fab0d1172c646495176a97c198ae55cd7cf5bbb689aaa6499d8d5d`,
 reports ckmux 0.1.7. This is the current verified build, not a Windows binary.
 
 ## Verification instrument repairs during WP-52
+
+### WP-53 filesystem checkpoint — 2026-10-03
+
+Upstream private commit `d58d78bf` adds `WindowsFileSystem`, with strict UTF-8
+drive/UNC paths, long-path support, handle-bound content revisions, preserved
+DACLs and cooperating conditional atomic saves. Native MSVC ARM64 Release
+passes 209/209 library suites, including 16 native filesystem cases. Three
+compiled mutations (conditional guard, DACL and digest) fail their intended
+regressions, then restored bytes pass. A real equal-timestamp same-size write
+case exposed timestamp-only revision weakness; the upstream implementation now
+streams SHA-256 through the Windows system service. No ckmux workaround.
+
+ckmux configuration saving consumes the injected filesystem read/revision and
+conditional-write contract instead of application `getpid`/scratch/`fsync`/
+rename code. Portable deterministic cases protect edits and creations arriving
+after a read, unreadability and directory failure; native Unicode filenames
+exercise the production save/load route. The unconditional-write mutation
+compiles and fails the two race regressions; restored Mac cases pass.
+The persistent library lock is synchronization state, not an obsolete temp.
+
+The library filesystem snapshot is published as `b493c14c` from private
+`d58d78bf`; GitHub CI `37145140682` completed all seven jobs successfully.
+It is upstream code on main, not a moved 0.1.9 tag. ckmux-windows Codex
+configuration/fixture candidate gates on `65c2325` plus its owned delta:
+Apple Clang strict Release 57/57 (189.20 s), Debian 13 ARM64 GCC 13.3
+Release 57/57 (101.63 s), and Clang 19 Debug ASan/UBSan 57/57 (139.37 s),
+parallel 2, CTest exits 0. The library dependency is isolated `d58d78bf`
+plus the owned adopter test-header delta, not the shared dirty library tree.
+No empty Windows guarded suite is counted as application coverage.
+
+Native Windows 11 ARM64 MSVC configuration-only contract `/W4 /WX` passes
+five cases, including Unicode file save/load and UTF-8 warning paths. Build
+18:50:11.509Z–18:50:20.561Z, 9.048 s; CTest 1/1, exit 0, 0.61 s total.
+Source manifest SHA256
+`74ad23b2c9d7341ec0573230246182aa771f1e3124a9931cfc6c71eaa05ae066`;
+library archive SHA256
+`8ddd6de3c7491452868f45e955d439a3745120e02aad5069fd522d8ceb75cc3f`.
+Output: `C:/Users/klukas/ckmux-windows-20261003-01/config-contract-build/Release/config_filesystem_contract.exe`.
+This fixture compiles production configuration code, not a Windows ckmux
+executable. Its first strict build exposed C4996 in the library's public
+test runner; that header is fixed upstream rather than adding an adopter
+warning suppression. Full native app/IPC and live interaction remain open.
+
+Mac configuration/fixture incremental build: 18:57:39Z–18:58:03Z, 24 s,
+output `/Volumes/PRO-BLADE/tmp/ckmux-windows-20261003-01/mac-ckmux-wp53`;
+test executable SHA256
+`5c06fa741e69a51bd3af83a10c01629eb4fc9ce1a25885527daf30836f7f9fe3`.
+Linux Release rebuild: 18:58:02Z–18:58:44Z, 42 s; ASan/UBSan rebuild:
+19:04:30Z–19:05:45Z, 75 s. Exact outputs remain the guest's `ckmux-release`
+and `ckmux-asan` paths above. All owned source/asset hashes were checked
+against each gate's input manifest before final record-only edits. These are
+incremental candidate runs, not clean-commit gates or a visual certification.
+
+The upstream commit is not a new release yet. ckmux's GitHub dependency pin
+remains 0.1.9 until a fully gated new library release exists. Windows host
+selection, shell defaults, paths, clipboard errors and full application build
+remain WP-53 work; native IPC/waits, live acceptance and packages remain open.
 
 The first transferred archive included AppleDouble metadata sidecars. Linux
 script scans treated these binary `._*` files as source. The transfer was

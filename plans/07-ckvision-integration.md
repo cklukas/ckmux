@@ -54,6 +54,16 @@ everything terminal/UI-shaped is ckVision's.
 
 ## Integration seams (the four pieces ckmux writes against ckVision)
 
+WP-53 configuration saving uses the injected `FileSystem` read/revision and
+conditional atomic-write contract, with native `PosixFileSystem` or upstream
+`WindowsFileSystem` selected at the host boundary. The previous application
+`getpid`/scratch/`fsync`/rename implementation is removed, not ported. Settings
+parsing and line preservation remain application semantics. Deterministic
+injected tests cover edits and creations arriving between read and publication,
+unreadability, directory failure and preservation of unrelated configuration.
+The new Windows adapter is upstream commit `d58d78bf`, not yet a released library;
+the public release pin must change only after its gates and release.
+
 1. **Server terminal** = `PosixTerminalSubsession` (spawn/drain/close/resize)
    — the server links only ckVision's `core`+`term` layers; no UI, no host
    terminal, respecting both projects' layer rules.

@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include "platform/socket.hpp"
+#include "scratch_directory.hpp"
 
 #include "cvision/term/posix_terminal_subsession.hpp"
 #include "cvision/testing/cktest.hpp"
@@ -134,8 +135,8 @@ inline void remember_harness_server(::pid_t pid) {
 // So: Debian keeps dash (the exact shell "/bin/sh" already named there; the
 // Linux rig is unchanged), and macOS takes bash — mc's reference subshell,
 // and title-quiet here: /etc/bashrc only sources a title-setting file for
-// TERM_PROGRAM=Apple_Terminal, and HOME is pinned to /tmp so no ~/.bashrc is
-// read — with zsh as the fallback.
+// TERM_PROGRAM=Apple_Terminal, and HOME is a private fixture directory so no
+// developer's ~/.bashrc is read — with zsh as the fallback.
 inline const char* harness_shell() {
     static const char* const chosen = [] {
 #if defined(__APPLE__)
@@ -150,6 +151,9 @@ inline const char* harness_shell() {
 }
 
 inline ::pid_t start_server(const std::filesystem::path& socket) {
+    // Kept until process exit (the harness reaper runs first). Both server and
+    // client use an empty fixture HOME, not a shared host temporary directory.
+    static const ScratchDirectory home("reader-home");
     const ::pid_t child = ::fork();
     if (child != 0) {
         remember_harness_server(child);
@@ -174,7 +178,7 @@ inline ::pid_t start_server(const std::filesystem::path& socket) {
     // locale instead of one of them inheriting the developer's login. The
     // shell itself is harness_shell()'s choice, for the reasons given there.
     (void)::setenv("SHELL", harness_shell(), 1);
-    (void)::setenv("HOME", "/tmp", 1);
+    (void)::setenv("HOME", home.path().c_str(), 1);
     (void)::setenv("LC_ALL", "C", 1);
     // STDOUT as well as STDERR, and this is not tidiness — it is why the suite
     // could pass when run by hand and time out under CTest on the same machine
@@ -229,6 +233,7 @@ inline void end_process(::pid_t child) {
 
 // The real client, in a terminal, with its screen decoded — a reader's ckmux.
 struct Reader {
+    ScratchDirectory home{"reader-client"};
     std::unique_ptr<ckv::term::PosixTerminalSubsession> client;
 
     // What the client is told its HOST can do. Settable because WP-21 §3's
@@ -253,9 +258,9 @@ struct Reader {
                const std::vector<std::pair<std::string, std::string>>& extra_environment = {}) {
         ckv::term::TerminalLaunchSpec spec =
             ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
-        spec.working_directory = "/tmp";
+        spec.working_directory = home.path().string();
         spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"},
-                            {"SHELL", harness_shell()}, {"HOME", "/tmp"},
+                            {"SHELL", harness_shell()}, {"HOME", home.path().string()},
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
         for (const std::pair<std::string, std::string>& entry : extra_environment)
             spec.environment.push_back({entry.first, entry.second});

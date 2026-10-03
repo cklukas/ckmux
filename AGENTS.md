@@ -228,6 +228,29 @@ report confidently on both.
   session's failures in it is a reputation, and nobody writes those down. Say
   the mechanism, not the apology — the mechanism is the part that generalises.
 
+The Windows-port session's own, 2026-10-03:
+
+- **Used zsh's `path` as an ordinary loop variable.** zsh ties that name to
+  PATH. After the ref moved, git/awk could no longer resolve, leaving the
+  index at the parent. A fresh shell proved the index still equalled that
+  parent before refreshing only the landed paths; unrelated working changes
+  remained intact. Use task-prefixed variables and verify both ref and index
+  after a plumbing landing, not the ref alone.
+
+- **Treated an exported `TMPDIR` as proof of fixture placement.** The Mac
+  gates passed functionally, but two library fixture constructors, child
+  HOME/cwd settings, reference-app filenames and a reference socket-root
+  override hard-coded `/tmp` and bypassed that export. Reading the actual
+  constructors exposed the gap. The functional results did not establish
+  compliance with the temporary-workspace policy. The correction selects a
+  build-owned root explicitly, tests its use, and removes fixed shared
+  reference paths; future location claims name the constructors checked.
+- **Ran the clipboard candidate gate before writing its final validation
+  note.** A later full sweep caught the private note's build-baseline wording
+  in the provenance guard. Candidate code gates did not cover that later
+  documentation delta. Clarifying the factual wording fixes the guard without
+  weakening it; the full gate must include the final documentation bytes.
+
 ### A number without its configuration is not a measurement (2026-08-20)
 
 `plans/09` recorded `32 ms worst, 24 ms mean` for the flood gate and named no

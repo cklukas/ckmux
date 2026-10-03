@@ -168,10 +168,15 @@ waits for.
   back last-line-wins and a Save that lands on the losing line is a Save the
   reader cannot see), a missing key joins its section, and a missing section
   is appended — so comments, ordering, inline notes and unrelated keys
-  survive. The write is also atomic and durable: a per-process scratch file,
-  flushed, renamed over the target, and the directory entry flushed after it,
-  because a settings dialog that reports success and loses the setting is the
-  one failure it must not have. Everything else in this file stays hand-edited
+  survive. ckVision's injected native filesystem owns atomic publication and
+  flushing; ckmux does not implement its own scratch-file or rename backend.
+  Publication must match the revision that supplied those lines, or create
+  only when the file was absent. An edit/creation arriving meanwhile is refused
+  and preserved, not overwritten. Native filesystem flushing contracts apply;
+  the persistent `.ckvision-write.lock` beside the file is library-owned
+  synchronization state and is not removed after a save;
+  the application does not promise immunity to every power-loss/storage failure.
+  Everything else in this file stays hand-edited
   in v1.
 - **A file that cannot be read is not a file that is not there.** No file is
   the ordinary case and says nothing; a file that exists and cannot be opened

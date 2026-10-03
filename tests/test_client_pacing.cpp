@@ -37,6 +37,7 @@
 #include "cvision/term/posix_terminal_subsession.hpp"
 
 #include "cvision/testing/cktest.hpp"
+#include "scratch_directory.hpp"
 
 namespace {
 
@@ -88,11 +89,12 @@ CK_TEST(the_client_asks_the_readers_terminal_whether_it_took_the_frame) {
 
     ckv::term::TerminalLaunchSpec spec =
         ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
-    spec.working_directory = "/tmp";
+    ckmtest::ScratchDirectory home("pacing-home");
+    spec.working_directory = home.path().string();
     spec.environment = {{"TERM", "xterm-256color"},
                         {"PATH", "/usr/bin:/bin"},
                         {"SHELL", "/bin/sh"},
-                        {"HOME", "/tmp"},
+                        {"HOME", home.path().string()},
                         {"LC_ALL", "C"},
                         {"CKMUX_SOCKET", socket.string()},
                         {"CKVISION_OUTPUT_CAPTURE", capture.string()}};

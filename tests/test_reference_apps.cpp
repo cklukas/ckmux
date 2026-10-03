@@ -46,6 +46,8 @@ using ckmtest::private_socket;
 using ckmtest::Reader;
 using ckmtest::start_server;
 using ckmtest::wait_for_socket;
+using ckmtest::ScratchDirectory;
+using ckmtest::shell_quote;
 
 // Looked up rather than assumed: the harness gives the client a PATH of
 // `/usr/bin:/bin`, and half the matrix lives in Homebrew's prefix.
@@ -147,6 +149,8 @@ CK_TEST(less_takes_the_alternate_screen_and_gives_back_exactly_what_was_under_it
         return;
     }
     std::printf("  [WP-21 §3] less: %s\n", less.c_str());
+    ScratchDirectory files("reference-less");
+    const std::string input = shell_quote((files.path() / "input.txt").string());
 
     const std::filesystem::path socket = private_socket("refless");
     forget(socket);
@@ -162,7 +166,7 @@ CK_TEST(less_takes_the_alternate_screen_and_gives_back_exactly_what_was_under_it
     // the baseline is taken. The first version of this test captured the
     // baseline and then ran two more commands, and then reported `less` for
     // the difference they made.
-    reader.press("printf 'LESSLINE-%s\\n' A B C D E F > /tmp/ckmux-ref-less.txt\r");
+    reader.press("printf 'LESSLINE-%s\\n' A B C D E F > " + input + "\r");
     CK_CHECK(shell_is_ready(reader));
 
     // Something distinctive underneath, so "the screen came back" is a claim
@@ -175,7 +179,7 @@ CK_TEST(less_takes_the_alternate_screen_and_gives_back_exactly_what_was_under_it
     CK_CHECK(first_before.has_value());
     CK_CHECK(second_before.has_value());
 
-    reader.press(less + " /tmp/ckmux-ref-less.txt\r");
+    reader.press(less + " " + input + "\r");
     reader.settle(2000);
 
     // THE ROW'S CONDITION, first half: `less` is on the alternate screen, so
@@ -231,20 +235,24 @@ CK_TEST(a_child_that_draws_sixel_without_asking_cannot_garble_a_host_that_has_no
         return;
     }
     std::printf("  [WP-21 §3] img2sixel: %s\n", img2sixel.c_str());
+    ScratchDirectory files("reference-sixel");
+    const std::string image = shell_quote((files.path() / "tiny.png").string());
 
     // A four-pixel PNG written here rather than found on the machine, so the
     // row does not depend on which pictures happen to be installed. This
     // build of img2sixel has no libpng/libjpeg (§3.1) but reads this.
-    const char* const make_png =
-        "python3 -c \"import struct,zlib\n"
+    const std::string make_png =
+        "python3 -c \"import struct,sys,zlib\n"
         "def c(t,d):\n"
         " b=t+d\n"
         " return struct.pack('>I',len(d))+b+struct.pack('>I',zlib.crc32(b)&0xffffffff)\n"
         "raw=b''.join(b'\\\\x00'+bytes([255,0,0]*4) for _ in range(4))\n"
-        "open('/tmp/ckmux-ref-tiny.png','wb').write(b'\\\\x89PNG\\\\r\\\\n\\\\x1a\\\\n'"
+        "open(sys.argv[1],'wb').write(b'\\\\x89PNG\\\\r\\\\n\\\\x1a\\\\n'"
         "+c(b'IHDR',struct.pack('>IIBBBBB',4,4,8,2,0,0,0))+c(b'IDAT',zlib.compress(raw))"
-        "+c(b'IEND',b''))\"";
-    std::ignore = std::system(make_png);
+        "+c(b'IEND',b''))\" " + image;
+    const int generated = std::system(make_png.c_str());
+    CK_CHECK(generated == 0);
+    if (generated != 0) return;
 
     const std::filesystem::path socket = private_socket("refsixel");
     forget(socket);
@@ -276,7 +284,7 @@ CK_TEST(a_child_that_draws_sixel_without_asking_cannot_garble_a_host_that_has_no
     // vacuously against an img2sixel that failed outright: a program that drew
     // nothing because it could not read its file also garbles nothing, and
     // the assertions below cannot tell the two apart.
-    reader.press(img2sixel + " /tmp/ckmux-ref-tiny.png; echo RC\"\"=$?\r");
+    reader.press(img2sixel + " " + image + "; echo RC\"\"=$?\r");
     reader.settle(2500);
     CK_CHECK(reader.sees("RC=0", 8000));
 
@@ -307,6 +315,8 @@ CK_TEST(vim_survives_a_ckmux_detach_mid_edit_with_the_buffer_where_it_was) {
         return;
     }
     std::printf("  [WP-21 §3] vim: %s\n", vim.c_str());
+    ScratchDirectory files("reference-vim");
+    const std::string input = shell_quote((files.path() / "input.txt").string());
 
     const std::filesystem::path socket = private_socket("refvim");
     forget(socket);
@@ -323,7 +333,7 @@ CK_TEST(vim_survives_a_ckmux_detach_mid_edit_with_the_buffer_where_it_was) {
         // `-u NONE` so the row tests ckmux rather than whatever vimrc this
         // machine has, and `-N` to keep vim out of compatible mode, which
         // changes the key handling the rest of this depends on.
-        reader.press(vim + " -u NONE -N /tmp/ckmux-ref-vim.txt\r");
+        reader.press(vim + " -u NONE -N " + input + "\r");
         reader.settle(2500);
         // Something only vim draws: its filler column down the left of an
         // empty buffer. "The screen changed" would pass against a vim that
@@ -521,6 +531,8 @@ CK_TEST(fzf_filters_incrementally_and_gives_the_screen_back_on_exit) {
         return;
     }
     std::printf("  [WP-21 §3] fzf: %s\n", fzf.c_str());
+    ScratchDirectory files("reference-fzf");
+    const std::string output = shell_quote((files.path() / "selection.txt").string());
 
     const std::filesystem::path socket = private_socket("reffzf");
     forget(socket);
@@ -538,7 +550,7 @@ CK_TEST(fzf_filters_incrementally_and_gives_the_screen_back_on_exit) {
     const std::optional<std::pair<int, int>> under_before = reader.find_cell("UNDERFZF");
     CK_CHECK(under_before.has_value());
 
-    reader.press("printf 'ALPHAROW\\nBRAVOROW\\nCHARLIEROW\\n' | " + fzf + " > /tmp/ckmux-ref-fzf.out\r");
+    reader.press("printf 'ALPHAROW\\nBRAVOROW\\nCHARLIEROW\\n' | " + fzf + " > " + output + "\r");
     reader.settle(3000);
     // All three candidates are up, and the screen underneath is gone: fzf
     // takes the alternate screen.
@@ -571,7 +583,7 @@ CK_TEST(fzf_filters_incrementally_and_gives_the_screen_back_on_exit) {
     // selection reached the file, which is the only proof the filter meant
     // anything.
     CK_CHECK(shell_is_ready(reader));
-    reader.press("cat /tmp/ckmux-ref-fzf.out\r");
+    reader.press("cat " + output + "\r");
     CK_CHECK(reader.sees("BRAVOROW", 6000));
 
     reader.quit();
@@ -664,12 +676,13 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
         return;
     }
     std::printf("  [WP-21 §3] lazygit: %s\n", lazygit.c_str());
+    ScratchDirectory repository("reference-lazygit");
+    const std::string directory = shell_quote(repository.path().string());
 
     // Its own repository, made here: lazygit shows nothing useful outside one,
     // and pointing the row at whatever repository the machine happens to have
     // would make the assertions depend on somebody's working tree.
-    std::ignore = std::system("rm -rf /tmp/ckmux-ref-git && mkdir -p /tmp/ckmux-ref-git && "
-                      "cd /tmp/ckmux-ref-git && git init -q && "
+    const std::string prepare = "cd " + directory + " && git init -q && "
                       "echo LAZYFILECONTENT > LAZYTRACKEDFILE && git add . && "
                       "git -c user.email=t@e -c user.name=t commit -qm 'LAZYCOMMITSUBJECT' && "
                       // Left DIRTY on purpose: a committed file does not appear
@@ -678,7 +691,10 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
                       "echo LAZYCHANGE >> LAZYTRACKEDFILE && "
                       // A SECOND dirty file, so the selection can be moved
                       // between two things and the move can be seen.
-                      "echo LAZYSECONDCHANGE > LAZYSECONDFILE");
+                      "echo LAZYSECONDCHANGE > LAZYSECONDFILE";
+    const int prepared = std::system(prepare.c_str());
+    CK_CHECK(prepared == 0);
+    if (prepared != 0) return;
 
     const std::filesystem::path socket = private_socket("reflazy");
     forget(socket);
@@ -690,7 +706,7 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
     CK_CHECK(reader.sees("new term"));
     CK_CHECK(shell_is_ready(reader));
 
-    reader.press("cd /tmp/ckmux-ref-git && " + lazygit + "\r");
+    reader.press("cd " + directory + " && " + lazygit + "\r");
     reader.settle(5000);
     // lazygit greets a first-time reader with a dialog that covers the panels
     // underneath. Dismissed rather than asserted around, because a row that
@@ -748,7 +764,6 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
     reader.quit();
     end_process(server);
     forget(socket);
-    std::ignore = std::system("rm -rf /tmp/ckmux-ref-git");
 }
 
 CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
