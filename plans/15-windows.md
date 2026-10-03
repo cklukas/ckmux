@@ -114,6 +114,22 @@ library gates, not a Windows ckmux executable or user-facing acceptance gate.
 The new upstream commit is unreleased; the ckmux GitHub release pin remains
 0.1.9 until the next fully gated library release.
 
+The filtered upstream GitHub snapshot is now `b3b304b3` (private source
+`987e0b68`), verified before push with 213 non-PTY and four PTY macOS Release
+tests plus a strict documentation-site build. GitHub CI `37136544479` was
+running at this checkpoint; it is not an attributed hosted-green claim.
+Publication preparation/verification ran 16:18:44–16:21:21 UTC, 157 s. Its
+temporary verification tree was removed by the publication tool. The wrapper
+record retained the task-owned work root but not the tool-generated exact leaf
+path; that freshness-record limitation is not retroactively filled in. The
+retained native/Mac/Linux clipboard gates above have exact recorded outputs.
+The old task-owned `mac-ckvision-commit` build and clean `ckvision-commit`
+checkout were removed after validation; current `mac-ckvision-wp53`, native
+Release and Linux configurations are retained for WP-53. No peer workspace was
+removed. Future ckmux Windows code consumes the current upstream source during
+co-development, then the newly released tag; this checkpoint does not move the
+existing v0.1.9 tag or relabel ckmux v0.1.7 packages.
+
 ### WP-52 candidate gates
 
 Run by ckmux-windows Codex, isolated at ckmux `e1bc8ae` plus its five-file
