@@ -89,15 +89,30 @@ the existing injected `FileSystem` contract upstream, including Unicode
 paths, revision-consistent reads and conditional atomic publication. Do not
 implement those reusable operations in ckmux to compensate for the gap.
 
-The Windows clipboard backend exists but uses `OpenClipboard(nullptr)` then
-`EmptyClipboard()`. Microsoft's published
-[OpenClipboard ownership contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard)
-states that this leaves no window owner and causes `SetClipboardData` to
-fail. Both the terminal and portable clipboard export API return void, so
-native failure cannot be reported to an adopter. WP-53 must reproduce and
-fix ownership and error reporting upstream, with positive, locked-clipboard
-and late-environment cases, without destroying the user's clipboard during
-verification. This is a source/contract finding, not yet a native reproduction.
+The former Windows clipboard backend used `OpenClipboard(nullptr)` then
+`EmptyClipboard()`, contrary to Microsoft's published
+[ownership contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard).
+Upstream `987e0b68` adds `WindowsClipboardWriter`, used by `WindowsTerminal`:
+each write owns an invisible publication window, verifies ownership, publishes
+immediate Unicode data and destroys the window before returning. This leaves
+no lingering unpumped clipboard owner in a terminal application's native wait.
+Windows 11 25H2 ARM64 nevertheless accepts the old null-owner sequence; data
+loss was **not** reproduced on that host. A compiled null-owner mutation with
+the new ownership check retained fails three native round-trip assertions.
+Both portable APIs still return void: typed export-failure reporting remains
+open, alongside the filesystem and scalable-wait gaps. No ckmux clipboard
+workaround was added, and WP-53 is not complete.
+
+Clipboard candidate gates (ckmux-windows Codex, isolated ckVision `84c96695`
+plus only the subsequently landed owned delta): macOS Apple Clang Release
+219/219, Debian 13 ARM64 GCC 13.3 Release/FORTIFY 219/219, Linux Clang 19 Debug
+ASan/UBSan plus fuzz 229/229, and native Windows ARM64 MSVC Release `/W4 /WX`
+206/206; all CTest exits 0. Modern ConPTY additionally passed 24/24; benchmark
+smoke passed on all three hosts. The four native clipboard cases use their own
+fresh window station, never the user's desktop clipboard. These are upstream
+library gates, not a Windows ckmux executable or user-facing acceptance gate.
+The new upstream commit is unreleased; the ckmux GitHub release pin remains
+0.1.9 until the next fully gated library release.
 
 ### WP-52 candidate gates
 

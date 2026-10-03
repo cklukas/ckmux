@@ -374,7 +374,7 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 |---|---|---|---|
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
 | U-WIN-FS | Open | Native implementation of the injected `FileSystem` contract; current real adapter is POSIX-only. | WP-53 |
-| U-WIN-CLIP | Open | Correct Windows clipboard ownership and report export failures through portable clipboard APIs; `OpenClipboard(nullptr)` followed by `EmptyClipboard()` violates the documented `SetClipboardData` ownership requirement. Native reproduction and regression required. | WP-53 |
+| U-WIN-CLIP | In progress | Scoped native ownership and isolated Unicode/contention/lifetime regressions landed upstream in `987e0b68` (`WindowsClipboardWriter`, used by `WindowsTerminal`). Portable typed export results remain open. The named Windows 11 host permits old null-owner writes despite Microsoft's contract, so data loss was not reproduced there. | WP-53 |
 | U-WIN-WAIT | Open | Scalable native readiness beyond `MAXIMUM_WAIT_OBJECTS`, upstream rather than an adopter limit. | WP-54 |
 | U5-b | **Done** (`4d0afef`) | `process_id()` on `core::TerminalSubsession`, default −1. | WP-39 |
 | U5-a | **Done** (`da11baa`) | `process_id()` on `PosixTerminalSubsession`, observation-only. | WP-37/WP-38 |
