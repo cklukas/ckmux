@@ -149,6 +149,21 @@ take first.
 | 63 | **WP-50** — Join, take over, or watch: the choice on screen | ckmux | 2–3 d | **Done** (2026-08-23, `6fa6d81`; same 51-suite Release/ASan/Linux integration gate as WP-48) — the picker's shape changed from the first spec, and [06](06-ui-design.md) records why | WP-49 ✓, WP-48 ✓ |
 | 64 | **WP-51** — The big clock: `^B t`, and the View menu's date faces | ckmux + ckVision | 0.5 d | **Done** (2026-09-23, owner request; released as ckmux v0.1.5 = public snapshot `11b42e2` on ckVision v0.1.6 = `1006bd0`: CI 35906738106 and 35904504554 green, release workflow 35909336469 published 11 assets, five package checksums verified; ckVision L-66 in [07](07-ckvision-integration.md)) — tmux's clock mode over the focused terminal, on ckVision's new window content cover (L-67), which also puts copy mode back over its own window instead of the desktop's corner; the clock stays up while the reader works elsewhere, and the keyboard now follows every window activation (`^B n`/`^B p` had moved the window and left the keys in the one behind); also follows ckVision's `CommandDescriptor::scope` rename (ckVision `e946d10`), without which ckmux `main` no longer compiled against ckVision `main`, and D-066 (`726fd3b`: a preset field opens selected), which `test_rename_terminal` typed straight over | — |
 
+## Native Windows execution queue (owner directed, 2026-10-03)
+
+The owner promoted this work from the parking lot. [15-windows.md](15-windows.md)
+is its specification and acceptance bar; existing M3/M4 claims remain held
+by their recorded sessions. This queue owns the Windows port only.
+
+| Order | Package | Where | State | Prerequisite |
+|---:|---|---|---|---|
+| W1 | WP-52 — Portable terminal ownership and upstream lifecycle | both | **Done** (2026-10-03, ckVision `84c96695`, released v0.1.9 = public `aea4754a`; CI `37126856749` all seven jobs green; ckmux consumes shared ownership and pins 0.1.9, native/cross-platform evidence in [15](15-windows.md)) | Latest ckVision Windows adapter ✓ |
+| W2 | WP-53 — MSVC build and Windows host services | both | **In progress** (ckmux-windows, Codex task `01a03fb6-1b89-7642-bd53-1baaabd561b0`; host-service API work has no UDS socket; starts with upstream filesystem and clipboard gaps) | WP-52 ✓ |
+| W3 | WP-54 — Secure IPC, detached server and native waits | ckmux | Ready | — |
+| W4 | WP-55 — Complete native behavior and live acceptance | ckmux | Blocked | WP-52, WP-53, WP-54 |
+| W5 | WP-56 — Windows CI and release packages | ckmux | Blocked | WP-55 |
+| W6 | WP-57 — Windows compatibility and release audit | both | Blocked | WP-56 |
+
 Roughly **114–147 focused days**, of which ~20–26 are upstream in ckVision.
 These are planning ranges, not evidence. A package may land in several
 commits; its row stays `In progress` until every acceptance item is met.
@@ -2465,7 +2480,7 @@ third, `test_cli`, which had passed standalone twenty minutes before. None was
 found by reading the diff.
 
 The parking lot in [10-roadmap.md](10-roadmap.md) — tiled pane mode, control
-mode, resurrect, Windows/ConPTY, kitty keyboard passthrough and graphics,
+mode, resurrect, kitty keyboard passthrough and graphics,
 hyperlink activation, scrollback reflow, per-terminal palette re-theming,
 session groups, PDF export (PRINT-7). Nothing there gets a row until a plan
 edit moves it, because R5 binds: an addition edits the plan first.

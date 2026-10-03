@@ -41,6 +41,7 @@ and is scheduled inside the ckmux milestones in [10-roadmap.md](10-roadmap.md).
 | 12 | [Work Packages](12-work-packages.md) | **The queue.** Numbered packages, one state each, and the rule for picking the next one |
 | 13 | [Architecture Review Findings](13-architecture-review.md) | The 2026-08-18 review: verified findings and their remediation state |
 | 14 | [M4 Acceptance](14-m4-acceptance.md) | Reference apps, vttest, tmux-inside-ckmux, printing, host matrix, and environment-change cases |
+| 15 | [Native Windows Compatibility](15-windows.md) | Active Windows port: platform contracts, work packages, native acceptance and release gates |
 
 Suggested reading order: 01 → 02 → 03 → 07 → 04 → 05 → 06 → 08 → 09 → 10 → 11.
 
@@ -80,19 +81,27 @@ confirmed, and menu-visible.
 
 ## Current work
 
+The owner activated native Windows compatibility on 2026-10-03. WP-52–WP-57
+in [12](12-work-packages.md) implement [15](15-windows.md), starting with the
+latest ckVision's shared lifecycle interface. Windows support is not yet
+implemented or released.
+
 M0–M2 and the architecture-review remediation queue are complete. **WP-15**
 (M3's menu-driven acceptance walkthrough) and **WP-21** (M4's reference-app,
 vttest and changing-environment matrix) are in progress. **WP-24** is done:
 the browser guide, installed man page and generated key appendix are all built
-and gated from the command/key registries. There is no unclaimed `Ready` row:
-WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
+and gated from the command/key registries. The Windows queue now has its own
+`Ready` rows. WP-23 (`ckmux-256color`) waits on WP-21, and the final v1 audit waits on
 WP-23. Linux, licensing and packaging are done, and v0.1.3 adds a separately
 built and install-tested Ubuntu 20.04 DEB to the RPM, Homebrew formula, generic
 DEB and platform archives introduced through v0.1.2. v0.1.4 pairs exact
 sparse-delta wire budgeting with ckVision v0.1.5's host-aware large-frame
 coalescing. The exact public snapshot `f0ea0f6` passed every package and
 publication job in run `33446774634`; its eleven assets and five
-package/archive checksums were verified after download.
+package/archive checksums were verified after download. Subsequent v0.1.7
+uses ckVision v0.1.8. Ubuntu 20.04 support was explicitly withdrawn in
+`ee98607`: v0.1.5 is its last supported package; do not infer current support
+from the historical v0.1.3/v0.1.4 evidence above.
 
 The former open questions in [10-roadmap.md](10-roadmap.md) are now recorded
 as decisions. Work selection still comes only from

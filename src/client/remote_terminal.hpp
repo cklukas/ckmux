@@ -52,6 +52,7 @@ public:
     // --- The seam ---------------------------------------------------------
 
     ckv::core::TerminalSnapshot snapshot() const override;
+    ckv::core::TerminalSnapshot snapshot(ckv::core::TerminalSnapshotOptions options) const override;
     ckv::core::TerminalStatus status() const override;
     const ckv::core::TerminalDamage& damage() const noexcept override { return mirror_.damage(); }
     void clear_damage() noexcept override { mirror_.clear_damage(); }

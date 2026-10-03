@@ -251,6 +251,15 @@ from the live registry. v0.1.0, v0.1.1 and v0.1.2 are published; v0.1.2 adds
 RPM and the install-tested Homebrew formula. **Remaining:** WP-23
 `ckmux-256color` waits for WP-21; WP-27 is the final v1 audit after WP-23.
 
+## Native Windows compatibility (owner directed, 2026-10-03)
+
+Windows/ConPTY is now active under WP-52–WP-57 and
+[15-windows.md](15-windows.md). The latest ckVision Windows adapters are
+implemented; ckmux's native transport, host services, acceptance and release
+gates are still to be built. Completion requires the same persistent
+client/server semantics and native Windows packages, with macOS/Linux gates
+retained. The final audit checks every acceptance row in plan 15.
+
 ## Parking lot (post-v1, explicitly not now)
 
 ~~Simultaneous multi-client attach~~ — **left the parking lot 2026-08-20**,
@@ -265,7 +274,7 @@ readers pasting into one terminal would interleave — so they are worth doing
 whether or not the flag is ever built. tmux-style tiled pane mode inside a
 window; control mode /
 scripting API; resurrect (relaunch
-layout+commands after server death); Windows/ConPTY (after upstream WP-50);
+layout+commands after server death);
 kitty keyboard passthrough and kitty graphics; hyperlink activation;
 scrollback reflow; per-terminal palette re-theming; session groups;
 **PRINT-7** — PDF export of captured print

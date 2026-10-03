@@ -78,6 +78,11 @@ ckv::core::TerminalStatus RemoteTerminalSubsession::status() const {
 }
 
 ckv::core::TerminalSnapshot RemoteTerminalSubsession::snapshot() const {
+    return snapshot({});
+}
+
+ckv::core::TerminalSnapshot RemoteTerminalSubsession::snapshot(
+    ckv::core::TerminalSnapshotOptions options) const {
     // Built from the same scalars, plus copies of what a snapshot is for. Nothing
     // on the hot path uses this — a view reads status() and the borrowed spans
     // (ckVision L-53) — and the one caller that still needs it wants the whole
@@ -92,7 +97,11 @@ ckv::core::TerminalSnapshot RemoteTerminalSubsession::snapshot() const {
     snapshot.title = scalars.title;
     snapshot.state = scalars.state;
     const std::span<const ckv::Cell> history = mirror_.history();
-    snapshot.scrollback.assign(history.begin(), history.end());
+    if (options.include_scrollback) snapshot.scrollback.assign(history.begin(), history.end());
+    if (options.include_rasters) {
+        const auto images = mirror_.rasters();
+        snapshot.rasters.assign(images.begin(), images.end());
+    }
     snapshot.bracketed_paste_enabled = scalars.bracketed_paste_enabled;
     snapshot.mouse_reporting_enabled = scalars.mouse_reporting_enabled;
     snapshot.mouse_encoding = scalars.mouse_encoding;

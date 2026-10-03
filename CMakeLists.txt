@@ -12,21 +12,20 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.8)
+set(CKMUX_CKVISION_VERSION 0.1.9)
 
-# Said once, plainly: ckmux builds on POSIX only. The server forks, opens
-# PTYs, polls file descriptors and speaks over a unix-domain socket, and
-# src/platform is written against those calls; plans/02 puts Windows/ConPTY
-# out of scope and names the seams that would have to grow first. Guarding
+# Until the native port is complete, ckmux builds on POSIX only. The server
+# forks, polls file descriptors and speaks over a unix-domain socket, and
+# src/platform is written against those calls. The active Windows plan names
+# the backends still to implement. Guarding
 # the executable with if(UNIX) while the libraries built unconditionally
 # advertised a portability that does not exist — the libraries are the part
 # that cannot compile elsewhere. One honest check, here, instead.
 if(NOT UNIX)
     message(FATAL_ERROR
-        "ckmux builds on POSIX systems only (macOS, Linux). Windows/ConPTY is "
-        "out of scope: the server forks, opens PTYs, polls file descriptors "
-        "and speaks over a unix-domain socket, and src/platform is the seam "
-        "that would have to grow first.")
+        "ckmux currently builds on POSIX systems only (macOS, Linux). The "
+        "native Windows port is in progress: secure named-pipe IPC, native "
+        "readiness and host services are not yet implemented.")
 endif()
 
 # ckVision comes either from a sibling source checkout or from an installed

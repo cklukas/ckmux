@@ -53,8 +53,9 @@ ckmux marries the two ideas:
 7. **macOS and Linux, by named gates.** Development happens on macOS and the
    Linux port is now shipped and blocking in CI. Platform-specific code stays
    behind small seams, and a clean-build claim names its compiler and host.
-   (Windows/ConPTY is a possible later follow-on since ckVision targets it,
-   but it is out of scope for now.)
+   Native Windows/ConPTY is now an active owner-directed port under
+   [15-windows.md](15-windows.md); it becomes a supported platform only once
+   its native acceptance, security and release gates pass.
 8. **Fix ckVision, never work around it.** ckmux is one of the first real
    applications of ckVision and deliberately serves as its proving ground.
    We own and co-develop both repos: when a capability, widget, or API is

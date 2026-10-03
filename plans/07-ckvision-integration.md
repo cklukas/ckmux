@@ -4,7 +4,7 @@ Plan 07 · Status: current · 2026-08-25 · [Index](README.md)
 
 What ckVision (sibling repo, `/Volumes/PRO-BLADE/git/ckvision`, library
 target `ckvision::cvision`, C++20, zero mandatory dependencies, POSIX
-implemented / Windows deferred) actually provides for ckmux — initially
+implemented / Windows adapters available, ckmux port in progress) actually provides for ckmux — initially
 verified on 2026-08-16 and maintained through 2026-08-25 — plus the
 integration seams and the ckVision work ckmux drives.
 
@@ -316,7 +316,7 @@ ckVision `45a995e`, 2026-08-23, from a user report against ckmux:
 |---|---|---|
 | L-63 | **`TerminalEmulator::handle_csi` reads ECMA-48's private parameter bytes (`<` `=` `>` `?`) first** and hands a marked sequence to `handle_private_csi`, where every marked form the emulator honours lives and anything else marked is a diagnostic; no public handler is reachable with a marker. XTMODKEYS/XTFMTKEYS (`CSI > Pp ; Pv m` / `f`) are consumed without effect or diagnostic and XTQMODKEYS (`CSI ? Pp m`) is answered truthfully — `0` for modifyOtherKeys, which is not implemented, `2` for the cursor and function keys, which already travel in xterm's level-2 forms (ckVision D-062). Siblings fixed by the same dispatch: XTSAVE/XTRESTORE no longer overwrite the saved cursor or set a scrolling region, XTRMTITLE no longer scrolls, DECXCPR (`CSI ? 6 n`) is answered as `CSI ? r ; c R`. | Exiting `claude` in a ckmux window left "[terminal: malformed child SGR sequence]" at the bottom of the window: Claude Code's teardown writes `ESC[<u ESC[?1049l ESC[>4m`, and the last of those reached the SGR parser. Vim and neovim write the same reset. `tests/test_reference_apps.cpp` plays the exact bytes through a real server, the wire and the client's `TerminalView`, paired with a malformed SGR that still complains. Claude Code also sends `CSI ? 6 n`, whose answer it reads only in the DEC form. The current ckVision v0.1.1 pin contains `45a995e`, so the row is exercised normally and a failed capability probe is a regression; the temporary NOT EXERCISED escape used with the v0.1.0 pin has expired. |
 
-### Landed (an Ubuntu 20.04 consumer is a supported toolchain)
+### Landed (an Ubuntu 20.04 consumer was a supported toolchain)
 
 ckVision v0.1.4 (public `5c0e7fb`), 2026-08-31, from the Ubuntu 20.04 package
 gate:
@@ -347,6 +347,24 @@ audit:
 |---|---|---|
 | L-68 | **A report beyond the cell grid proves SGR-pixel mode only while the host can be sending pixels** (ckVision D-116, `0991f3c`, released in 0.1.8): `InputDecoder::set_pixel_reports_possible`, which `PosixTerminal` keeps true only while a probe window has mode 1016 enabled, once the mode is proved, and for 250 ms after it resets an unproved mode. | Owner report, 2026-09-27, ckmux 0.1.6 on ckVision 0.1.7 in Terminal.app: after resizing windows, every click landed top-left and opened the menu. Resizing a window by its edge carried the pointer past the host's edge; the host reported that as a cell beyond the grid, ckVision took it as proof of pixel coordinates for good, and divided every later click by the cell size. Reproduced end to end by `test_menu_commands` `a_drag_past_the_hosts_edge_leaves_later_clicks_where_they_are_made`, which fails against ckVision v0.1.7 and passes against 0.1.8. |
 
+### Windows foundation (ckVision 0.1.9 released, 2026-10-03)
+
+| # | Item | Why ckmux hit it |
+|---|---|---|
+| L-69 | `term::TerminalSubsession` exposes selective snapshots and nonblocking `request_termination()` / `request_kill()`; the Windows adapter sends private ConPTY Control-C and escalates the owned job. POSIX retains process-group behavior. | WP-52 requires portable terminal ownership without concrete downcasts. The old lifecycle calls were POSIX-only. ckmux now owns the shared type and uses the standard launch factory. Native Windows tests exercise a stubborn root and descendant alongside a responsive peer; the compiled no-op escalation mutation fails. Release and sanitizer evidence is recorded with the library release rather than inferred from the shared working tree. |
+
+Scalable combined Windows readiness remains a separate upstream gap: the
+outer terminal currently rejects more than `MAXIMUM_WAIT_OBJECTS` sources.
+WP-54 must resolve that in ckVision, not reduce ckmux's terminal limit or
+poll incomplete sets. This foundation does not claim a runnable Windows
+ckmux client/server or close WP-53–WP-57.
+
+L-69 landed in ckVision `84c96695`, published as public `aea4754a` and
+[v0.1.9](https://github.com/cklukas/ckVision/releases/tag/v0.1.9). GitHub
+CI `37126856749` passed all seven jobs: Windows/macOS/Linux Release, ASan,
+UBSan, TSan and fuzz. ckmux pins this release; [15](15-windows.md) records
+the candidate and public-library adopter-mode gates and remaining work.
+
 ### Upstream status
 
 This table keeps the landed seams beside the genuinely open/deferred ones so
@@ -355,6 +373,9 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 | # | State | Item | For |
 |---|---|---|---|
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
+| U-WIN-FS | Open | Native implementation of the injected `FileSystem` contract; current real adapter is POSIX-only. | WP-53 |
+| U-WIN-CLIP | Open | Correct Windows clipboard ownership and report export failures through portable clipboard APIs; `OpenClipboard(nullptr)` followed by `EmptyClipboard()` violates the documented `SetClipboardData` ownership requirement. Native reproduction and regression required. | WP-53 |
+| U-WIN-WAIT | Open | Scalable native readiness beyond `MAXIMUM_WAIT_OBJECTS`, upstream rather than an adopter limit. | WP-54 |
 | U5-b | **Done** (`4d0afef`) | `process_id()` on `core::TerminalSubsession`, default −1. | WP-39 |
 | U5-a | **Done** (`da11baa`) | `process_id()` on `PosixTerminalSubsession`, observation-only. | WP-37/WP-38 |
 | U4-a | **Done** (`fae8f97`) | Window Switcher Bar. | WP-32 |
@@ -394,7 +415,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.8 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.9 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins

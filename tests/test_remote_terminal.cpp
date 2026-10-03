@@ -490,6 +490,33 @@ CK_TEST(a_snapshot_carries_the_history_a_reader_had_before_they_attached) {
     CK_CHECK(surface_text(surface).find("before-attach-2") != std::string::npos);
 }
 
+CK_TEST(a_portable_remote_snapshot_copies_only_the_requested_payloads) {
+    FakeServer server;
+    for (int line = 0; line < 40; ++line)
+        server.child_printed("history-" + std::to_string(line) + "\r\n");
+    RemoteTerminalSubsession remote(server.id, server.profile, nullptr);
+    remote.mirror().set_history_limit(200);
+    remote.mirror().adopt(server.snapshot());
+    ckv::term::TerminalSubsession& portable = remote;
+    auto image = std::make_shared<ckv::Image>(ckv::PixelSize{4, 6});
+    remote.mirror().set_raster_identity(99);
+    remote.mirror().place_image(1, image, ckv::Point{2, 1}, ckv::Size{1, 1});
+    const auto full = portable.snapshot();
+    CK_CHECK(!full.cell_buffer.empty());
+    CK_CHECK(!full.scrollback.empty());
+    CK_CHECK(full.rasters.size() == 1U);
+    if (!full.rasters.empty()) CK_CHECK(full.rasters.front().image == image);
+    const auto grid = portable.snapshot({.include_scrollback = false, .include_rasters = false});
+    CK_CHECK(grid.cell_buffer.size() == full.cell_buffer.size());
+    CK_CHECK(grid.scrollback.empty());
+    CK_CHECK(grid.rasters.empty());
+    CK_CHECK(grid.cells == full.cells);
+    CK_CHECK(grid.state == full.state);
+    const auto history = portable.snapshot({.include_rasters = false});
+    CK_CHECK(history.cell_buffer.size() == full.cell_buffer.size());
+    CK_CHECK(history.scrollback.size() == full.scrollback.size());
+}
+
 CK_TEST(a_reader_keeps_only_as_much_history_as_they_asked_for) {
     // The server's capacity is its own; the client's is the reader's
     // `[general] scrollback`. A client that kept everything the server sent

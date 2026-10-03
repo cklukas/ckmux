@@ -305,7 +305,11 @@ sibling checkout / package per [07](07-ckvision-integration.md)).
 | Clipboard helper | `pbcopy` (optional) | `wl-copy`/`xclip` (optional) | config `[terminal] clipboard` |
 | Signals/termios | shared POSIX code | shared | `platform/process` — one `reset_signals_for_child()` every fork site uses, because a rule copied to each site is a rule that will one day differ between them |
 
-Windows/ConPTY: out of scope, and now said in the build rather than implied —
-`CMakeLists.txt` fails outright on a non-POSIX host instead of guarding only
-the executable with `if(UNIX)` while the libraries that cannot compile
-elsewhere built unconditionally. The seams above are the eventual door.
+Windows/ConPTY is an active owner-directed port as of 2026-10-03, specified
+in [15-windows.md](15-windows.md). The current build still refuses Windows
+until native platform implementations replace the POSIX-only services;
+the guard must not be removed to imply support before those services work.
+ckVision owns the shared terminal interface and private ConPTY transport.
+ckmux owns its secure local IPC, detached server, connection readiness and
+Windows configuration/process services. WP-52–WP-57 in the queue carry the
+native implementation, security, behavior and release evidence.
