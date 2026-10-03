@@ -230,6 +230,32 @@ report confidently on both.
 
 The Windows-port session's own, 2026-10-03:
 
+- **Reversed a regression fixture's input/output descriptors.** The POSIX
+  copy-error fixture closed the borrowed input instead of the output sink,
+  so its expected failure did not occur. The child exited and the parent's
+  acknowledgement then raised SIGPIPE, obscuring the assertion. Name each
+  endpoint, check the constructor's ordering, and keep the acknowledgement
+  alive when the behavior assertion fails so a regression remains readable.
+- **Carried a candidate check forward as a landed check.** The independent
+  scratch-root assertion was present in an older owned checkout but absent
+  from the filesystem commit assembled from a different candidate. Comparing
+  the two checkouts before cleanup found the non-delivery. The actual helper
+  still used the selected root, but that did not make its self-comparison an
+  independent regression. Attribute candidate evidence to those bytes only,
+  check the committed test body, and carry the minimal missing fix forward.
+- **Compared an annotated release tag object with its commit.** The public
+  adopter gate stopped before compiling because `rev-parse refs/tags/v0.1.9`
+  returned the annotation, while the checkout correctly held its commit.
+  The fetched bytes were right; the verifier asked the wrong identity
+  question. Peel `refs/tags/v0.1.9^{commit}` before comparing with HEAD,
+  preserve the failed attempt, and repeat the actual gate before pushing.
+- **Compared patch coordinates as though they were peer content.** After a
+  header-test insertion landed, the peer's unchanged CMake hunk moved down
+  fourteen lines. An index-hash-stripped patch comparison still compared its
+  `@@` addresses and falsely stopped the post-landing audit. Inspect the
+  difference, then compare unchanged context/addition/removal payloads with
+  both blob hashes and hunk coordinates excluded. The ref/index and owned
+  paths were checked independently; no peer hunk was removed or re-landed.
 - **Used zsh's `path` as an ordinary loop variable.** zsh ties that name to
   PATH. After the ref moved, git/awk could no longer resolve, leaving the
   index at the parent. A fresh shell proved the index still equalled that

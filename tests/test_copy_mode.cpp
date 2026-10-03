@@ -20,6 +20,7 @@
 #include "cvision/testing/cktest.hpp"
 #include "cvision/ui/application.hpp"
 #include "cvision/widgets/terminal_view.hpp"
+#include "cvision/widgets/static_text.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -65,7 +66,8 @@ ClientOptions test_options() {
 struct Fixture {
     ckv::term::HeadlessTerminal terminal{Size{100, 30}};
     ManualClock clock;
-    Application app{terminal, clock};
+    ckv::MemoryClipboardWriter clipboard;
+    Application app{terminal, clock, clipboard};
     ClientApp client{app, test_options()};
 
     bool press(ckv::KeyChord chord) { return app.dispatch(ckv::KeyEvent{std::move(chord)}); }
@@ -79,6 +81,39 @@ struct Fixture {
         press_prefix();
         press_char("[");
         settle();
+    }
+};
+
+bool yank_first_line(Application& app, std::string_view text) {
+    app.step(0);
+    auto* view = dynamic_cast<ckv::widgets::TerminalView*>(app.focused());
+    CK_CHECK(view != nullptr);
+    if (view == nullptr) return false;
+    view->session().feed_output(std::string(text) + "\r\n");
+    app.step(0);
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::Ctrl, "b"}});
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "["}});
+    app.step(0);
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "g"}});
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "V"}});
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, "y"}});
+    app.step(0);
+    return true;
+}
+
+std::string clipboard_message_in(ckv::ui::View& view) {
+    std::string text;
+    if (auto* label = dynamic_cast<ckv::widgets::StaticText*>(&view)) text = label->text();
+    for (const auto& child : view.children()) text += "\n" + clipboard_message_in(*child);
+    return text;
+}
+
+class RefusingHostClipboard final : public ckv::ClipboardWriter {
+public:
+    unsigned attempts = 0;
+    ckv::ClipboardWriteResult write_text(std::string_view) override {
+        ++attempts;
+        return {ckv::ClipboardWriteStatus::Unavailable, 17};
     }
 };
 
@@ -422,7 +457,8 @@ CK_TEST(a_copy_reaches_every_target_the_configuration_named_in_order) {
 
     ckv::term::HeadlessTerminal terminal{Size{100, 30}};
     ManualClock clock;
-    Application app{terminal, clock};
+    ckv::MemoryClipboardWriter clipboard;
+    Application app{terminal, clock, clipboard};
     ClientApp client{app, std::move(options)};
     app.step(clock.now_nanos());
     auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(app.focused());
@@ -449,6 +485,57 @@ CK_TEST(a_copy_reaches_every_target_the_configuration_named_in_order) {
     // The internal one is filled whatever the targets did: `^B ]` has to work
     // over a connection where nothing outside this process can be reached.
     CK_CHECK(client.internal_clipboard() == "target text");
+}
+
+CK_TEST(one_configured_copy_aggregates_host_and_helper_refusals_and_keeps_the_text) {
+    RefusingHostClipboard writer;
+    ckv::term::HeadlessTerminal terminal{Size{120, 40}};
+    ManualClock clock;
+    Application app{terminal, clock, writer};
+    ClientOptions options = test_options();
+    options.settings.clipboard = {
+        {ckm::ClipboardTarget::Kind::Osc52, {}},
+        {ckm::ClipboardTarget::Kind::Exec, "refusing helper"}};
+    unsigned helper_attempts = 0;
+    options.clipboard_writer = [&](const std::string& command, std::string_view text) {
+        ++helper_attempts;
+        CK_CHECK(command == "refusing helper" && text == "preserved text");
+        return false;
+    };
+    options.clipboard_problem = [] { return "helper could not start"; };
+    ClientApp client{app, std::move(options)};
+    if (!yank_first_line(app, "preserved text")) return;
+    CK_CHECK(writer.attempts == 1 && helper_attempts == 1);
+    CK_CHECK(client.copy_mode() == nullptr);
+    CK_CHECK(client.internal_clipboard() == "preserved text");
+    CK_CHECK(app.clipboard_text() == "preserved text");
+    std::size_t warnings = 0;
+    for (auto* window : client.desktop().windows()) if (window->title() == "Copy") ++warnings;
+    CK_CHECK(warnings == 1 && app.is_modal());
+    const auto message = clipboard_message_in(app.root());
+    CK_CHECK(message.find("currently unavailable") != std::string::npos);
+    CK_CHECK(message.find("native error 17") != std::string::npos);
+    CK_CHECK(message.find("refusing helper") != std::string::npos);
+    CK_CHECK(message.find("helper could not start") != std::string::npos);
+    app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+    app.step(0);
+    // One dismissal clears every failure for this copy, not one of two boxes.
+    CK_CHECK(!app.is_modal());
+}
+
+CK_TEST(a_configured_helper_without_a_launch_bridge_is_not_silently_accepted) {
+    ckv::MemoryClipboardWriter writer;
+    ckv::term::HeadlessTerminal terminal{Size{100, 30}};
+    ManualClock clock;
+    Application app{terminal, clock, writer};
+    ClientOptions options = test_options();
+    options.settings.clipboard = {{ckm::ClipboardTarget::Kind::Pbcopy, {}}};
+    options.clipboard_writer = {};
+    ClientApp client{app, std::move(options)};
+    if (!yank_first_line(app, "no bridge")) return;
+    CK_CHECK(client.internal_clipboard() == "no bridge");
+    CK_CHECK(app.is_modal());
+    CK_CHECK(clipboard_message_in(app.root()).find("did not reach pbcopy") != std::string::npos);
 }
 
 CK_TEST(a_paste_is_bracketed_only_for_a_program_that_asked_for_it) {

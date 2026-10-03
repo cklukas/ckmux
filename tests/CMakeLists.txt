@@ -16,6 +16,7 @@ set(CKMUX_TEST_SOURCES
     test_capability_grace.cpp
     test_client_pacing.cpp
     test_client_smoke.cpp
+    test_clipboard_exports.cpp
     test_config.cpp
     test_config_filesystem.cpp
     test_copy_mode.cpp

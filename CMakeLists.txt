@@ -12,7 +12,7 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.9)
+set(CKMUX_CKVISION_VERSION 0.1.10)
 
 # Until the native port is complete, ckmux builds on POSIX only. The server
 # forks, polls file descriptors and speaks over a unix-domain socket, and

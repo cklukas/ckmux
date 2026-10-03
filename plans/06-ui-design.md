@@ -568,8 +568,15 @@ Implemented, WP-17 (`src/client/copy_mode.*`).
   `copy-mode` context in `[keys]` refuses bindings out loud until that
   changes ([08-configuration.md](08-configuration.md)).
 - Copy targets: internal clipboard (for `^B ]` paste into any terminal) and
-  the host clipboard via OSC 52 (works over SSH) and/or `pbcopy`-style
-  helper — see [08-configuration.md](08-configuration.md).
+  the host clipboard through ckVision (native Unicode clipboard on Windows,
+  OSC 52 over POSIX terminals/SSH) and/or `pbcopy`-style helper — see
+  [08-configuration.md](08-configuration.md). Refused exports are reported
+  once per configured copy, without losing the internal text. Standard widget
+  copies and terminal selections also preserve text for terminal paste and
+  report the library's explicit failure. A submitted OSC 52 request is not a
+  confirmed remote clipboard update; it is not reported as a refusal. Native
+  error numbers and possible partial external changes remain visible. Missing
+  configured helper bridges count as refusals, not silent success.
 - Paste (`^B ]`, middle-click, menu): wrapped in bracketed-paste markers iff
   the inner app enabled mode 2004; large pastes are chunked with PTY
   backpressure ([04](04-terminal-emulation.md)).

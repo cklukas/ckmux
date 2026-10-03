@@ -383,9 +383,10 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 | # | State | Item | For |
 |---|---|---|---|
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
-| U-WIN-FS | Open | Native implementation of the injected `FileSystem` contract; current real adapter is POSIX-only. | WP-53 |
-| U-WIN-CLIP | In progress | Scoped native ownership and isolated Unicode/contention/lifetime regressions landed upstream in `987e0b68` (`WindowsClipboardWriter`, used by `WindowsTerminal`). Portable typed export results remain open. The named Windows 11 host permits old null-owner writes despite Microsoft's contract, so data loss was not reproduced there. | WP-53 |
+| U-WIN-FS | **Done** (upstream `d58d78bf`) | Native Unicode paths, revision-consistent reads and conditional atomic publication; configuration saves consume the injected contract. Native filesystem and configuration-only gates are recorded in [15](15-windows.md), not a complete Windows app gate. | WP-53 |
+| U-WIN-CLIP | **Done** | Scoped native ownership landed upstream in `987e0b68`; D-124 typed export outcomes and Application result observation landed in `1965f8fd`, released as v0.1.10 = public `c12732ce`, CI `37155541830` all seven jobs green. Native 210/210, Mac/Linux Release 222/222 and sanitizer gates pass. ckmux pins 0.1.10 and consumes that API for widget/selection copies and one warning per configured copy, with 58/58 Mac/Linux and Linux ASan/UBSan; no local clipboard workaround. The named Windows 11 host permits old null-owner writes, so original data loss was not reproduced there. | WP-53 |
 | U-WIN-WAIT | Open | Scalable native readiness beyond `MAXIMUM_WAIT_OBJECTS`, upstream rather than an adopter limit. | WP-54 |
+| U-WIN-CMD | In progress | A native Windows 11 25H2 ARM64 black-box probe against 0.1.10 finds cmd `/s /c` fails even for a simple builtin because the argv encoder does not express cmd command syntax. PowerShell cases pass. Upstream D-125's isolated candidate passes five cmd cases, PowerShell and ordinary argv (3/3 native CTest entries), plus 2/2 focused Mac entries. Mutation/full gates, landing and adoption remain pending. No command-line quoting or script workaround belongs here. | WP-53 |
 | U5-b | **Done** (`4d0afef`) | `process_id()` on `core::TerminalSubsession`, default −1. | WP-39 |
 | U5-a | **Done** (`da11baa`) | `process_id()` on `PosixTerminalSubsession`, observation-only. | WP-37/WP-38 |
 | U4-a | **Done** (`fae8f97`) | Window Switcher Bar. | WP-32 |
@@ -425,7 +426,7 @@ around the library.
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
 - **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — currently v0.1.9 — through `find_package` or a
+  `CKMUX_CKVISION_VERSION` — currently v0.1.10 — through `find_package` or a
   FetchContent clone of that release tag. Co-development builds deliberately
   use the sibling source first so an upstream fix is visible immediately.
   Every version bump runs the full ckmux suite and updates conformance pins

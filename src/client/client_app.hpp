@@ -1029,7 +1029,7 @@ private:
     void report_settings_not_saved();
     void report_config_warnings();
     // The copy that did not leave ckmux, and what the helper said about it.
-    void report_clipboard_problem(const std::vector<std::string>& refused);
+    void report_clipboard_problem(const std::vector<std::string>& refused, bool include_helper_diagnostic);
     void set_theme(ckv::ui::Theme theme);
     void populate_help();
     void dismiss_prefix_overlay();
@@ -1195,6 +1195,8 @@ private:
     // clipboard because a reader copying inside ckmux over SSH may have no
     // system clipboard that ckmux can reach at all.
     std::string internal_clipboard_;
+    // Non-null only while one configured copy gathers its host/helper failures.
+    std::vector<std::string>* clipboard_refusals_ = nullptr;
     ckv::ui::Application::TimerId which_key_timer_ = 0;
     ckv::ui::Application::TimerId title_timer_ = 0;
     // WP-29's two memories. `layout_seen_` is the previous sample and is what

@@ -158,7 +158,7 @@ by their recorded sessions. This queue owns the Windows port only.
 | Order | Package | Where | State | Prerequisite |
 |---:|---|---|---|---|
 | W1 | WP-52 — Portable terminal ownership and upstream lifecycle | both | **Done** (2026-10-03, ckVision `84c96695`, released v0.1.9 = public `aea4754a`; CI `37126856749` all seven jobs green; ckmux consumes shared ownership and pins 0.1.9, native/cross-platform evidence in [15](15-windows.md)) | Latest ckVision Windows adapter ✓ |
-| W2 | WP-53 — MSVC build and Windows host services | both | **In progress** (ckmux-windows, Codex task `01a03fb6-1b89-7642-bd53-1baaabd561b0`; no UDS socket for host-service API work; upstream Windows filesystem landed, configuration saves consume its conditional atomic contract; native configuration-only tests pass, full host/build work remains in [15](15-windows.md)) | WP-52 ✓ |
+| W2 | WP-53 — MSVC build and Windows host services | both | **In progress** (ckmux-windows, Codex task `01a03fb6-1b89-7642-bd53-1baaabd561b0`; no UDS socket for host-service API work; native filesystem/configuration and typed clipboard services consumed, exact ckVision 0.1.10 release pin; upstream explicit cmd launch candidate has focused native evidence but awaits full gates/landing; full host/build work remains in [15](15-windows.md)) | WP-52 ✓ |
 | W3 | WP-54 — Secure IPC, detached server and native waits | ckmux | Ready | — |
 | W4 | WP-55 — Complete native behavior and live acceptance | ckmux | Blocked | WP-52, WP-53, WP-54 |
 | W5 | WP-56 — Windows CI and release packages | ckmux | Blocked | WP-55 |

@@ -99,9 +99,85 @@ no lingering unpumped clipboard owner in a terminal application's native wait.
 Windows 11 25H2 ARM64 nevertheless accepts the old null-owner sequence; data
 loss was **not** reproduced on that host. A compiled null-owner mutation with
 the new ownership check retained fails three native round-trip assertions.
-Both portable APIs still return void: typed export-failure reporting remains
-open, alongside the filesystem and scalable-wait gaps. No ckmux clipboard
+At that checkpoint both portable APIs still returned void: typed reporting
+was open, alongside the filesystem and scalable-wait gaps. No ckmux clipboard
 workaround was added, and WP-53 is not complete.
+
+### Explicit clipboard outcome candidate
+
+ckVision D-124 now provides typed native/memory acceptance, unacknowledged
+terminal submission and explicit refusals, including native error numbers and
+possible partial external changes. Application retains the internal copy and
+offers an injected result handler for standard widget copies. Record/replay
+preserves those outcomes and rejects unscripted/mismatched requests. The
+isolated ckmux candidate uses that handler, aggregates host/helper failures
+into one configured-copy warning and retains text for terminal paste. Missing
+helper bridges count as failures. No Windows clipboard API enters ckmux UI.
+
+Initial upstream API candidate on `478c92ee`: Apple Clang strict Release
+222/222 (41.59 s), Debian 13 ARM64 GCC 13.3 Release 222/222 (22.44 s),
+Clang 19 Debug ASan/UBSan+fuzz 232/232 (198.05 s), GCC 13.3 Debug TSan
+221/221 (361.01 s), native Windows ARM64 MSVC strict Release 210/210
+(58.24 s). All CTest exits 0, parallel 2; benchmark gates pass on Mac,
+Linux Release and Windows. These precede the version bump and final extra
+replay/native diagnostic cases; ckVision 0.1.10 is prepared but not published.
+
+ckmux candidate at `317bd221` plus owned code/tests: Mac strict Release
+58/58, exit 0, 265.08 s at parallel 2. Added aggregation/missing-helper cases
+then pass 2/2 focused suites, exit 0. The focused two-action rebuild's log
+creation/last-write interval is 20:30:03–20:30:06 UTC (second-resolution
+metadata), not an instrumented stopwatch. No application was launched.
+The full sweep's longer duration is explained by fresh alphabetical CTest
+scheduling: the 173.65 s reference suite started later. The prior reused
+build scheduled its 168.64 s reference suite first and finished in 191.03 s.
+This is a scheduling difference, not a claimed performance regression/fix.
+
+Final 0.1.10 candidate gates, run by ckmux-windows Codex, use source/asset
+manifest SHA256 `8421c33c1e84558d5f64baffec9dc4757ac8b02e5d0aec360d8bc0dd6d1192fc`:
+Apple Clang strict Release 222/222 (54.99 s), Debian 13 ARM64 GCC 13.3
+Release 222/222 (26.82 s), Clang 19 Debug ASan/UBSan+fuzz 232/232
+(139.63 s), GCC 13.3 Debug TSan 221/221 (276.77 s), and native Windows 11
+25H2 ARM64 MSVC strict Release 210/210. All CTest exits 0 at parallel 2;
+Mac, Linux Release and Windows benchmark gates pass. This covers the version
+bump and final replay/native diagnostic cases, not just the initial API delta.
+The committed library `1965f8fd` is clean inside its detached worktree, matches
+that manifest, and passes a further Mac Release 222/222, exit 0 (38.59 s).
+It is landed locally and published as filtered GitHub snapshot `c12732ce`:
+a separate clean Apple Clang Release build passes 216 non-PTY plus four PTY
+tests and a strict documentation-site build. Its clean build took 104 s,
+comparable to the prior 102.718 s library clean build; no warning was found.
+GitHub CI `37155541830` completed successfully in all seven jobs. v0.1.10
+is released at that public commit; annotated tag object `0d1b2b99` peels to
+`c12732ce5bb42cc2bb079b9d6e331301a46a8e20`. ckmux's exact pin is now 0.1.10.
+Existing v0.1.7 app packages are unchanged and still use 0.1.8.
+
+A subsequent black-box native shell probe against those 0.1.10 library bytes
+finds both cmd cases fail with exit 1, including a simple echo builtin, while
+two PowerShell cases pass. The cmd error includes the requested marker, so
+screen substring matching alone would have falsely accepted it; real exit
+status rejects it. Upstream D-125's isolated command-processor candidate now
+separates command text from argv escaping. Mac focused rejection/ordinary-argv
+tests pass 2/2. Native MSVC strict Release passes three CTest entries (five
+cmd cases plus PowerShell and ordinary argv), exit 0, 1.63 s. The test's
+deprecated C++20 u8path call was corrected, not warning-suppressed; an earlier
+harness configuration failed on a backslash path before compilation. Both
+failed logs are retained and are not test evidence. The current native
+candidate manifest is `81b4267c847051d82bd093ca1e26a2dd1c39321b1f757ba93f7419635cc87d7b`.
+The command fix is not yet landed or certified; ckmux must consume the library
+contract rather than compose native quoting or temporary script wrappers.
+
+Final adopter candidate gates at `317bd221` plus the owned clipboard delta,
+using those library bytes: Apple Clang strict Release 58/58 (183.47 s),
+Debian 13 ARM64 GCC 13.3 Release 58/58 (101.92 s), and Linux Clang 19 Debug
+ASan/UBSan 58/58 (137.09 s). All CTest exits 0 at parallel 2. A compiled
+library mutation that falsely reports success fails the public widget-copy
+and replay cases; restoration passes 4/4 focused suites. A compiled ckmux
+mutation that suppresses native-error warnings fails both clipboard suites;
+restoration passes 2/2, before the final full 58/58 sweep. No mutant is retained.
+
+The 0.1.10 dependency pin follows its actual release and complete gates.
+Full Windows application build, shell/paths/host selection, IPC and
+native waits, live acceptance and Windows packages remain outstanding.
 
 Clipboard candidate gates (ckmux-windows Codex, isolated ckVision `84c96695`
 plus only the subsequently landed owned delta): macOS Apple Clang Release
