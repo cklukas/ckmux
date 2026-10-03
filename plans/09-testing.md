@@ -11,7 +11,12 @@ the hardened `ckv::golden` frame codec. CTest labels mirror upstream:
 `unit`, `golden`, `script`, `pty`, `e2e`, `benchmark`, `fuzz-corpus`,
 `portable`.
 
-**Current integration baseline:** ckmux v0.1.4 consumes ckVision v0.1.5
+**Current Windows-foundation integration:** ckmux main consumes ckVision
+v0.1.9. The portable ownership and dependency-pin gates, configurations,
+inventories and remaining native work are recorded in [15](15-windows.md).
+This is not a new native Windows package or a replacement for M4 acceptance.
+
+**Historical v0.1.4 integration baseline:** ckmux v0.1.4 consumes ckVision v0.1.5
 (public `0e67f04`). Before the version-only release bumps, macOS Debug and
 ASan+UBSan passed 53/53 ckmux suites and 172/172 ckVision suites; Debian 13
 GCC 13.3 Release with `_FORTIFY_SOURCE=2` passed the same 53/53 and 172/172.

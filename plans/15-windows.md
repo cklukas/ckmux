@@ -134,6 +134,40 @@ and reports ckmux 0.1.7. This source override proves the public library's
 bytes work; it does not prove that a not-yet-published tag can be fetched.
 No native Windows ckmux executable has been built or visually certified.
 
+The clean pinned integration gate at ckmux `7dcaaab` × ckVision `84c96695`
+passed macOS Release 54/54, CTest exit 0. Build start/end 14:05:54Z to
+14:06:25Z, 29.371 s / 186 Ninja actions; output
+`/Volumes/PRO-BLADE/tmp/ckmux-windows-20261003-01/mac-ckmux-commit/ckmux`,
+SHA256 `5b90fa8ef273bcefed1396cde22475c4b6c44e9e598a3f2d5c7634f65218a893`.
+
+### Exact installed-release selection
+
+The adopter pin said "exact" but its FetchContent `FIND_PACKAGE_ARGS` omitted
+`EXACT`. ckVision's SameMajorVersion package metadata could therefore select
+a later installed library. The lookup now requests EXACT. The registered
+`ckvision_release_pin` test reads the actual root declaration and executes
+its lookup arguments against real CMake package/version fixtures: the exact
+release must be selected, both older and later releases must be refused.
+Running it against `7dcaaab`'s original declaration fails with exit 1 because
+0.1.10 bypasses the 0.1.9 pin; the new declaration passes on macOS, Linux and
+native Windows CMake. This is ckmux dependency policy, not a library workaround.
+
+The isolated pin delta on clean `7dcaaab` × `84c96695` passed macOS Release
+55/55 (parallel 2, 183.73 s), exit 0. Linux GCC 13.3 Release passed 55/55
+(parallel 2, 101.61 s), and Clang 19 Debug ASan/UBSan passed 55/55
+(parallel 2, 181.90 s), all exits 0. The extra test is a script: the Mac
+reconfiguration/build reported no compile work, and its production executable
+hash above is unchanged. A short Mac build here is expected and proven by
+unchanged compiled inputs/output, not interpreted as a new clean build.
+Linux reconfiguration rebuilt the 56-action GCC and 112-action Clang ckmux
+object graphs (including Clang dependency scans), rather than called no-work.
+The root pin also generates `CKMUX_CKVISION_PIN_STRING` in
+`generated/common/version.hpp`; changing the guest's former 0.1.8 pin to
+0.1.9 invalidated its dependent translation units. The generated header and
+actual compile actions were checked. The Mac gate already had that pin.
+Release build: 14:17:52Z–14:18:26Z; ASan/UBSan build:
+14:20:08Z–14:20:49Z. These incremental times are not clean-build baselines.
+
 ## Verification instrument repairs during WP-52
 
 The first transferred archive included AppleDouble metadata sidecars. Linux
@@ -155,3 +189,12 @@ codes are captured separately; a failing wrapper is never reported as a
 green aggregate run. Windows PowerShell's Stop policy also treated expected
 native stderr as an exception during a negative test; the negative runner
 now captures the child's nonzero exit explicitly before restoring/re-gating.
+
+A Lima/SSH invocation inside a stdin-fed Bash driver consumed the driver's
+unread tail. The wrapper exited 0 without creating the later Mac gate logs.
+Their absence caught the skipped gate; no test verdict was claimed. Gate
+drivers are now frozen files, remote commands receive `/dev/null` stdin, and
+actual CTest logs/exits are checked. The standalone Windows CMake-policy
+driver initially passed native backslashes to CMake 3.31's eval-based version
+helper; it now passes canonical CMake paths, as real CTest configuration does.
+The unchanged regression then passed; this was a driver-input repair.

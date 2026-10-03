@@ -138,7 +138,7 @@ else()
         GIT_TAG        v${CKMUX_CKVISION_VERSION}
         GIT_SHALLOW    TRUE
         EXCLUDE_FROM_ALL
-        FIND_PACKAGE_ARGS ${CKMUX_CKVISION_VERSION} CONFIG)
+        FIND_PACKAGE_ARGS ${CKMUX_CKVISION_VERSION} EXACT CONFIG)
     FetchContent_MakeAvailable(ckvision)
 endif()
 
@@ -314,6 +314,13 @@ option(CKMUX_BUILD_TESTING "Build ckmux tests" ${PROJECT_IS_TOP_LEVEL})
 if(CKMUX_BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
+
+    add_test(NAME ckvision_release_pin
+        COMMAND ${CMAKE_COMMAND}
+            -DCKMUX_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DCKMUX_PIN_SCRATCH=${CMAKE_BINARY_DIR}/test-artifacts/ckvision-release-pin
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ckvision_release_pin.cmake)
+    set_tests_properties(ckvision_release_pin PROPERTIES LABELS "script;dependency" TIMEOUT 30)
 
     # The architecture rule fails like a test because it is one. REQUIRED, so
     # the gate can never vanish silently on a host without an interpreter —
