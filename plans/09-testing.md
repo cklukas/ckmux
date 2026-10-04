@@ -326,7 +326,12 @@ than the allocations themselves. Both are honest gaps, not silent ones.
 macOS is the daily gate (Apple clang + a homebrew LLVM lane for fuzzers,
 matching upstream's split). Linux is blocking: the Debian 13 `ckdev` VM runs
 GCC 13/14 and Clang locally, while public CI builds against both the pinned
-ckVision release and ckVision HEAD. Host-terminal manual matrix per release:
+ckVision release and ckVision HEAD. The pinned-release Linux lanes explicitly
+gate Ubuntu 24.04 (the package build baseline) and Ubuntu 26.04; the advisory
+ckVision HEAD lane runs on 26.04. Release binaries remain built on 24.04 so a
+runner-label migration cannot silently raise their system-library floor.
+The publication-only job runs on 26.04 and does not compile the packages.
+Host-terminal manual matrix per release:
 WezTerm + iTerm2 (Sixel), Terminal.app (no Sixel — fallback path), xterm
 (`-ti vt340`), plus upstream's `ckvision_terminal_probe` output attached to
 release notes for each. The full three-host/vttest pass remains WP-21.
