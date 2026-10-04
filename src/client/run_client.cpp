@@ -18,14 +18,17 @@
 #include <utility>
 #include <vector>
 
-#include <fcntl.h>
-#include <poll.h>
-#include <unistd.h>
+#if defined(_WIN32)
+#include "cvision/term/windows_filesystem.hpp"
+#else
+#include "cvision/term/posix_filesystem.hpp"
+#endif
 
 #include "client/server_connection.hpp"
 #include "client/server_session.hpp"
 #include "client/capability_grace.hpp"
 #include "platform/paths.hpp"
+#include "platform/poller.hpp"
 #include "cvision/core/assert.hpp"
 #include "cvision/core/clock.hpp"
 #include "cvision/term/terminal.hpp"
@@ -37,16 +40,12 @@ namespace {
 // The application's own sources, plus the socket. ckVision hands out its
 // descriptors precisely so a host can wait on them together with its own
 // (D-021); this is that pattern with one extra fd.
-int wait_for_work(ckv::ui::Application& app, int socket_fd, bool want_write, int timeout_ms) {
-    std::vector<pollfd> waiting;
+void wait_for_work(ckv::ui::Application& app, const platform::Stream& stream, int timeout_ms) {
+    platform::Poller waiting;
     for (const ckv::term::WaitHandle& handle : app.wait_handles())
-        if (handle.kind == ckv::term::WaitHandleKind::PosixFileDescriptor)
-            waiting.push_back(pollfd{static_cast<int>(handle.value), POLLIN, 0});
-    if (socket_fd >= 0)
-        waiting.push_back(
-            pollfd{socket_fd, static_cast<short>(POLLIN | (want_write ? POLLOUT : 0)), 0});
-    if (waiting.empty()) return 0;
-    return ::poll(waiting.data(), static_cast<nfds_t>(waiting.size()), timeout_ms);
+        waiting.watch(handle, platform::Interest::Read);
+    for (const auto source : stream.wait_sources()) waiting.watch(source);
+    if (waiting.watched() != 0) (void)waiting.wait(timeout_ms);
 }
 
 // One of a tile fraction's four numbers, wire to window layer (WP-30). The wire
@@ -442,6 +441,11 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // here because the write and the explanation are two hooks and have to
     // agree about one attempt.
     std::string save_problem;
+#if defined(_WIN32)
+    ckv::term::WindowsFileSystem print_files;
+#else
+    ckv::term::PosixFileSystem print_files;
+#endif
     // --- The virtual printer's client half (PRINT-3…6) --------------------
     //
     // `ClientApp` takes every printer fact as an injected hook so that a test
@@ -518,10 +522,9 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
     // `printer_save_problem` carries the reason across, because a save that
     // failed silently is the worst of the four outcomes: the reader believes
     // they have the document and finds out when they need it.
-    options.client.write_print_file = [&save_problem](const std::string& path,
+    options.client.write_print_file = [&save_problem, &print_files](const std::string& path,
                                                       std::string_view bytes) {
         save_problem.clear();
-        std::error_code failed;
         // `~` is APPLIED here, at the filesystem boundary — the first place a
         // path stops being something a reader typed and becomes something the
         // kernel is handed — but what it MEANS is decided in
@@ -535,31 +538,23 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
         // bug exactly. A guard whose failure mode is the defect it guards
         // against is not one.
         const std::filesystem::path target = ckm::platform::expand_user_path(path);
-        const std::string resolved = target.string();
-        if (target.has_parent_path()) {
-            std::filesystem::create_directories(target.parent_path(), failed);
-            failed.clear();
-        }
-        // Exclusive create: a save must never quietly overwrite a document the
-        // reader already has. The dialog is what asks about replacing.
-        const int fd = ::open(resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        if (fd < 0) {
-            save_problem = std::strerror(errno);
+        const std::string resolved = ckm::platform::path_text(target);
+        if (resolved.empty()) {
+            save_problem = "the capture filename is unavailable or invalid";
             return false;
         }
-        std::size_t written = 0;
-        while (written < bytes.size()) {
-            const ::ssize_t wrote = ::write(fd, bytes.data() + written, bytes.size() - written);
-            if (wrote <= 0) {
-                if (errno == EINTR) continue;
-                save_problem = std::strerror(errno);
-                (void)::close(fd);
-                return false;
-            }
-            written += static_cast<std::size_t>(wrote);
+        if (target.has_parent_path() &&
+            !print_files.create_directories(ckm::platform::path_text(target.parent_path()))) {
+            save_problem = "cannot create the capture's destination directory";
+            return false;
         }
-        if (::close(fd) != 0) {
-            save_problem = std::strerror(errno);
+        // Preserve the existing explicit Save route's create/replace policy,
+        // but publish whole bytes atomically through the library's native host
+        // service. A write failure must not leave a truncated partial capture.
+        const auto saved = print_files.write_file_atomic(resolved, bytes,
+                                                         ckv::FileWriteExpectation::any());
+        if (saved.status != ckv::FileWriteStatus::Ok) {
+            save_problem = "cannot publish the capture file: " + resolved;
             return false;
         }
         return true;
@@ -966,8 +961,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
         const std::int64_t until = deadline.has_value() && *deadline > now ? *deadline - now : 0;
         const int timeout_ms =
             static_cast<int>(std::min<std::int64_t>(until > 0 ? until / 1'000'000 : 50, 50));
-        (void)wait_for_work(app, connection.stream.fd(), connection.stream.wants_write(),
-                            std::max(1, timeout_ms));
+        wait_for_work(app, connection.stream, std::max(1, timeout_ms));
 
         if (connection.stream.wants_write() && !connection.stream.flush()) {
             // A flush that fails is the server going away mid-write, and the

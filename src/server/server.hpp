@@ -23,10 +23,12 @@
 #include <string>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
+#include "common/stats.hpp"
 #include "platform/poller.hpp"
 #include "platform/process_stats.hpp"
 #include "platform/socket.hpp"
@@ -278,6 +280,9 @@ private:
         // subscription is a fact about a reader's View menu, not about what
         // is running.
         bool watch_stats = false;
+        // A held dead terminal is cleared once PER subscriber, including
+        // readers arriving after another reader already heard the exit.
+        std::unordered_set<TerminalId> stats_dead_announced;
     };
 
     void accept_pending();
@@ -529,6 +534,15 @@ private:
     ckv::Clock& clock_;
     platform::Listener listener_;
     platform::Poller poller_;
+    enum class SourceRole { Listener, Signal, Client, Child };
+    struct SourceBinding {
+        ckv::term::WaitHandle handle;
+        SourceRole role;
+        ClientId client = 0;
+    };
+    // Captured before waiting: a closed/reused native handle cannot redirect
+    // an old completion to a newly accepted client in the same ready batch.
+    std::vector<SourceBinding> source_bindings_;
     std::vector<std::unique_ptr<Client>> clients_;
     ClientId next_client_ = 1;
     std::unordered_map<TerminalId, PasteSlot> paste_slots_;
@@ -539,16 +553,7 @@ private:
     // it: the flush tick runs at max-fps and sampling thirty times a second
     // would be work nobody asked for. The baseline is what a rate is derived
     // against — cumulative CPU at the previous pass, and when that pass was.
-    struct StatsBaseline {
-        std::uint64_t cpu_nanos = 0;
-        std::int64_t at_nanos = 0;
-        // A flag rather than "at_nanos > 0": a ManualClock starts at zero, so
-        // a baseline taken at t=0 is real and a sentinel would read it as
-        // absent — which showed up as a spinner reporting 0‰ forever in the
-        // one test whose clock had never been advanced before subscribing.
-        bool primed = false;
-        bool dead_announced = false;
-    };
+    using StatsBaseline = CpuBaseline;
     std::unordered_map<TerminalId, StatsBaseline> stats_baselines_;
     std::int64_t next_stats_nanos_ = 0;
     // Whether the sampler was running on the previous pass. The transition

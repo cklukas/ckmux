@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <set>
 #include <string>
@@ -34,6 +35,7 @@
 #include <vector>
 
 #include "reader_harness.hpp"
+#include "scratch_directory.hpp"
 
 #include "cvision/testing/cktest.hpp"
 
@@ -221,6 +223,10 @@ std::optional<std::filesystem::path> only_file_in(const std::filesystem::path& f
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(folder, ignored)) {
         if (!entry.is_regular_file(ignored)) continue;
+        // FileSystem's documented persistent directory lock is synchronization
+        // state, not a saved document. Refuse every other unexpected regular
+        // file, including leaked atomic-save intermediates and extra captures.
+        if (entry.path().filename() == ".ckvision-write.lock") continue;
         if (found.has_value()) return std::nullopt;  // more than one: not "the" file
         found = entry.path();
     }
@@ -261,6 +267,31 @@ Rig make_rig(const std::string& name, const std::string& format) {
 }
 
 }  // namespace
+
+CK_TEST(saved_capture_discovery_excludes_only_the_reserved_coordination_file) {
+    const ckmtest::ScratchDirectory scratch("print-discovery");
+    const auto lock = scratch.path() / ".ckvision-write.lock";
+    const auto capture = scratch.path() / "ckmux-print-0-1.txt";
+    {
+        std::ofstream file(lock, std::ios::binary);
+        CK_CHECK(file.good());
+    }
+    CK_CHECK(!only_file_in(scratch.path()));
+    {
+        std::ofstream file(capture, std::ios::binary);
+        file << "saved capture";
+        CK_CHECK(file.good());
+    }
+    CK_CHECK(only_file_in(scratch.path()) == capture);
+    const auto unexpected = scratch.path() / "unexpected.tmp";
+    {
+        std::ofstream file(unexpected, std::ios::binary);
+        CK_CHECK(file.good());
+    }
+    CK_CHECK(!only_file_in(scratch.path()));
+    CK_CHECK(std::filesystem::remove(unexpected));
+    CK_CHECK(only_file_in(scratch.path()) == capture);
+}
 
 CK_TEST(a_child_that_prints_gets_a_saved_file_and_ckmux_opens_no_device) {
     if (binary_path().empty()) return;

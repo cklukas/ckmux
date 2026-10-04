@@ -5,9 +5,8 @@
 # ckVision's own CkVisionSettings.cmake: one place defines the flag set, and
 # warnings are errors (the conventions).
 #
-# There is no MSVC arm. ckmux is POSIX-only — the root CMakeLists says so once
-# and stops — so a /W4 branch here would be flag selection for a compiler that
-# never reaches the second translation unit.
+# Both native compiler families enforce warnings as errors. Unsupported
+# instrumentation is refused, never silently compiled without a sanitizer.
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,10 +42,38 @@ option(CKMUX_WCONVERSION "Add -Wconversion to the strict flag set" OFF)
 option(CKMUX_BUILD_FUZZERS "Build libFuzzer targets and bounded corpus tests (LLVM Clang only)" OFF)
 
 include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag(-Wmissing-designated-field-initializers
-                        CKMUX_HAS_WMISSING_DESIGNATED)
+if(MSVC)
+    if(CKMUX_BUILD_FUZZERS)
+        message(FATAL_ERROR "CKMUX_BUILD_FUZZERS requires an LLVM Clang toolchain")
+    endif()
+    if(CKMUX_SANITIZE)
+        if(NOT CKMUX_SANITIZE STREQUAL "address")
+            message(FATAL_ERROR "MSVC supports only CKMUX_SANITIZE=address")
+        endif()
+        check_cxx_compiler_flag("/fsanitize=address" CKMUX_HAS_MSVC_ASAN)
+        if(NOT CKMUX_HAS_MSVC_ASAN)
+            message(FATAL_ERROR "This MSVC target does not support /fsanitize=address")
+        endif()
+    endif()
+else()
+    check_cxx_compiler_flag(-Wmissing-designated-field-initializers
+                            CKMUX_HAS_WMISSING_DESIGNATED)
+endif()
 
 function(ckmux_strict target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8 /EHsc)
+        # Standard getenv/fopen are not deprecated project APIs. Keep actual
+        # [[deprecated]] diagnostics enabled rather than disabling C4996.
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+        if(CKMUX_WCONVERSION)
+            target_compile_options(${target} PRIVATE /w14242 /w14244 /w14267)
+        endif()
+        if(CKMUX_SANITIZE)
+            target_compile_options(${target} PRIVATE /fsanitize=address)
+        endif()
+        return()
+    endif()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror)
     if(CKMUX_HAS_WMISSING_DESIGNATED)
         # Newer LLVM Clang puts this under -Wextra; AppleClang does not have it

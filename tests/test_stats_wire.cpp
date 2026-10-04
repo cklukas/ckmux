@@ -102,7 +102,8 @@ int collect_stats(Server& server, WireClient& client, std::vector<ckm::proto::Te
     return found;
 }
 
-bool greet_and_attach(Server& server, WireClient& client) {
+bool greet_and_attach(Server& server, WireClient& client,
+                      ckm::proto::AttachMode mode = ckm::proto::AttachMode::TakeOver) {
     ckm::proto::Hello hello;
     hello.build = "stats tests";
     client.say(hello);
@@ -110,6 +111,7 @@ bool greet_and_attach(Server& server, WireClient& client) {
     if (!pump(server, client, greeting)) return false;
     if (!std::holds_alternative<ckm::proto::HelloAck>(greeting)) return false;
     ckm::proto::Attach attach;
+    attach.mode = static_cast<std::uint8_t>(mode);
     attach.columns = 40;
     attach.rows = 8;
     client.say(attach);
@@ -304,6 +306,93 @@ CK_TEST(a_spinning_child_reads_busy_and_an_idle_shell_reads_idle) {
     std::printf("  [rate] spinner %u permille, idle shell %u permille\n",
                 spinner_permille, idle_permille);
 
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(shared_stats_subscribers_receive_one_identical_busy_sample) {
+    const auto socket = private_socket("shared-rate");
+    forget(socket);
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, test_settings()}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    WireClient first;
+    WireClient second;
+    CK_CHECK(first.connect(socket));
+    CK_CHECK(greet_and_attach(server, first));
+    const auto id = server.open_terminal(0, spec_running("while :; do :; done")).id();
+    CK_CHECK(second.connect(socket));
+    CK_CHECK(greet_and_attach(server, second, ckm::proto::AttachMode::Join));
+    first.say(ckm::proto::WatchStats{1});
+    second.say(ckm::proto::WatchStats{1});
+    std::vector<ckm::proto::TermStats> one;
+    std::vector<ckm::proto::TermStats> two;
+    (void)collect_stats(server, first, one, 8);
+    (void)collect_stats(server, second, two, 8);
+    CK_CHECK(!one.empty());
+    CK_CHECK(!two.empty());
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    clock.advance(1'000'000'000);
+    one.clear();
+    two.clear();
+    (void)collect_stats(server, first, one, 6);
+    (void)collect_stats(server, second, two, 6);
+    CK_CHECK(one.size() == 1U);
+    CK_CHECK(two.size() == 1U);
+    if (one.size() == 1U && two.size() == 1U) {
+        CK_CHECK(one.front().term == id);
+        CK_CHECK(one.front().cpu_permille > 100U);
+        CK_CHECK(two.front() == one.front());
+    }
+    server.terminals().close_all();
+    forget(socket);
+}
+
+CK_TEST(a_late_stats_subscriber_gets_its_own_single_dead_terminal_clear) {
+    const auto socket = private_socket("late-dead");
+    forget(socket);
+    ckm::Settings settings = test_settings();
+    settings.on_exit = ckm::ExitPolicy::Hold;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    WireClient first;
+    CK_CHECK(first.connect(socket));
+    CK_CHECK(greet_and_attach(server, first));
+    const auto id = server.open_terminal(0, spec_running("exit 0")).id();
+    first.say(ckm::proto::WatchStats{1});
+    std::vector<ckm::proto::TermStats> one;
+    bool announced = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!announced && std::chrono::steady_clock::now() < deadline) {
+        clock.advance(1'000'000'000);
+        (void)collect_stats(server, first, one, 3);
+        for (const auto& stats : one)
+            if (stats.term == id && !alive(stats)) announced = true;
+    }
+    CK_CHECK(announced);
+    WireClient late;
+    CK_CHECK(late.connect(socket));
+    CK_CHECK(greet_and_attach(server, late, ckm::proto::AttachMode::Watch));
+    late.say(ckm::proto::WatchStats{1});
+    std::vector<ckm::proto::TermStats> received;
+    (void)collect_stats(server, late, received, 4);
+    clock.advance(1'000'000'000);
+    (void)collect_stats(server, late, received, 4);
+    CK_CHECK(received.size() == 1U);
+    if (received.size() == 1U) {
+        CK_CHECK(received.front().term == id);
+        CK_CHECK(!alive(received.front()));
+    }
+    one.clear();
+    received.clear();
+    for (int second = 0; second < 3; ++second) {
+        clock.advance(1'000'000'000);
+        (void)collect_stats(server, first, one, 3);
+        (void)collect_stats(server, late, received, 3);
+    }
+    CK_CHECK(one.empty());
+    CK_CHECK(received.empty());
     server.terminals().close_all();
     forget(socket);
 }

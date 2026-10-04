@@ -15,8 +15,16 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <memory>
+#include <vector>
+#include "platform/poller.hpp"
+#if defined(_WIN32)
+#include "platform/windows_pipe.hpp"
+#endif
 
 namespace ckm::platform {
+
+class Stream;
 
 // Where the server listens.
 //
@@ -59,6 +67,9 @@ enum class ConnectStatus {
     // server that died. Both mean "start one" to a client, which is why they
     // are one answer rather than two.
     NoServer,
+    // A server owns the namespace but all current accept slots are occupied.
+    // Retry within the connection deadline; do not launch another server.
+    Busy,
     // The path exists and is listening, but this user may not use it, or the
     // directory it sits in is not safe.
     Denied,
@@ -68,8 +79,13 @@ enum class ConnectStatus {
 
 struct ConnectResult {
     ConnectStatus status = ConnectStatus::Unusable;
+#if defined(_WIN32)
+    WindowsPipe connection;
+#else
     int fd = -1;
+#endif
     std::string problem;  // in a reader's words, for the Denied/Unusable cases
+    Stream take_stream();
 };
 
 // Connects to a listening server. Never blocks for longer than the connect
@@ -136,17 +152,25 @@ public:
 
     struct AcceptResult {
         AcceptStatus status = AcceptStatus::Idle;
+#if defined(_WIN32)
+        WindowsPipe connection;
+#else
         int fd = -1;
+#endif
         // In a reader's words, and empty when there is nothing a reader could
         // do about it (Idle and Retry).
         std::string problem;
         // `errno` as it stood, for a caller that logs or decides by it.
         int error = 0;
+        Stream take_stream();
     };
 
     Status listen(const std::filesystem::path& path);
 
+#if !defined(_WIN32)
     int fd() const noexcept { return fd_; }
+#endif
+    ckv::term::WaitHandle wait_handle() const noexcept;
     const std::string& problem() const noexcept { return problem_; }
     const std::filesystem::path& path() const noexcept { return path_; }
 
@@ -159,7 +183,9 @@ public:
     // The same, in the shape the server loop was written against: a descriptor
     // or -1, and a word for the reader only when there is one. Which of the
     // several reasons for -1 this was, the overload above says.
+#if !defined(_WIN32)
     int accept_one(std::string& refusal);
+#endif
 
     // Stops listening and removes the socket file. Called by the destructor;
     // safe to call twice.
@@ -173,8 +199,12 @@ public:
     void close() noexcept;
 
 private:
+#if defined(_WIN32)
+    WindowsPipeListener native_;
+#else
     int fd_ = -1;
     int lock_fd_ = -1;
+#endif
     std::filesystem::path path_;
     std::string problem_;
 };
@@ -221,20 +251,29 @@ public:
     // queue is not.
     static constexpr std::size_t kHardLimitBytes = 32u * 1024u * 1024u;
 
-    Stream() = default;
+    Stream();
     // Takes ownership of `fd`, and makes the no-SIGPIPE guarantee flush()
     // states true for it: on macOS that is a socket option, which every
     // descriptor this class is handed needs and only the ones this file made
     // would otherwise have.
+#if defined(_WIN32)
+    explicit Stream(WindowsPipe connection);
+#else
     explicit Stream(int fd);
+#endif
     ~Stream();
     Stream(const Stream&) = delete;
     Stream& operator=(const Stream&) = delete;
     Stream(Stream&& other) noexcept;
     Stream& operator=(Stream&& other) noexcept;
 
+#if defined(_WIN32)
+    bool open() const noexcept { return native_ && native_->open(); }
+#else
     int fd() const noexcept { return fd_; }
     bool open() const noexcept { return fd_ >= 0; }
+#endif
+    std::vector<WaitSource> wait_sources() const;
 
     // Queues bytes and writes what it can immediately. Returns false once the
     // queue is over its high-water mark — the bytes are still queued, because
@@ -266,7 +305,7 @@ public:
     // are what fairness is made of.
     bool receive(std::string& into, std::size_t byte_budget = 1024 * 1024);
 
-    std::size_t queued() const noexcept { return pending_.size() - sent_; }
+    std::size_t queued() const noexcept;
     bool over_high_water() const noexcept { return queued() > kHighWaterBytes; }
     // Whether there is already more screen queued than is worth adding to.
     bool over_delta_backlog() const noexcept { return queued() > kDeltaBacklogBytes; }
@@ -285,9 +324,13 @@ public:
     void close() noexcept;
 
 private:
+#if defined(_WIN32)
+    std::unique_ptr<WindowsPipeStream> native_;
+#else
     int fd_ = -1;
     std::string pending_;
     std::size_t sent_ = 0;
+#endif
 };
 
 }  // namespace ckm::platform

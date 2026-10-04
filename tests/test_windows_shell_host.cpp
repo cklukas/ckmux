@@ -99,6 +99,23 @@ CK_TEST(native_shell_host_validates_executables_and_rejects_relative_invalid_and
     CK_CHECK(!host.usable_executable(path_text(recursive)));
 }
 
+CK_TEST(native_ui_fixture_has_a_real_silent_live_child_and_observes_its_response) {
+    ckmtest::ScratchDirectory scratch("native-ui-child");
+    const auto shell = ckm::shell_launch(CKMUX_TEST_CHILD_PATH, false);
+    auto spec = native_spec(shell, scratch.path());
+    auto child = ckv::term::launch_terminal_subsession(spec);
+    CK_CHECK(child != nullptr);
+    if (!child) return;
+    // The portable emulator is Ready until the child emits its first bytes.
+    // A silent live process must not be required to print a prompt just to
+    // satisfy the fixture; the process id and transformed reply prove life.
+    CK_CHECK(child->state() == ckv::term::TerminalSubsessionState::Ready);
+    CK_CHECK(child->process_id() > 0);
+    child->send_input("native-fixture-response\r");
+    CK_CHECK(pump(*child, "NATIVE-FIXTURE-RESPONSE"));
+    CK_CHECK(child->state() == ckv::term::TerminalSubsessionState::Running);
+}
+
 CK_TEST(native_comspec_changes_are_observed_and_unicode_shell_paths_run_commands) {
     ScopedComspec guard;
     const auto original = ckm::platform::shell_host();

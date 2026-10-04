@@ -11,6 +11,7 @@
 #include "common/config.hpp"
 #include "common/proto.hpp"
 #include "platform/socket.hpp"
+#include "platform/paths.hpp"
 
 namespace ckm::client {
 namespace {
@@ -37,15 +38,15 @@ struct CliConnection {
 
 CliConnection connect_without_starting(const std::filesystem::path& socket) {
     CliConnection result;
-    const platform::ConnectResult connected = platform::connect_to_server(socket);
+    platform::ConnectResult connected = platform::connect_to_server(socket);
     if (connected.status != platform::ConnectStatus::Connected) {
         if (connected.status == platform::ConnectStatus::NoServer)
-            std::fprintf(stderr, "ckmux: no server is running at %s\n", socket.string().c_str());
+            std::fprintf(stderr, "ckmux: no server is running at %s\n", platform::path_text(socket).c_str());
         else
             std::fprintf(stderr, "ckmux: %s\n", connected.problem.c_str());
         return result;
     }
-    result.stream = platform::Stream(connected.fd);
+    result.stream = connected.take_stream();
     proto::Hello hello;
     hello.build = std::string(proto::kBuildIdentity);
     hello.client_kind = proto::ClientKind::Cli;
@@ -402,7 +403,7 @@ int run_check_config(const std::filesystem::path& config) {
     // is exactly who this is for (the configuration spec).
     LoadedSettings loaded = load_settings(config);
 
-    std::printf("%s\n", config.string().c_str());
+    std::printf("%s\n", platform::path_text(config).c_str());
     if (loaded.warnings.empty()) {
         std::printf("  no problems\n");
     } else {

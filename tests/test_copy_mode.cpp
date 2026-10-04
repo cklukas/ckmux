@@ -9,8 +9,6 @@
 // keys, not about a handler.
 #include "client/copy_mode.hpp"
 
-#if !defined(_WIN32)
-
 #include <string>
 #include <vector>
 
@@ -21,6 +19,7 @@
 #include "cvision/ui/application.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 #include "cvision/widgets/static_text.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -59,7 +58,7 @@ ckv::ui::CommandId id_of(Application& app, std::string_view key) {
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     return options;
 }
 
@@ -591,5 +590,3 @@ CK_TEST(paste_is_unavailable_until_something_has_been_copied) {
     f.settle();
     CK_CHECK(f.app.command_available(id_of(f.app, ckm::client::commands::kPaste)));
 }
-
-#endif  // !_WIN32

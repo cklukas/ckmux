@@ -47,8 +47,10 @@ inline constexpr int kClipboardIdleBudgetMs = 2000;
 //
 // `idle_budget_ms` is the deadline above, as a parameter so a test does not
 // have to wait out the real one.
+#if !defined(_WIN32)
 bool write_to_command(const std::string& command, std::string_view text,
                       std::string* diagnostics = nullptr,
                       int idle_budget_ms = kClipboardIdleBudgetMs);
+#endif
 
 }  // namespace ckm::platform

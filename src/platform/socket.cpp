@@ -25,6 +25,27 @@
 #endif
 
 namespace ckm::platform {
+
+Stream ConnectResult::take_stream() {
+    Stream stream(fd);
+    fd = -1;
+    return stream;
+}
+Stream Listener::AcceptResult::take_stream() {
+    Stream stream(fd);
+    fd = -1;
+    return stream;
+}
+Stream::Stream() = default;
+std::size_t Stream::queued() const noexcept { return pending_.size() - sent_; }
+std::vector<WaitSource> Stream::wait_sources() const {
+    if (!open()) return {};
+    return {{{ckv::term::WaitHandleKind::PosixFileDescriptor, static_cast<std::uintptr_t>(fd_)},
+        wants_write() ? Interest::Read | Interest::Write : Interest::Read}};
+}
+ckv::term::WaitHandle Listener::wait_handle() const noexcept {
+    return {ckv::term::WaitHandleKind::PosixFileDescriptor, static_cast<std::uintptr_t>(fd_)};
+}
 namespace {
 
 // A socket that will never raise SIGPIPE on this process (macOS's half of the

@@ -3,6 +3,7 @@
 #include "platform/process_stats.hpp"
 
 #include <charconv>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -21,13 +22,40 @@
 
 namespace ckm::platform {
 
+TerminalResources sample_terminal(const ckv::core::TerminalSubsession& terminal,
+                                  std::optional<ProcessTable>& table) {
+#ifdef _WIN32
+    (void)table;
+    return {terminal.process_resources(), std::nullopt};
+#else
+    TerminalResources result;
+    const ProcessId root = terminal.process_id();
+    if (root < 0) {
+        result.resources.state = ckv::core::ProcessResourceState::Gone;
+        return result;
+    }
+    if (!process_stats_supported()) return result;
+    if (!table) table = ProcessTable::snapshot();
+    const TreeSample sample = sample_tree(*table, root);
+    result.resources.state = sample.process_count == 0 ? ckv::core::ProcessResourceState::Gone
+                                                      : ckv::core::ProcessResourceState::Available;
+    if (sample.process_count > 0) {
+        result.resources.live_processes = static_cast<std::uint32_t>(sample.process_count);
+        result.resources.cpu_time_nanos = sample.cpu_time_nanos;
+        result.resources.rss_bytes = sample.rss_bytes;
+        if (sample.has_real) result.platform_cost = sample.real_bytes;
+    }
+    return result;
+#endif
+}
+
 ProcessTable ProcessTable::from_entries(std::vector<Entry> entries) {
     ProcessTable table;
     table.entries_ = std::move(entries);
     return table;
 }
 
-std::vector<int> ProcessTable::tree_of(int root) const {
+std::vector<ProcessId> ProcessTable::tree_of(ProcessId root) const {
     bool present = false;
     for (const Entry& entry : entries_) {
         if (entry.pid == root) {
@@ -37,32 +65,32 @@ std::vector<int> ProcessTable::tree_of(int root) const {
     }
     if (!present) return {};
 
-    std::unordered_map<int, std::vector<int>> children;
+    std::unordered_map<ProcessId, std::vector<ProcessId>> children;
     children.reserve(entries_.size());
     for (const Entry& entry : entries_) children[entry.ppid].push_back(entry.pid);
 
     // Each pid is visited once: a reused pid can print a loop into a ppid
     // column read mid-churn, and a walk that trusted it would never return.
-    std::vector<int> result;
-    std::unordered_set<int> visited;
-    std::vector<int> frontier{root};
+    std::vector<ProcessId> result;
+    std::unordered_set<ProcessId> visited;
+    std::vector<ProcessId> frontier{root};
     visited.insert(root);
     while (!frontier.empty()) {
-        const int pid = frontier.back();
+        const ProcessId pid = frontier.back();
         frontier.pop_back();
         result.push_back(pid);
         const auto found = children.find(pid);
         if (found == children.end()) continue;
-        for (const int child : found->second) {
+        for (const ProcessId child : found->second) {
             if (visited.insert(child).second) frontier.push_back(child);
         }
     }
     return result;
 }
 
-TreeSample sample_tree(const ProcessTable& table, int root) {
+TreeSample sample_tree(const ProcessTable& table, ProcessId root) {
     TreeSample total;
-    for (const int pid : table.tree_of(root)) {
+    for (const ProcessId pid : table.tree_of(root)) {
         const ProcessSample sample = sample_process(pid);
         if (!sample.alive) continue;
         total.cpu_time_nanos += sample.cpu_time_nanos;
@@ -199,9 +227,10 @@ ProcessTable ProcessTable::snapshot() {
     return table;
 }
 
-ProcessSample sample_process(int pid) {
+ProcessSample sample_process(ProcessId identity) {
     ProcessSample sample;
-    if (pid <= 0) return sample;
+    if (identity <= 0 || identity > std::numeric_limits<int>::max()) return sample;
+    const int pid = static_cast<int>(identity);  // Checked native POSIX range.
     rusage_info_v2 usage{};
     if (proc_pid_rusage(pid, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&usage)) != 0) {
         return sample;
@@ -286,9 +315,10 @@ ProcessTable ProcessTable::snapshot() {
     return table;
 }
 
-ProcessSample sample_process(int pid) {
+ProcessSample sample_process(ProcessId identity) {
     ProcessSample sample;
-    if (pid <= 0) return sample;
+    if (identity <= 0 || identity > std::numeric_limits<int>::max()) return sample;
+    const int pid = static_cast<int>(identity);  // Checked native POSIX range.
     char path[64];
     std::string text;
     std::snprintf(path, sizeof path, "/proc/%d/stat", pid);
@@ -325,11 +355,17 @@ bool process_stats_supported() noexcept { return true; }
 
 ProcessTable ProcessTable::snapshot() { return {}; }
 
-ProcessSample sample_process(int) { return {}; }
+ProcessSample sample_process(ProcessId) { return {}; }
 
-// Windows rides the parking lot's ConPTY entry. Until then this platform
-// says so instead of returning zeros that look like measurements.
-bool process_stats_supported() noexcept { return false; }
+// Windows' terminal sampler uses ckVision's explicit owned-job service.
+// Its unrelated ambient process-table operation remains unsupported.
+bool process_stats_supported() noexcept {
+#ifdef _WIN32
+    return true;  // ckVision's owned-job observation, not a parent-PID walk.
+#else
+    return false;
+#endif
+}
 
 #endif
 

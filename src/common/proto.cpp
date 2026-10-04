@@ -1023,6 +1023,12 @@ void write(Writer& w, const TermStats& m) {
     w.u64(m.rss_bytes);
     w.u64(m.real_bytes);
     w.u8(m.flags);
+    w.u8(static_cast<std::uint8_t>(m.state));
+    w.u8(static_cast<std::uint8_t>(m.cpu_scope));
+    w.u8(static_cast<std::uint8_t>(m.real_kind));
+    w.u32(m.live_processes);
+    w.u32(m.unreadable_processes);
+    w.u32(m.system_error);
 }
 void read(Reader& r, TermStats& m) {
     m.term = r.u64();
@@ -1030,6 +1036,12 @@ void read(Reader& r, TermStats& m) {
     m.rss_bytes = r.u64();
     m.real_bytes = r.u64();
     m.flags = r.u8();
+    m.state = r.enum_of<TermStatsState>(r.u8(), 4);
+    m.cpu_scope = r.enum_of<TermStatsScope>(r.u8(), 1);
+    m.real_kind = r.enum_of<TermStatsMemory>(r.u8(), 1);
+    m.live_processes = r.u32();
+    m.unreadable_processes = r.u32();
+    m.system_error = r.u32();
 }
 
 void write(Writer& w, const Error& m) {

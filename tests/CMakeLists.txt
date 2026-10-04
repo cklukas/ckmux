@@ -37,6 +37,8 @@ set(CKMUX_TEST_SOURCES
     test_printer_button.cpp
     test_printer_output.cpp
     test_process_stats.cpp
+    test_process_identity.cpp
+    test_resource_stats.cpp
     test_paths.cpp
     test_proto.cpp
     test_scratch_directory.cpp
@@ -60,11 +62,53 @@ set(CKMUX_TEST_SOURCES
     test_stats_wire.cpp)
 
 if(WIN32)
-    list(APPEND CKMUX_TEST_SOURCES test_windows_shell_host.cpp)
+    # An explicit native inventory: do not register POSIX fixtures with their
+    # entire bodies hidden by _WIN32 guards as passing Windows coverage. Their
+    # equivalents remain required by the specification; the Unix inventory above stays
+    # intact. These common sources exercise data and injected-service routes.
+    set(CKMUX_TEST_SOURCES
+        test_commands.cpp
+        test_attach_flags.cpp
+        test_capability_grace.cpp
+        test_clipboard_exports.cpp
+        test_config_filesystem.cpp
+        test_copy_mode.cpp
+        test_docs.cpp
+        test_grid_delta.cpp
+        test_keymap.cpp
+        test_minimize_chrome.cpp
+        test_notifications.cpp
+        test_prefix.cpp
+        test_printer_button.cpp
+        test_printer_output.cpp
+        test_proto.cpp
+        test_process_identity.cpp
+        test_resource_stats.cpp
+        test_remote_terminal.cpp
+        test_scratch_directory.cpp
+        test_shell_policy.cpp
+        test_stats_format.cpp
+        test_windows_shell_host.cpp
+        test_windows_paths.cpp
+        test_windows_pipe.cpp)
+    list(APPEND CKMUX_TEST_SOURCES test_windows_resource_stats.cpp)
+    add_executable(ckmux_ipc_race_probe windows_pipe_race_probe.cpp)
+    target_link_libraries(ckmux_ipc_race_probe PRIVATE ckmux_platform)
+    ckmux_strict(ckmux_ipc_race_probe)
+    add_executable(ckmux_windows_process_child windows_process_child.cpp)
+    target_link_libraries(ckmux_windows_process_child PRIVATE ckmux_platform)
+    ckmux_strict(ckmux_windows_process_child)
+    add_executable(ckmux_windows_live_child windows_live_terminal_child.cpp)
+    ckmux_strict(ckmux_windows_live_child)
 endif()
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
+if(WIN32)
+    add_dependencies(ckmux_tests ckmux_ipc_race_probe ckmux_windows_process_child ckmux_windows_live_child)
+    target_compile_definitions(ckmux_tests PRIVATE
+        CKMUX_TEST_CHILD_PATH="$<TARGET_FILE:ckmux_windows_live_child>")
+endif()
 if(DEFINED ENV{TMPDIR} AND IS_ABSOLUTE "$ENV{TMPDIR}")
     set(CKMUX_TEST_TEMP_DEFAULT "$ENV{TMPDIR}")
 else()
@@ -76,6 +120,23 @@ if(NOT IS_ABSOLUTE "${CKMUX_TEST_TEMP_ROOT}")
     message(FATAL_ERROR "CKMUX_TEST_TEMP_ROOT must be absolute")
 endif()
 file(MAKE_DIRECTORY "${CKMUX_TEST_TEMP_ROOT}")
+if(WIN32)
+    find_program(CKMUX_POWERSHELL NAMES powershell REQUIRED)
+    add_test(NAME windows_process_contract
+        COMMAND "${CKMUX_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_process_contract.ps1"
+            -Binary "$<TARGET_FILE:ckmux_windows_process_child>"
+            -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}")
+    set_tests_properties(windows_process_contract PROPERTIES LABELS "native;process" TIMEOUT 30)
+    if(TARGET ckmux)
+        add_test(NAME windows_server_lifecycle
+            COMMAND "${CKMUX_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_server_lifecycle.ps1"
+                -Binary "$<TARGET_FILE:ckmux>"
+                -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}")
+        set_tests_properties(windows_server_lifecycle PROPERTIES LABELS "native;process;ipc;e2e" TIMEOUT 120)
+    endif()
+endif()
 target_compile_definitions(ckmux_tests PRIVATE CKMUX_TEST_TEMP_ROOT="${CKMUX_TEST_TEMP_ROOT}")
 # The lifecycle tests run the real binary — a server that is not a real process
 # is not a server (WP-2). The path is a definition rather than a search, so a
@@ -210,6 +271,7 @@ set(CKMUX_LABELS_test_notifications "pty")
 set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 set(CKMUX_LABELS_test_stats_display "pty")
+set(CKMUX_LABELS_test_windows_resource_stats "native;pty;e2e")
 set(CKMUX_LABELS_test_session_desktop_client "pty")
 set(CKMUX_LABELS_test_reader_modes_client "pty")
 set(CKMUX_LABELS_test_attach_flags "unit")

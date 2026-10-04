@@ -149,7 +149,7 @@ public:
     // terminal's process tree (the work queue WP-38) — and -1 once the exit has been
     // observed. Ending a child stays `request_termination()`'s and never goes
     // by pid; ckVision's accessor says the same where it is declared (U5-a).
-    int process_id() const noexcept { return session_->process_id(); }
+    ckv::core::ProcessId process_id() const noexcept { return session_->process_id(); }
     const ckv::core::TerminalSubsession& session() const noexcept { return *session_; }
     ckv::term::TerminalSnapshot snapshot() const { return session_->snapshot(); }
     ckv::term::TerminalSnapshot snapshot(ckv::core::TerminalSnapshotOptions options) const {

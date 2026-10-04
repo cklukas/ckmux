@@ -6,6 +6,7 @@
 // only property that matters, because everything a reader sees downstream of
 // M2 is that mirror rather than the terminal itself.
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <span>
@@ -651,7 +652,7 @@ CK_TEST(a_corrupted_delta_is_refused_rather_than_turned_into_a_different_screen)
 
     int decoded_count = 0;
     for (std::size_t index = 0; index < original.size(); ++index) {
-        for (const std::uint8_t mask : {0x01u, 0x40u, 0x80u}) {
+        for (const std::uint8_t mask : std::array<std::uint8_t, 3>{0x01, 0x40, 0x80}) {
             std::string corrupted = original;
             corrupted[index] = static_cast<char>(static_cast<std::uint8_t>(corrupted[index]) ^ mask);
             ckm::proto::Message decoded;

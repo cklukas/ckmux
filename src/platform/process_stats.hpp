@@ -31,8 +31,9 @@
 // entitlement is involved) and Linux (`/proc` stat lines for the table and
 // the counters, `smaps_rollup` for PSS — the one expensive read, and absent
 // on pre-4.14 kernels or unreadable for a zombie, in which case `has_real`
-// is false and RSS still answers). Windows rides the parking lot's ConPTY
-// entry. On a platform without a fill, `process_stats_supported()` says so,
+// is false and RSS still answers). Windows observes the terminal's explicit
+// owned job through ckVision; it never walks a system parent-PID table.
+// On a platform without a fill, `process_stats_supported()` says so,
 // snapshots are empty, and samples are dead — callers show nothing rather
 // than zeros pretending to be measurements.
 #pragma once
@@ -41,7 +42,13 @@
 #include <string_view>
 #include <vector>
 
+#include "cvision/core/process_resources.hpp"
+#include "cvision/core/terminal_subsession.hpp"
+
 namespace ckm::platform {
+
+// Preserve ckVision's observation identity, including every native DWORD.
+using ProcessId = ckv::core::ProcessId;
 
 // One process's counters at one moment.
 struct ProcessSample {
@@ -65,8 +72,8 @@ struct ProcessSample {
 class ProcessTable {
 public:
     struct Entry {
-        int pid = -1;
-        int ppid = -1;
+        ProcessId pid = -1;
+        ProcessId ppid = -1;
     };
 
     // The live system's table. Empty on a platform with no fill yet.
@@ -80,7 +87,7 @@ public:
     // when `root` itself is not in the table — a tree needs its root. Safe
     // against the loops a reused pid can print into a ppid column: each pid
     // is visited once.
-    std::vector<int> tree_of(int root) const;
+    std::vector<ProcessId> tree_of(ProcessId root) const;
 
     bool empty() const noexcept { return entries_.empty(); }
     std::size_t size() const noexcept { return entries_.size(); }
@@ -91,7 +98,7 @@ private:
 
 // One pid's counters now. Dead (`alive == false`) for a pid that is gone or
 // unreadable.
-ProcessSample sample_process(int pid);
+ProcessSample sample_process(ProcessId pid);
 
 // Everything `tree_of(root)` could actually read, summed.
 struct TreeSample {
@@ -103,11 +110,20 @@ struct TreeSample {
     // the root is gone — the caller's cue to show nothing.
     int process_count = 0;
 };
-TreeSample sample_tree(const ProcessTable& table, int root);
+TreeSample sample_tree(const ProcessTable& table, ProcessId root);
 
 // False on a platform whose fill has not landed. Callers show nothing rather
 // than a zero pretending to be a measurement.
 bool process_stats_supported() noexcept;
+
+// Windows observes the explicit job through ckVision, including descendants
+// after process_id() becomes -1. POSIX retains its live-tree cost semantics.
+struct TerminalResources {
+    ckv::core::ProcessResources resources;
+    std::optional<std::uint64_t> platform_cost;
+};
+TerminalResources sample_terminal(const ckv::core::TerminalSubsession& terminal,
+                                  std::optional<ProcessTable>& table);
 
 // --- Linux `/proc` text, parsed anywhere ---------------------------------
 //

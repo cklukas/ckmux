@@ -3,8 +3,12 @@
 #include "platform/poller.hpp"
 
 #include <cerrno>
+#include <limits>
 
 namespace ckm::platform {
+
+Poller::Poller() = default;
+Poller::~Poller() = default;
 
 void Poller::clear() {
     // The capacity stays, which is what makes the promise in the header true:
@@ -22,6 +26,12 @@ void Poller::watch(int fd, Interest interest) {
     if (has(interest, Interest::Write)) entry.events |= POLLOUT;
     entry.revents = 0;
     watching_.push_back(entry);
+}
+
+void Poller::watch(ckv::term::WaitHandle handle, Interest interest) {
+    if (handle.kind != ckv::term::WaitHandleKind::PosixFileDescriptor ||
+        handle.value > static_cast<std::uintptr_t>(std::numeric_limits<int>::max())) return;
+    watch(static_cast<int>(handle.value), interest);
 }
 
 std::size_t Poller::watched() const noexcept { return watching_.size(); }
@@ -52,6 +62,8 @@ const std::vector<Ready>& Poller::wait(int timeout_ms) {
         if (entry.revents == 0) continue;
         Ready result;
         result.fd = entry.fd;
+        result.source = {ckv::term::WaitHandleKind::PosixFileDescriptor,
+                         static_cast<std::uintptr_t>(entry.fd)};
         result.readable = (entry.revents & POLLIN) != 0;
         result.writable = (entry.revents & POLLOUT) != 0;
         result.hangup = (entry.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0;

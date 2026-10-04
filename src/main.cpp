@@ -21,6 +21,8 @@
 #include <ctime>
 #include <initializer_list>
 #include <memory>
+#include <fstream>
+#include <exception>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,8 +39,14 @@
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "cvision/term/file_trace_sink.hpp"
+#if defined(_WIN32)
+#include "cvision/term/windows_clock.hpp"
+#include "cvision/term/windows_terminal.hpp"
+#include "cvision/term/windows_text.hpp"
+#else
 #include "cvision/term/posix_clock.hpp"
 #include "cvision/term/posix_terminal.hpp"
+#endif
 #include "cvision/term/terminal_clipboard.hpp"
 #include "cvision/ui/application.hpp"
 
@@ -96,9 +104,21 @@ void print_cli_help() {
         "                     none answers, so the only reason to type this is\n"
         "                     debugging: --foreground keeps it in front of you with\n"
         "                     its diagnostics on stderr; a detached server writes\n"
+#if defined(_WIN32)
+        "                     them beside configuration under LocalAppData.\n"
+#else
         "                     them to a log beside the socket.\n"
+#endif
         "\n"
         "Environment:\n"
+#if defined(_WIN32)
+        "  CKMUX_SOCKET       Named-pipe instance label (letters, digits, . _ -),\n"
+        "                     or its full current-user pipe name. Default: default.\n"
+        "                     Pipe names and startup locks are scoped to your SID.\n"
+        "  CKMUX_CONFIG       The configuration file, used exactly as given. Default:\n"
+        "                     %%LOCALAPPDATA%%/ckmux/ckmux.conf, else the account's\n"
+        "                     LocalAppData known folder. A missing file means defaults.\n"
+#else
         "  CKMUX_SOCKET       The server socket, used exactly as given. Default:\n"
         "                     $XDG_RUNTIME_DIR/ckmux-<uid>/default.sock, with $TMPDIR\n"
         "                     and then /tmp standing in when there is no runtime\n"
@@ -107,6 +127,7 @@ void print_cli_help() {
         "                     $XDG_CONFIG_HOME/ckmux/ckmux.conf, ordinarily\n"
         "                     ~/.config/ckmux/ckmux.conf. A missing file is the\n"
         "                     ordinary case: every setting has a default.\n"
+#endif
         "\n"
         "Inside the client, every command is in the menu bar and F1 opens the help\n"
         "pages; nothing has to be memorized before it can be found.\n",
@@ -119,16 +140,16 @@ void print_cli_help() {
 // sharing the client's connect path would have done — a reader who runs this
 // twice would find themselves with a new server the second time.
 int kill_server(const std::filesystem::path& socket) {
-    const ckm::platform::ConnectResult connected = ckm::platform::connect_to_server(socket);
+    ckm::platform::ConnectResult connected = ckm::platform::connect_to_server(socket);
     if (connected.status != ckm::platform::ConnectStatus::Connected) {
         if (connected.status == ckm::platform::ConnectStatus::NoServer) {
-            std::fprintf(stderr, "ckmux: no server is running at %s\n", socket.string().c_str());
+            std::fprintf(stderr, "ckmux: no server is running at %s\n", ckm::platform::path_text(socket).c_str());
             return 1;
         }
         std::fprintf(stderr, "ckmux: %s\n", connected.problem.c_str());
         return 1;
     }
-    ckm::platform::Stream stream(connected.fd);
+    ckm::platform::Stream stream = connected.take_stream();
     ckm::proto::Hello hello;
     hello.build = std::string(ckm::proto::kBuildIdentity);
     hello.client_kind = ckm::proto::ClientKind::Cli;
@@ -159,7 +180,7 @@ int kill_server(const std::filesystem::path& socket) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int run_entry(int argc, char** argv) {
     const std::filesystem::path socket = ckm::platform::socket_path();
     if (argc == 2 && std::strcmp(argv[1], "--internal-key-appendix=markdown") == 0) {
         const std::string appendix = ckm::client::render_default_key_appendix(
@@ -176,7 +197,11 @@ int main(int argc, char** argv) {
         // listens on the path the client that started it was looking at — one
         // environment read, not two.
         const std::filesystem::path listen_on =
+#if defined(_WIN32)
+            argc >= 3 ? std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(argv[2]))) : socket;
+#else
             argc >= 3 ? std::filesystem::path(argv[2]) : socket;
+#endif
         // `--foreground` is for tests and for a reader debugging a server: a
         // process that double-forks cannot be waited for, and a test that
         // cannot wait for its subject has to sleep and hope.
@@ -248,7 +273,11 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+#if defined(_WIN32)
+    ckv::term::WindowsClock clock;
+#else
     ckv::term::PosixClock clock;
+#endif
 
     // ckVision's two diagnostic switches. The library reads no environment to
     // decide what to do (its D-077), so a host that wants them opens the sinks
@@ -261,24 +290,30 @@ int main(int argc, char** argv) {
     // Both are opened before the terminal and so outlive it: the terminal
     // writes its restore sequence on the way out, and that belongs in the
     // capture too.
-    struct CloseFile {
-        void operator()(std::FILE* stream) const noexcept { std::fclose(stream); }
-    };
-    std::unique_ptr<std::FILE, CloseFile> output_capture;
-    if (const char* const path = std::getenv("CKVISION_OUTPUT_CAPTURE"); path != nullptr && *path != '\0')
-        output_capture.reset(std::fopen(path, "wb"));
+    std::unique_ptr<std::ofstream> output_capture;
+    if (const auto path = ckm::platform::environment_path("CKVISION_OUTPUT_CAPTURE"); !path.empty()) {
+        output_capture = std::make_unique<std::ofstream>(path, std::ios::binary | std::ios::trunc);
+        if (!*output_capture) {
+            std::fprintf(stderr, "ckmux: cannot open output capture: %s\n", ckm::platform::path_text(path).c_str());
+            output_capture.reset();
+        }
+    }
     std::unique_ptr<ckv::term::FileTraceSink> graphics_log;
-    if (const char* const path = std::getenv("CKVISION_GRAPHICS_LOG"); path != nullptr && *path != '\0')
-        graphics_log = ckv::term::FileTraceSink::open(path, ckv::term::FileTraceSink::OpenMode::Truncate, clock);
+    if (const auto path = ckm::platform::environment_path("CKVISION_GRAPHICS_LOG"); !path.empty())
+        graphics_log = ckv::term::FileTraceSink::open(ckm::platform::path_text(path), ckv::term::FileTraceSink::OpenMode::Truncate, clock);
     const ckv::GraphicsTrace graphics_trace{graphics_log.get(), &clock};
 
+#if defined(_WIN32)
+    ckv::term::WindowsTerminal terminal(clock);
+#else
     ckv::term::PosixTerminal terminal(clock);
+#endif
     terminal.set_graphics_trace(graphics_trace);
     if (output_capture != nullptr) {
-        std::FILE* const stream = output_capture.get();
+        std::ofstream* const stream = output_capture.get();
         terminal.set_output_capture([stream](std::string_view bytes) {
-            std::fwrite(bytes.data(), 1, bytes.size(), stream);
-            std::fflush(stream);
+            stream->write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            stream->flush();
         });
     }
 
@@ -288,8 +323,12 @@ int main(int argc, char** argv) {
     // outright, and only a host knows which shell its user runs and where
     // they expect it to open. `shell` is deliberately left empty — ClientApp
     // resolves it the way tmux does (client/shell.hpp).
+#if defined(_WIN32)
+    options.working_directory = ckm::platform::path_text(ckm::platform::home_directory());
+#else
     if (const char* const home = std::getenv("HOME"); home != nullptr && *home != '\0')
         options.working_directory = home;
+#endif
 
     // The stored settings, on top of the built-in defaults. A missing file is
     // the ordinary case and changes nothing (the configuration spec). The
@@ -307,6 +346,7 @@ int main(int argc, char** argv) {
     // and a helper that prints "command not found" would print it into the
     // frame. The client asks for it when a copy fails, which is the only time
     // it means anything to a reader.
+#if !defined(_WIN32)
     auto clipboard_problem = std::make_shared<std::string>();
     options.clipboard_writer = [clipboard_problem](const std::string& command,
                                                    std::string_view text) {
@@ -314,6 +354,12 @@ int main(int argc, char** argv) {
         return ckm::platform::write_to_command(command, text, clipboard_problem.get());
     };
     options.clipboard_problem = [clipboard_problem] { return *clipboard_problem; };
+#else
+    // Native publication is supplied by WindowsTerminal. The configured
+    // command-helper bridge remains a WP-53 gap (the ckVision integration spec and the specification).
+    // An absent hook preserves the internal copy and reports the existing
+    // typed refusal; it must not pretend a named command was executed.
+#endif
 
     // The menu-bar clock's time, and the calendar's today. This is the only
     // wall-clock reading ckmux takes, and it is taken here for the same reason
@@ -323,7 +369,11 @@ int main(int argc, char** argv) {
     options.local_now = [] {
         const std::time_t now = std::time(nullptr);
         std::tm local{};
-        ::localtime_r(&now, &local);
+#if defined(_WIN32)
+        (void)::localtime_s(&local, &now);
+#else
+        (void)::localtime_r(&now, &local);
+#endif
         return ckm::client::LocalMoment{
             .date = {local.tm_year + 1900, local.tm_mon + 1, local.tm_mday},
             .time = {local.tm_hour, local.tm_min, local.tm_sec}};
@@ -350,3 +400,26 @@ int main(int argc, char** argv) {
     run.graphics_trace = graphics_trace;
     return ckm::client::run_attached_client(terminal, clock, std::move(run));
 }
+
+#if defined(_WIN32)
+int wmain(int argc, wchar_t** argv) {
+    try {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc));
+        for (int i = 0; i < argc; ++i) {
+            auto text = ckv::term::windows_utf8(argv[i]);
+            if (!text) { std::fprintf(stderr, "ckmux: invalid Unicode command-line argument\n"); return 2; }
+            arguments.push_back(std::move(*text));
+        }
+        std::vector<char*> values;
+        values.reserve(arguments.size());
+        for (auto& argument : arguments) values.push_back(argument.data());
+        return run_entry(argc, values.data());
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "ckmux: %s\n", error.what());
+        return 1;
+    }
+}
+#else
+int main(int argc, char** argv) { return run_entry(argc, argv); }
+#endif

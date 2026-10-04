@@ -5,8 +5,6 @@
 // terminal, so it carries the whole "transparent to inner apps" promise
 // (the interface spec, Rule 1). These tests drive it through the real key
 // path — the terminal view's parent-escape hook — not by calling handlers.
-#if !defined(_WIN32)
-
 #include <string>
 #include <variant>
 
@@ -16,6 +14,7 @@
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/widgets/terminal_view.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -39,9 +38,8 @@ ckv::ui::CommandId id_of(Application& app, std::string_view key) {
 ClientOptions test_options() {
     ClientOptions options;
     // A program that simply stays alive, so a window has a live child
-    // without the run depending on whose shell is installed. The login
-    // form only renames argv[0], which cat does not mind.
-    options.settings.shell = "/bin/cat";
+    // without the run depending on whose shell is installed.
+    options.settings.shell = ckmtest::live_terminal_child();
     options.which_key_delay_nanos = kWhichKeyDelay;
     return options;
 }
@@ -403,5 +401,3 @@ CK_TEST(the_keyboard_goes_with_the_window_next_and_previous_bring_forward) {
     CK_CHECK(f.client.desktop().active_window() == second);
     CK_CHECK(keyboard_in_front());
 }
-
-#endif

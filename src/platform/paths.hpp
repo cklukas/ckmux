@@ -6,6 +6,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace ckm::platform {
@@ -19,6 +20,7 @@ namespace ckm::platform {
 // function rather than one per file that needs it because the places that turn
 // the environment into a path have to agree, and two copies of a rule are a
 // rule that will one day differ between them.
+#if !defined(_WIN32)
 const char* environment_value(const char* name);
 
 // The same, for a variable naming a directory to build a path under: nullptr
@@ -30,6 +32,17 @@ const char* environment_value(const char* name);
 // ckmux happened to be started in, which is a different file every time and a
 // server nobody can find twice.
 const char* environment_directory(const char* name);
+#endif
+
+// A native path read afresh from an ASCII-named environment variable. Windows
+// values use GetEnvironmentVariableW, never the process ANSI code page. Empty
+// or absent values return an empty path. Relative values are not discarded:
+// explicit file overrides may be relative; directory policies check them.
+std::filesystem::path environment_path(const char* name);
+
+// Native path spelling for the shared text boundary: UTF-8 on Windows,
+// native filename bytes on POSIX. Invalid Windows Unicode returns empty.
+std::string path_text(const std::filesystem::path& path);
 
 // The configuration file, following the configuration spec's precedence:
 //
@@ -51,6 +64,11 @@ const char* environment_directory(const char* name);
 // writing has to know where to create one.
 std::filesystem::path config_file_path();
 
+// Windows policy: CKMUX_CONFIG first (including relative explicit paths),
+// then absolute LOCALAPPDATA, else the current user's LocalAppData known
+// folder, with ckmux/ckmux.conf appended. XDG/HOME have no Windows meaning.
+// A failed native folder lookup returns empty, never a cwd-relative default.
+
 // The user's home directory: what the password database says, else `$HOME`
 // when it is an absolute path, else `/`.
 //
@@ -65,6 +83,10 @@ std::filesystem::path config_file_path();
 // against wherever the server happened to be started, which is a different
 // directory every time.
 std::filesystem::path home_directory();
+
+// Windows policy: the current account's Profile known folder, else an
+// absolute USERPROFILE. Empty when neither is available: the caller must
+// report a launch failure rather than choose an accidental working directory.
 
 // A path a reader wrote, with a leading `~` resolved — the one place that
 // decides what `~` means.
@@ -94,5 +116,9 @@ std::filesystem::path home_directory();
 // because a save resolved against the working directory is the same
 // unfindable-file defect one notch milder.
 std::filesystem::path expand_user_path(std::string_view path);
+
+// Windows input is UTF-8. Both ~/ and ~\ expand using absolute USERPROFILE,
+// else home_directory(). Another user's tilde remains literal. Invalid UTF-8,
+// embedded NULs and rooted suffixes after ~/ are rejected with an empty path.
 
 }  // namespace ckm::platform

@@ -16,8 +16,6 @@
 // point: what a reader typed becomes a flag (parse), AND the flag becomes a
 // byte on the wire (produce). A suite with only the first would have passed on
 // the day WP-44 shipped unreachable.
-#if !defined(_WIN32)
-
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -222,5 +220,3 @@ CK_TEST(the_watch_flag_reaches_the_wire_and_never_decays_into_a_takeover) {
     joining.session.set_attach_mode(ckm::proto::AttachMode::Join);
     CK_CHECK(!joining.session.watching());
 }
-
-#endif  // !defined(_WIN32)

@@ -104,7 +104,9 @@ namespace ckm::proto {
 // And still v3 for `WatchStats`/`TermStats` (WP-38), which are two new types
 // and change the shape of nothing already on this wire: a build that does not
 // know them refuses them as unknown types, and there is still no such build.
-inline constexpr std::uint32_t kProtocolVersion = 3;
+// Version 3 has since shipped. Native resource availability and job lifetime
+// observations change TermStats' layout, so mixed readers must refuse v4.
+inline constexpr std::uint32_t kProtocolVersion = 4;
 
 // What `Hello` and `HelloAck` put in their `build` field. Not a version check —
 // `kProtocolVersion` is the only thing that decides whether two ends can talk —
@@ -1180,7 +1182,8 @@ struct TermDiagnostic {
 
 enum class TermStatsFlag : std::uint8_t {
     // `real_bytes` means something on this platform: macOS `phys_footprint`,
-    // PSS once WP-22 fills Linux in. Clear, and the field is zero and says
+    // Linux PSS, or Windows private resident pages under real_kind. Clear,
+    // and the field is zero and says
     // nothing — a client shows nothing rather than a zero pretending to be a
     // measurement.
     HasReal = 1u << 0,
@@ -1188,7 +1191,13 @@ enum class TermStatsFlag : std::uint8_t {
     // message with this bit clear is how a watcher learns to CLEAR the
     // readout rather than freeze its last number over a dead shell.
     Alive = 1u << 1,
+    HasCpu = 1u << 2,
+    HasRss = 1u << 3,
 };
+
+enum class TermStatsState : std::uint8_t { Unsupported, Available, Partial, Gone, Failed };
+enum class TermStatsScope : std::uint8_t { LiveProcessTree, OwnedJobLifetime };
+enum class TermStatsMemory : std::uint8_t { PlatformCost, PrivateResident };
 
 // One terminal's process-tree cost at one sample (the work queue WP-38): sent about
 // once a second, only to clients that asked (`WatchStats`), and never stored —
@@ -1201,12 +1210,18 @@ struct TermStats {
     // Percent of one core in tenths of a percent — the `top` convention, so a
     // build fanning out over eight cores reads 8000 rather than being
     // flattened into a fraction that hides it. Derived by the server from two
-    // consecutive cumulative samples; 0 on the first sample after a
-    // subscription, which has nothing to differ against.
+    // consecutive cumulative samples. HasCpu is clear on the first sample,
+    // unavailable counter, rollback or scope change: no interval is not 0%.
     std::uint32_t cpu_permille = 0;
     std::uint64_t rss_bytes = 0;
     std::uint64_t real_bytes = 0;
     std::uint8_t flags = 0;  // TermStatsFlag
+    TermStatsState state = TermStatsState::Gone;
+    TermStatsScope cpu_scope = TermStatsScope::LiveProcessTree;
+    TermStatsMemory real_kind = TermStatsMemory::PlatformCost;
+    std::uint32_t live_processes = 0;
+    std::uint32_t unreadable_processes = 0;
+    std::uint32_t system_error = 0;
     friend bool operator==(const TermStats&, const TermStats&) = default;
 };
 

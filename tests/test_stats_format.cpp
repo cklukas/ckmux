@@ -24,7 +24,9 @@ constexpr std::uint64_t TB = 1024 * GB;
 
 std::uint8_t flags(bool alive, bool has_real) {
     std::uint8_t value = 0;
-    if (alive) value |= static_cast<std::uint8_t>(TermStatsFlag::Alive);
+    if (alive) value |= static_cast<std::uint8_t>(TermStatsFlag::Alive) |
+                        static_cast<std::uint8_t>(TermStatsFlag::HasCpu) |
+                        static_cast<std::uint8_t>(TermStatsFlag::HasRss);
     if (has_real) value |= static_cast<std::uint8_t>(TermStatsFlag::HasReal);
     return value;
 }
@@ -65,6 +67,7 @@ CK_TEST(cpu_permille_rounds_to_a_whole_percent_and_carries_many_cores) {
 
 CK_TEST(the_footer_holds_exactly_what_is_toggled_on) {
     TermStats stats;
+    stats.state = ckm::proto::TermStatsState::Available;
     stats.cpu_permille = 373;
     stats.rss_bytes = 210 * MB;
     stats.real_bytes = 96 * MB;
@@ -80,6 +83,7 @@ CK_TEST(the_footer_holds_exactly_what_is_toggled_on) {
 
 CK_TEST(what_cannot_be_said_is_left_out_rather_than_zeroed) {
     TermStats stats;
+    stats.state = ckm::proto::TermStatsState::Available;
     stats.cpu_permille = 373;
     stats.rss_bytes = 210 * MB;
     stats.real_bytes = 0;
@@ -91,5 +95,6 @@ CK_TEST(what_cannot_be_said_is_left_out_rather_than_zeroed) {
     // A dead child's footer is empty whatever is toggled: the exit banner
     // owns that moment, and a frozen last number would contradict it.
     stats.flags = flags(false, true);
+    stats.state = ckm::proto::TermStatsState::Gone;
     CK_CHECK(stats_footer(stats, {true, true, true}).empty());
 }
