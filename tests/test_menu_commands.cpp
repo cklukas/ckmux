@@ -830,6 +830,10 @@ CK_TEST(the_settings_dialog_shows_its_buttons_on_a_cramped_terminal) {
     reader.press("\x1b[B");
     reader.press("\r");
 
+    // press() drains for a fixed interval, not until the dialog is painted.
+    // Observe the public route before measuring its layout, using the same
+    // bounded screen-wait policy as the other acceptance steps.
+    CK_CHECK(reader.sees("Start terminals"));
     const std::string screen = reader.screen();
     // The dialog is up — its first field, which is above the fold.
     CK_CHECK(screen.find("Start terminals") != std::string::npos);
@@ -874,6 +878,7 @@ CK_TEST(a_roomy_terminal_shows_the_whole_settings_form_without_scrolling) {
     reader.press("\x1b[B");
     reader.press("\r");
 
+    CK_CHECK(reader.sees("Start terminals"));
     const std::string screen = reader.screen();
     // Every row of the form is on screen at once — first field, last field,
     // and the buttons. Nothing scrolled because nothing needed to.

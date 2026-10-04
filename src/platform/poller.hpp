@@ -15,8 +15,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
+#if !defined(_WIN32)
 #include <poll.h>
+#endif
+#include "cvision/term/terminal.hpp"
 
 namespace ckm::platform {
 
@@ -32,8 +36,17 @@ constexpr bool has(Interest set, Interest flag) noexcept {
     return (static_cast<std::uint8_t>(set) & static_cast<std::uint8_t>(flag)) != 0;
 }
 
+struct WaitSource {
+    ckv::term::WaitHandle handle;
+    Interest interest = Interest::Read;
+};
+
 struct Ready {
+#if !defined(_WIN32)
     int fd = -1;
+#endif
+    // Borrowed readiness identity, not a connection or client identity.
+    ckv::term::WaitHandle source{ckv::term::WaitHandleKind::PosixFileDescriptor, 0};
     bool readable = false;
     bool writable = false;
     // The peer went away, or the descriptor is not one any more. Reported
@@ -45,6 +58,10 @@ struct Ready {
 
 class Poller {
 public:
+    Poller();
+    ~Poller();
+    Poller(const Poller&) = delete;
+    Poller& operator=(const Poller&) = delete;
     // Why the last wait returned the set it did. Three of these produce an
     // empty set, and a caller that cannot tell them apart cannot behave: a
     // descriptor the system refuses to poll — one that was closed while still
@@ -59,7 +76,11 @@ public:
     };
 
     void clear();
+#if !defined(_WIN32)
     void watch(int fd, Interest interest);
+#endif
+    void watch(ckv::term::WaitHandle handle, Interest interest);
+    void watch(WaitSource source) { watch(source.handle, source.interest); }
 
     // Waits up to `timeout_ms` for a watched descriptor and returns what is
     // ready — empty for any of the three reasons above, with `outcome()`
@@ -81,7 +102,12 @@ private:
     // wait allocates nothing once the set has reached its usual size. A kqueue
     // or epoll implementation would replace this member and nothing else: no
     // caller can see it.
+#if defined(_WIN32)
+    struct State;
+    std::unique_ptr<State> state_;
+#else
     std::vector<pollfd> watching_;
+#endif
     std::vector<Ready> ready_;
     Outcome outcome_ = Outcome::TimedOut;
 };

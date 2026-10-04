@@ -12,20 +12,14 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.12)
+set(CKMUX_CKVISION_VERSION 0.1.15)
 
-# Until the native port is complete, ckmux builds on POSIX only. The server
-# forks, polls file descriptors and speaks over a unix-domain socket, and
-# src/platform is written against those calls. The active Windows plan names
-# the backends still to implement. Guarding
-# the executable with if(UNIX) while the libraries built unconditionally
-# advertised a portability that does not exist — the libraries are the part
-# that cannot compile elsewhere. One honest check, here, instead.
-if(NOT UNIX)
+# Windows selects the actual native IPC/process/wait implementations below;
+# it is not a Unix compatibility environment. Acceptance and release status
+# remain separate from whether the compiler can build these targets.
+if(NOT UNIX AND NOT WIN32)
     message(FATAL_ERROR
-        "ckmux currently builds on POSIX systems only (macOS, Linux). The "
-        "native Windows port is in progress: secure named-pipe IPC, native "
-        "readiness and host services are not yet implemented.")
+        "ckmux requires native Windows, macOS or Linux platform services")
 endif()
 
 # ckVision comes either from a sibling source checkout or from an installed
@@ -155,11 +149,14 @@ endif()
 add_library(ckmux_platform STATIC
     src/platform/clipboard.cpp
     src/platform/paths.cpp
-    src/platform/poller.cpp
-    src/platform/process.cpp
     src/platform/process_stats.cpp
-    src/platform/shell_host.cpp
-    src/platform/socket.cpp)
+    src/platform/shell_host.cpp)
+if(WIN32)
+    target_sources(ckmux_platform PRIVATE src/platform/windows_poller.cpp
+        src/platform/windows_process.cpp src/platform/windows_socket.cpp src/platform/windows_pipe.cpp)
+else()
+    target_sources(ckmux_platform PRIVATE src/platform/poller.cpp src/platform/process.cpp src/platform/socket.cpp)
+endif()
 target_include_directories(ckmux_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # The ONE mention of ckvision::cvision on any link line. PUBLIC here, it
 # propagates to every downstream target through the PUBLIC chain
@@ -167,6 +164,9 @@ target_include_directories(ckmux_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
 # again downstream is what doubled the archive on the two final links
 # (`ld: warning: ignoring duplicate libraries`).
 target_link_libraries(ckmux_platform PUBLIC ckvision::cvision)
+if(WIN32)
+    target_link_libraries(ckmux_platform PRIVATE shell32 ole32)
+endif()
 ckmux_strict(ckmux_platform)
 
 # What both ends are made of: the wire format, the configuration, and the diff
@@ -188,6 +188,7 @@ add_library(ckmux_common STATIC
     src/common/grid_delta.cpp
     src/common/keymap.cpp
     src/common/proto.cpp
+    src/common/stats.cpp
     src/common/shell.cpp)
 target_include_directories(ckmux_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src

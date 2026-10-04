@@ -175,11 +175,14 @@ macOS and Linux are both gating platforms. The v0.1.7 release matrix runs all
 54 suites in its native package jobs before the release can publish. The local
 Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
-Native Windows compatibility is now in active development. Portable child
-ownership and lifecycle support are implemented in ckVision rather than
-worked around here. Named-pipe IPC, native readiness, host services, full
-interactive acceptance and Windows release packages remain to be completed;
-ckmux cannot yet be built or installed as a native Windows application.
+Native Windows compatibility remains in active development, not a supported
+packaged release. Native ARM64 development builds run on tested Windows 11
+25H2: owned named-pipe IPC, detached server/startup coordination, native waits,
+Unicode paths and owned-job process resources are implemented. Shared child
+lifecycle and host/resource services are provided by ckVision 0.1.15, not
+application workarounds. Generic child-pipe helpers, console-close persistence,
+the complete interactive Windows Terminal walkthrough, x64/ARM64 CI and
+install-tested Windows release packages remain unfinished.
 
 ## Provenance
 

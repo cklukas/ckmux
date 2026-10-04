@@ -139,7 +139,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `PrintState` | `term u64, mode u8, state u8 (idle\|capturing\|sunk\|full), bytes u32, jobs u16` | **live** | sent off printer damage; drives the frame button, capture state and live byte/job counts |
 | `PrintJobAdded` | `term u64, job u64, kind u8 (screen\|line\|controller\|autoprint), bytes u32, lines u32, at i64` | **live** | metadata only; payloads are fetched on demand, never pushed down the hot path |
 | `PrintJobData` | `term u64, job u64, seq u32, final u8, blob` | **live** | answer to `PrintJobFetch`, chunked ≤ 256 KiB and assembled by the client |
-| `TermStats` | `term u64, cpu_permille u32, rss_bytes u64, real_bytes u64, flags u8 (has_real, alive)` | **live** | one terminal's process-tree cost, about once a second, only to connections that asked (`WatchStats`) — WP-38. `cpu_permille` is percent of one core in tenths; `rss_bytes` is the tree's resident sum; `real_bytes` is macOS `phys_footprint` or Linux PSS (WP-22), meaningful only under `has_real`. A final message with `alive` clear is sent once. |
+| `TermStats` | `term u64, cpu_permille u32, rss_bytes u64, real_bytes u64, flags u8, state u8, cpu_scope u8, real_kind u8, live_processes u32, unreadable_processes u32, system_error u32` | **live** | about once a second, only to connections that asked (`WatchStats`). Flags are has_real=1, alive=2, has_cpu=4, has_rss=8; a clear availability bit is not measured zero. State is unsupported=0, available=1, partial=2, gone=3, failed=4. Scope is live-process-tree=0 or owned-job-lifetime=1; memory kind is platform-cost=0 (macOS footprint/Linux PSS) or private-resident=1 (Windows working-set pages, never virtual commit charge). Native errors and unreadable member counts survive the wire. Each terminal is sampled once per pass, advancing one baseline; all subscribed readers receive the identical packet. A Gone clear is sent once per subscriber, including late/new subscribers to held dead terminals. Failed/Partial/Unsupported observations are never reported as Gone. |
 | `SessionsChanged` | — | *encode-only* | picker refresh hint, superseded before it was ever sent: every change answers with a fresh `SessionList`, which carries the answer instead of asking for another round trip |
 | `PasteAck` | `seq u32` | **live** | the credit half of `PasteChunk` (below) — WP-18. Sent as the chunk is WRITTEN to the PTY, which is the whole of the pacing: an ack on receipt would pace against the server's own socket buffer and let a paste through at once. Sent even when the terminal has gone, because the credit is about the client's queue rather than the terminal's existence, and a client waiting on an ack that is never coming holds the rest of that paste and every later one behind it |
 | `ReaderMode` | `mode u8` | **live** | pushed when another reader changes this reader's mode; not echoed when a reader changes their own. The client updates its local enforcement, menu/footer and toast from the server's answer (WP-49/WP-50). |
@@ -521,7 +521,7 @@ and on `LayoutDelta`, the client reports where the reader put its windows, and a
 reattaching client lays them back down — M-R3, answered end to end
 ([13-architecture-review.md](13-architecture-review.md)).
 
-**Version 3 covers all of it.** R1's `ResizeOp`, tracking level and close/move
+**Historical version 3 changes.** R1's `ResizeOp`, tracking level and close/move
 fields shipped nowhere before R8's additions were made on top of them — the
 keyboard-flag bits, `TerminalState`'s clipboard watermark, exit state and
 diagnostic, `ClipboardSet`'s terminal id, and `TermDiagnostic` — so both sets
@@ -539,6 +539,17 @@ this wire changed shape for them, and a build that does not know them refuses
 them as unknown types. The field arrives with its producer
 and its consumer in one change, because a field nothing writes is precisely the
 shaped-and-dead state M-R3 named and WP-28 declined to add another of.
+
+**Version 4:** native resource availability changes the existing `TermStats`
+layout after v3 shipped. Old clients/servers must refuse the mismatch, not
+guess optional fields. Both the server and local client consume ckVision's
+owned-job observations on Windows, including descendants after the root PID
+becomes -1. POSIX retains live-tree counters. Missing first CPU intervals,
+counter rollback and scope changes clear has_cpu; a subsequent valid interval
+can report measured 0%. Integer rate arithmetic saturates rather than wraps.
+An observed empty owned job becomes Gone; failed or unreadable jobs do not.
+Footers label Windows private memory `Private RSS`, expose partial/unavailable
+observations, and clear gone subjects. Statistics remain transient, not saved.
 
 `custom_title` on `TerminalState` and `TermMeta` (WP-36) is v3 by the same
 reasoning and under the same pairing rule. It also retires the last

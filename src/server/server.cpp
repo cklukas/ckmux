@@ -13,12 +13,19 @@
 
 #include <csignal>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include "cvision/term/windows_clock.hpp"
+#else
 #include <fcntl.h>
 #include <unistd.h>
+#include "cvision/term/posix_clock.hpp"
+#endif
 
 #include "platform/paths.hpp"
 #include "platform/process.hpp"
-#include "cvision/term/posix_clock.hpp"
 
 namespace ckm::server {
 namespace {
@@ -57,6 +64,11 @@ public:
     }
 
     bool open() {
+#if defined(_WIN32)
+        if (event_) return true;
+        event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        return event_ != nullptr;
+#else
         if (fds_[0] >= 0) return true;
         if (::pipe(fds_) != 0) return false;
         for (const int fd : fds_) {
@@ -65,43 +77,78 @@ public:
             (void)::fcntl(fd, F_SETFD, FD_CLOEXEC);
         }
         return true;
+#endif
     }
 
-    int reader() const noexcept { return fds_[0]; }
+    ckv::term::WaitHandle wait_handle() const noexcept {
+#if defined(_WIN32)
+        return {ckv::term::WaitHandleKind::WindowsHandle, reinterpret_cast<std::uintptr_t>(event_)};
+#else
+        return {ckv::term::WaitHandleKind::PosixFileDescriptor, static_cast<std::uintptr_t>(fds_[0])};
+#endif
+    }
 
     void raise(int signal) noexcept {
+#if defined(_WIN32)
+        (void)::InterlockedExchange(&last_, signal);
+        (void)::SetEvent(event_);
+#else
         last_ = signal;
         const char byte = 1;
         // The result is deliberately unused: a full pipe already means the loop
         // has a wake-up coming, which is all this needs to achieve.
         (void)!::write(fds_[1], &byte, 1);
+#endif
     }
 
     // Drains the pipe and returns the last signal seen, or 0.
     int take() noexcept {
+#if defined(_WIN32)
+        (void)::ResetEvent(event_);
+        return static_cast<int>(::InterlockedExchange(&last_, 0));
+#else
         char scrap[64];
         while (::read(fds_[0], scrap, sizeof scrap) > 0) {
         }
         const int signal = last_;
         last_ = 0;
         return signal;
+#endif
     }
 
 private:
     SignalPipe() = default;
+#if defined(_WIN32)
+    HANDLE event_ = nullptr;
+    volatile LONG last_ = 0;
+#else
     int fds_[2] = {-1, -1};
     volatile std::sig_atomic_t last_ = 0;
+#endif
 };
 
+#if defined(_WIN32)
+BOOL WINAPI ckmux_console_handler(DWORD control) {
+    if (control != CTRL_C_EVENT && control != CTRL_BREAK_EVENT && control != CTRL_CLOSE_EVENT &&
+        control != CTRL_LOGOFF_EVENT && control != CTRL_SHUTDOWN_EVENT) return FALSE;
+    SignalPipe::instance().raise(static_cast<int>(control) + 1);
+    return TRUE;
+}
+#else
 extern "C" void ckmux_signal_handler(int signal) { SignalPipe::instance().raise(signal); }
+#endif
 
 void install_signal_handlers() {
+#if defined(_WIN32)
+    (void)::SetConsoleCtrlHandler(ckmux_console_handler, TRUE);
+#else
     // A client that goes away mid-write must not take the server with it, which
     // is what SIGPIPE's default action does.
     (void)std::signal(SIGPIPE, SIG_IGN);
     (void)std::signal(SIGTERM, ckmux_signal_handler);
     (void)std::signal(SIGINT, ckmux_signal_handler);
     (void)std::signal(SIGHUP, ckmux_signal_handler);
+#endif
 }
 
 // One cell, from the text area a client measured and the grid it measured over.
@@ -428,25 +475,29 @@ std::int64_t Server::nanos_until_tick() const {
 bool Server::step() {
     const std::int64_t now = clock_.now_nanos();
     poller_.clear();
+    source_bindings_.clear();
+    const auto watch = [this](ckv::term::WaitHandle handle, platform::Interest interest,
+                              SourceRole role, ClientId client = 0) {
+        source_bindings_.push_back({handle, role, client});
+        poller_.watch(handle, interest);
+    };
     // The listener, unless accepting is paused — and then it is left out of the
     // set rather than merely left unasked. A listener with a connection pending
     // is readable until that connection is accepted, so watching one this
     // server has decided not to ask from is a `poll()` that returns instantly,
     // every time, for as long as the pause lasts.
     if (now >= accept_paused_until_nanos_)
-        poller_.watch(listener_.fd(), platform::Interest::Read);
-    poller_.watch(SignalPipe::instance().reader(), platform::Interest::Read);
+        watch(listener_.wait_handle(), platform::Interest::Read, SourceRole::Listener);
+    watch(SignalPipe::instance().wait_handle(), platform::Interest::Read, SourceRole::Signal);
     for (const std::unique_ptr<Client>& client : clients_) {
         if (!client->stream.open()) continue;
-        poller_.watch(client->stream.fd(), client->stream.wants_write()
-                                              ? platform::Interest::Read | platform::Interest::Write
-                                              : platform::Interest::Read);
+        for (const auto source : client->stream.wait_sources())
+            watch(source.handle, source.interest, SourceRole::Client, client->id);
     }
     // Every PTY the terminals are waiting on, so a child's output wakes the
     // loop instead of being noticed a tick later.
     for (const ckv::term::WaitHandle& handle : terminals_.wait_handles())
-        if (handle.kind == ckv::term::WaitHandleKind::PosixFileDescriptor)
-            poller_.watch(static_cast<int>(handle.value), platform::Interest::Read);
+        watch(handle, platform::Interest::Read, SourceRole::Child);
 
     std::int64_t until_wake = nanos_until_tick();
     // A pause is a deadline like the tick is, and the wait must not sleep past
@@ -492,11 +543,14 @@ bool Server::step() {
 
     bool child_output = false;
     for (const platform::Ready& event : ready) {
-        if (event.fd == listener_.fd()) {
+        const auto binding = std::find_if(source_bindings_.begin(), source_bindings_.end(),
+            [&event](const SourceBinding& source) { return source.handle == event.source; });
+        if (binding == source_bindings_.end()) continue;
+        if (binding->role == SourceRole::Listener) {
             accept_pending();
             continue;
         }
-        if (event.fd == SignalPipe::instance().reader()) {
+        if (binding->role == SourceRole::Signal) {
             const int signal = SignalPipe::instance().take();
             if (signal != 0) {
                 // A signal is a request to end, and the answer is the same
@@ -510,8 +564,9 @@ bool Server::step() {
             continue;
         }
         Client* owner = nullptr;
-        for (const std::unique_ptr<Client>& client : clients_)
-            if (client->stream.fd() == event.fd) owner = client.get();
+        if (binding->role == SourceRole::Client)
+            for (const std::unique_ptr<Client>& client : clients_)
+                if (client->id == binding->client) owner = client.get();
         if (owner != nullptr) {
             if (event.writable && !owner->stream.flush()) {
                 drop(*owner, "the connection closed while writing");
@@ -523,7 +578,7 @@ bool Server::step() {
         // Anything else in the set is a PTY: reading it is the terminals'
         // business, and they are drained together below so that one child
         // cannot be served twice in a pass while another waits.
-        child_output = true;
+        if (binding->role == SourceRole::Child) child_output = true;
     }
 
     if (child_output) {
@@ -553,12 +608,12 @@ bool Server::step() {
 
 void Server::accept_pending() {
     for (;;) {
-        const platform::Listener::AcceptResult result = listener_.accept_one();
+        platform::Listener::AcceptResult result = listener_.accept_one();
         switch (result.status) {
             case platform::Listener::AcceptStatus::Accepted: {
                 auto client = std::make_unique<Client>();
                 client->id = next_client_++;
-                client->stream = platform::Stream(result.fd);
+                client->stream = result.take_stream();
                 clients_.push_back(std::move(client));
                 continue;
             }
@@ -725,7 +780,9 @@ void Server::handle(Client& client, const proto::Message& message) {
         // the answer, and a client that turned the last checkbox off simply
         // stops hearing them. `step()` notices the off-to-on edge and starts
         // the sampler from fresh baselines.
-        client.watch_stats = watch->on != 0;
+        const bool enabled = watch->on != 0;
+        if (enabled != client.watch_stats) client.stats_dead_announced.clear();
+        client.watch_stats = enabled;
         return;
     }
     if (std::holds_alternative<proto::Hello>(message)) {
@@ -2666,6 +2723,11 @@ void Server::send_snapshot(Client& client) {
 
 void Server::send(Client& client, const proto::Message& message) {
     if (!client.stream.open()) return;
+    if (std::holds_alternative<proto::Attached>(message) ||
+        std::holds_alternative<proto::Detached>(message))
+        client.stats_dead_announced.clear();
+    else if (const auto* closed = std::get_if<proto::TermClosed>(&message))
+        client.stats_dead_announced.erase(closed->term);
     bool oversize = false;
     const std::string frame = proto::encode(message, &oversize);
     if (oversize) {
@@ -3140,7 +3202,12 @@ void Server::stats_tick() {
 
     // One table for the whole pass, however many terminals are watched —
     // WP-37's design point, and the reason N terminals cost one read.
-    const platform::ProcessTable table = platform::ProcessTable::snapshot();
+    std::optional<platform::ProcessTable> table;
+    // Sampling and advancing a CPU baseline are terminal operations, not
+    // subscriber operations. Cache this pass's packet before fan-out: a
+    // second subscriber must not derive against the first one's same-time
+    // baseline, nor observe a different resident snapshot.
+    std::unordered_map<TerminalId, proto::TermStats> packets;
 
     for (const std::unique_ptr<Client>& client : clients_) {
         if (!client->greeted || !client->attached || !client->watch_stats || client->closing)
@@ -3150,46 +3217,34 @@ void Server::stats_tick() {
         for (const TerminalId id : watched->terminals) {
             Terminal* const terminal = terminals_.find(id);
             if (terminal == nullptr) continue;
+            if (const auto cached = packets.find(id); cached != packets.end()) {
+                const proto::TermStats& stats = cached->second;
+                if (stats.state != proto::TermStatsState::Gone) {
+                    client->stats_dead_announced.erase(id);
+                    send(*client, stats);
+                } else if (client->stats_dead_announced.insert(id).second) {
+                    send(*client, stats);
+                }
+                continue;
+            }
             StatsBaseline& baseline = stats_baselines_[id];
 
-            const int root = terminal->process_id();
-            const platform::TreeSample sample =
-                root >= 0 ? platform::sample_tree(table, root) : platform::TreeSample{};
-            if (root < 0 || sample.process_count == 0) {
-                // The child is gone. Said once, so the watcher clears the
+            const auto sample = platform::sample_terminal(terminal->session(), table);
+            proto::TermStats stats = make_term_stats(sample.resources, baseline, now, id,
+                                                    sample.platform_cost);
+            packets.emplace(id, stats);
+            if (stats.state == proto::TermStatsState::Gone) {
+                // The child is gone. Said once to EACH watcher, so it clears the
                 // readout instead of freezing its last number over a dead
                 // shell — and not repeated every second for a terminal that
                 // stays on screen under an exit banner.
-                if (!baseline.dead_announced) {
-                    baseline.dead_announced = true;
-                    proto::TermStats stats;
-                    stats.term = id;
+                if (client->stats_dead_announced.insert(id).second) {
                     send(*client, stats);
                 }
                 continue;
             }
 
-            proto::TermStats stats;
-            stats.term = id;
-            stats.rss_bytes = sample.rss_bytes;
-            stats.real_bytes = sample.real_bytes;
-            stats.flags = static_cast<std::uint8_t>(proto::TermStatsFlag::Alive);
-            if (sample.has_real)
-                stats.flags |= static_cast<std::uint8_t>(proto::TermStatsFlag::HasReal);
-            // The rate needs a previous pass to differ against; the first
-            // sample after a subscription reports its memory and no CPU,
-            // which is the honest reading of "no interval yet".
-            if (baseline.primed && now > baseline.at_nanos &&
-                sample.cpu_time_nanos >= baseline.cpu_nanos) {
-                const std::uint64_t cpu_delta = sample.cpu_time_nanos - baseline.cpu_nanos;
-                const std::uint64_t wall_delta =
-                    static_cast<std::uint64_t>(now - baseline.at_nanos);
-                stats.cpu_permille = static_cast<std::uint32_t>(cpu_delta * 1000u / wall_delta);
-            }
-            baseline.cpu_nanos = sample.cpu_time_nanos;
-            baseline.at_nanos = now;
-            baseline.primed = true;
-            baseline.dead_announced = false;
+            client->stats_dead_announced.erase(id);
             send(*client, stats);
         }
     }
@@ -3227,7 +3282,8 @@ void Server::run() {
             still_writing = still_writing || client->stream.wants_write();
         }
         if (!still_writing) break;
-        ::usleep(2000);
+        platform::Poller pause;
+        (void)pause.wait(2);
     }
     for (const std::unique_ptr<Client>& client : clients_) client->stream.close();
     clients_.clear();
@@ -3247,9 +3303,13 @@ int run_server_process(const std::filesystem::path& socket, bool foreground) {
     // Read once, here, where this process is being composed — not per terminal
     // from inside the server, which is meant to be a thing a test can drive
     // with every environmental fact already decided for it.
-    options.working_directory = ckm::platform::home_directory().string();
+    options.working_directory = ckm::platform::path_text(ckm::platform::home_directory());
 
+#if defined(_WIN32)
+    ckv::term::WindowsClock clock;
+#else
     ckv::term::PosixClock clock;
+#endif
     Server server(std::move(options), clock);
     switch (server.start()) {
         case Server::StartStatus::Listening: break;
@@ -3263,7 +3323,7 @@ int run_server_process(const std::filesystem::path& socket, bool foreground) {
             std::fprintf(stderr, "ckmux: %s\n", server.problem().c_str());
             return 1;
     }
-    std::fprintf(stderr, "ckmux server: listening on %s\n", socket.string().c_str());
+    std::fprintf(stderr, "ckmux server: listening on %s\n", ckm::platform::path_text(socket).c_str());
     server.run();
     std::fprintf(stderr, "ckmux server: stopped\n");
     return 0;

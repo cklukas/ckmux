@@ -31,8 +31,8 @@ using ckm::platform::TreeSample;
 
 using Entry = ProcessTable::Entry;
 
-bool contains(const std::vector<int>& pids, int pid) {
-    for (const int candidate : pids) {
+bool contains(const std::vector<ckm::platform::ProcessId>& pids, ckm::platform::ProcessId pid) {
+    for (const ckm::platform::ProcessId candidate : pids) {
         if (candidate == pid) return true;
     }
     return false;
@@ -93,7 +93,7 @@ CK_TEST(the_walk_returns_the_root_and_its_descendants_and_nobody_else) {
         Entry{20, 12},
         Entry{99, 1},
     });
-    const std::vector<int> tree = table.tree_of(10);
+    const std::vector<ckm::platform::ProcessId> tree = table.tree_of(10);
     CK_CHECK(tree.size() == 4U);
     CK_CHECK(tree.front() == 10);
     CK_CHECK(contains(tree, 11));
@@ -119,7 +119,7 @@ CK_TEST(a_loop_a_reused_pid_printed_into_the_table_does_not_hang_the_walk) {
         Entry{30, 20},
         Entry{20, 30},
     });
-    const std::vector<int> tree = table.tree_of(10);
+    const std::vector<ckm::platform::ProcessId> tree = table.tree_of(10);
     CK_CHECK(tree.size() == 3U);
     CK_CHECK(tree.front() == 10);
 }
@@ -187,7 +187,7 @@ CK_TEST(a_grandchild_is_part_of_the_tree_and_of_its_total) {
     CK_CHECK(child > 0);
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    std::vector<int> tree;
+    std::vector<ckm::platform::ProcessId> tree;
     for (;;) {
         tree = ProcessTable::snapshot().tree_of(child);
         if (tree.size() >= 2U) break;
@@ -202,7 +202,7 @@ CK_TEST(a_grandchild_is_part_of_the_tree_and_of_its_total) {
 
     // The grandchild reparents when its parent dies and is not ours to reap;
     // ending it by pid is exactly what the test can do.
-    for (const int pid : tree) {
+    for (const ckm::platform::ProcessId pid : tree) {
         if (pid != child) (void)::kill(static_cast<pid_t>(pid), SIGKILL);
     }
     end_child(child);

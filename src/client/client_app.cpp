@@ -1733,7 +1733,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
     // reaches — it asks the server instead — so every remote window was called
     // "Terminal" and every one of them cascaded to the same spot, landing
     // exactly on top of the last. Two terminals looked like one.
-    const int number = next_terminal_number_++;
+    const std::size_t number = next_terminal_number_++;
     if (title.empty()) title = "Terminal " + std::to_string(number);
     const std::string fallback_title = title;
     auto window = std::make_unique<w::Window>(std::move(title));
@@ -3254,7 +3254,7 @@ void ClientApp::keep_keyboard_off_hidden_terminals() {
 }
 
 void ClientApp::focus_terminal_number(int number) {
-    if (desktop_ == nullptr) return;
+    if (desktop_ == nullptr || number < 1) return;
     // The number a reader can SEE wins. Window captions carry ckmux's own
     // terminal number, and the desktop's 1-9 convention is an index into
     // insertion order (ckVision Desktop::select_by_number); the two agree until
@@ -3267,7 +3267,7 @@ void ClientApp::focus_terminal_number(int number) {
     // would be a worse answer than the conventional one.
     for (w::Window* const window : desktop_->windows()) {
         const auto title = titles_.find(window);
-        if (title == titles_.end() || title->second.number != number) continue;
+        if (title == titles_.end() || title->second.number != static_cast<std::size_t>(number)) continue;
         desktop_->activate(window);
         return;
     }
@@ -3992,7 +3992,8 @@ void ClientApp::sample_local_stats() {
     std::optional<platform::ProcessTable> table;
     const std::int64_t now = app_.clock().now_nanos();
     for (const auto& [terminal, window] : terminal_windows_) {
-        const int root = terminal->process_id();
+        const ckv::core::ProcessId root = terminal->process_id();
+#ifndef _WIN32
         if (root < 0) {
             // A mirror — or a local child that has gone, and only the latter
             // holds a baseline of ours and a readout to clear. Cleared once:
@@ -4005,25 +4006,18 @@ void ClientApp::sample_local_stats() {
             }
             continue;
         }
-        if (!table) table = platform::ProcessTable::snapshot();
-        const platform::TreeSample sample = platform::sample_tree(*table, root);
-        proto::TermStats stats;
-        if (sample.process_count > 0) {
-            stats.rss_bytes = sample.rss_bytes;
-            stats.real_bytes = sample.real_bytes;
-            stats.flags = static_cast<std::uint8_t>(proto::TermStatsFlag::Alive);
-            if (sample.has_real)
-                stats.flags |= static_cast<std::uint8_t>(proto::TermStatsFlag::HasReal);
-            LocalCpuBaseline& base = local_cpu_[terminal];
-            if (base.primed && now > base.at_nanos && sample.cpu_time_nanos >= base.cpu_nanos) {
-                const std::uint64_t wall = static_cast<std::uint64_t>(now - base.at_nanos);
-                stats.cpu_permille = static_cast<std::uint32_t>(
-                    (sample.cpu_time_nanos - base.cpu_nanos) * 1000u / wall);
-            }
-            base.cpu_nanos = sample.cpu_time_nanos;
-            base.at_nanos = now;
-            base.primed = true;
-        } else {
+#endif
+        const auto sample = platform::sample_terminal(*terminal, table);
+#ifdef _WIN32
+        // A wire mirror has neither an identity nor an owned resource subject.
+        // A native job can still have descendants after its root reports -1:
+        // query it first, never use that sentinel to discard its observation.
+        if (root < 0 && sample.resources.state == ckv::core::ProcessResourceState::Unsupported)
+            continue;
+#endif
+        proto::TermStats stats = make_term_stats(sample.resources, local_cpu_[terminal], now,
+                                                0, sample.platform_cost);
+        if (stats.state == proto::TermStatsState::Gone) {
             local_cpu_.erase(terminal);
         }
         latest_stats_[terminal] = stats;

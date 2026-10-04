@@ -9,9 +9,8 @@
 #include <utility>
 #include <variant>
 
-#include <poll.h>
-
 #include "platform/process.hpp"
+#include "platform/poller.hpp"
 
 namespace ckm::client {
 namespace {
@@ -32,15 +31,20 @@ int millis_left(const clock_type::time_point& deadline) {
 // client waited for the answer to it — and the message a reader was shown
 // blamed the server for not answering a question it had never been asked.
 bool flush_fully(platform::Stream& stream, const clock_type::time_point& deadline) {
+    if (!stream.open()) return false;
+    platform::Poller waiting;
     while (stream.wants_write()) {
         if (!stream.flush()) return false;  // the peer is gone
         if (!stream.wants_write()) break;
         const int remaining = millis_left(deadline);
         if (remaining <= 0) return false;
-        pollfd waiting{stream.fd(), POLLOUT, 0};
-        const int ready = ::poll(&waiting, 1, remaining);
-        if (ready < 0 && errno == EINTR) continue;
-        if (ready <= 0) return false;
+        waiting.clear();
+        for (const auto source : stream.wait_sources())
+            if (platform::has(source.interest, platform::Interest::Write))
+                waiting.watch(source.handle, platform::Interest::Write);
+        (void)waiting.wait(remaining);
+        if (waiting.outcome() == platform::Poller::Outcome::Interrupted) continue;
+        if (waiting.outcome() != platform::Poller::Outcome::Ready) return false;
     }
     return true;
 }
@@ -50,6 +54,7 @@ bool flush_fully(platform::Stream& stream, const clock_type::time_point& deadlin
 bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::Message& message,
                    int budget_ms) {
     const clock_type::time_point deadline = clock_type::now() + std::chrono::milliseconds(budget_ms);
+    platform::Poller waiting;
     for (;;) {
         const proto::DecodeError error = reader.next(message);
         if (error == proto::DecodeError::None) return true;
@@ -57,20 +62,20 @@ bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::
         // cannot be resynchronised, and guessing means acting on bytes of
         // unknown provenance.
         if (error != proto::DecodeError::Incomplete) return false;
+        if (!stream.open() || !stream.flush()) return false;
         const int remaining = millis_left(deadline);
         if (remaining <= 0) return false;
-        pollfd waiting{stream.fd(), POLLIN | POLLHUP, 0};
-        const int ready = ::poll(&waiting, 1, remaining);
+        waiting.clear();
+        for (const auto source : stream.wait_sources()) waiting.watch(source);
+        (void)waiting.wait(remaining);
         // A signal is not an answer. `SIGWINCH` arrives whenever the reader
         // resizes the window they started ckmux in, and interrupting the wait
         // used to end it — `ckmux` reported that the server never answered the
         // handshake, because somebody had dragged a window corner. The deadline
         // still bounds the loop, so retrying cannot spin.
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-        if (ready == 0) return false;  // the budget ran out
+        if (waiting.outcome() == platform::Poller::Outcome::Interrupted) continue;
+        if (waiting.outcome() != platform::Poller::Outcome::Ready) return false;
+        if (!stream.flush()) return false;
         std::string arrived;
         const bool alive = stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) return false;
@@ -107,7 +112,7 @@ ServerConnection connect_to_server(const std::filesystem::path& socket,
         // Nothing listening. Start one — once. A second start is never the
         // answer: either the first is coming up, or somebody else's is, and both
         // cases are cured by continuing to connect.
-        if (!started) {
+        if (!started && connected.status == platform::ConnectStatus::NoServer) {
             started = true;
             std::string problem;
             if (!platform::start_server(executable, socket, problem)) {
@@ -126,11 +131,11 @@ ServerConnection connect_to_server(const std::filesystem::path& socket,
         // A short sleep rather than a spin: what is being waited for is another
         // process reaching its bind, and hammering connect() makes that slower
         // rather than faster.
-        pollfd nothing{};
-        (void)::poll(&nothing, 0, 10);
+        platform::Poller pause;
+        (void)pause.wait(10);
     }
 
-    result.stream = platform::Stream(connected.fd);
+    result.stream = connected.take_stream();
     proto::Hello hello;
     hello.build = std::string(proto::kBuildIdentity);
     hello.client_kind = kind;

@@ -33,14 +33,17 @@ std::string format_bytes(std::uint64_t bytes) {
 
 std::string format_cpu_permille(std::uint32_t permille) {
     char text[16];
-    std::snprintf(text, sizeof text, "%u%%", (permille + 5u) / 10u);
+    std::snprintf(text, sizeof text, "%u%%", permille / 10u + (permille % 10u >= 5u ? 1u : 0u));
     return text;
 }
 
 std::string stats_footer(const proto::TermStats& stats, const StatsToggles& toggles) {
-    const bool alive =
-        (stats.flags & static_cast<std::uint8_t>(proto::TermStatsFlag::Alive)) != 0;
-    if (!alive || !toggles.any()) return {};
+    if (stats.state == proto::TermStatsState::Gone || !toggles.any()) return {};
+    if (stats.state == proto::TermStatsState::Failed ||
+        stats.state == proto::TermStatsState::Unsupported) {
+        return stats.system_error == 0 ? "Stats unavailable"
+                                      : "Stats unavailable (error " + std::to_string(stats.system_error) + ")";
+    }
     const bool has_real =
         (stats.flags & static_cast<std::uint8_t>(proto::TermStatsFlag::HasReal)) != 0;
     std::string line;
@@ -48,9 +51,14 @@ std::string stats_footer(const proto::TermStats& stats, const StatsToggles& togg
         if (!line.empty()) line += " · ";
         line += std::move(part);
     };
-    if (toggles.cpu) append("CPU " + format_cpu_permille(stats.cpu_permille));
-    if (toggles.rss) append("RSS " + format_bytes(stats.rss_bytes));
-    if (toggles.real && has_real) append("Real " + format_bytes(stats.real_bytes));
+    const bool has_cpu = (stats.flags & static_cast<std::uint8_t>(proto::TermStatsFlag::HasCpu)) != 0;
+    const bool has_rss = (stats.flags & static_cast<std::uint8_t>(proto::TermStatsFlag::HasRss)) != 0;
+    if (toggles.cpu) append(has_cpu ? "CPU " + format_cpu_permille(stats.cpu_permille) : "CPU ?");
+    if (toggles.rss) append(has_rss ? "RSS " + format_bytes(stats.rss_bytes) : "RSS ?");
+    if (toggles.real && has_real)
+        append((stats.real_kind == proto::TermStatsMemory::PrivateResident ? "Private RSS " : "Real ") +
+               format_bytes(stats.real_bytes));
+    if (stats.state == proto::TermStatsState::Partial) append("partial");
     return line;
 }
 

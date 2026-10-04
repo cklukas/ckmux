@@ -15,9 +15,8 @@
 // nothing to switch between.
 //
 // Driven headlessly the way main.cpp drives the client: real Application,
-// real menus, real mouse reports. The child is /bin/cat, which stays alive
-// and says nothing.
-#if !defined(_WIN32)
+// real menus, real mouse reports. The native child stays alive and says
+// nothing until input arrives.
 
 #include <cstddef>
 #include <optional>
@@ -33,6 +32,7 @@
 #include "cvision/widgets/status_line.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 #include "cvision/widgets/window_switcher_bar.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -47,7 +47,7 @@ constexpr int kRows = 30;
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     // Undamped, so a width read straight after a state change is the width
     // that state asks for (U4-m holds a box still for a second otherwise).
     // None of these tests is about damping, and one that had to advance a
@@ -488,7 +488,7 @@ CK_TEST(the_chrome_state_survives_the_bar_coming_and_going) {
     CK_CHECK(f.client.window_switcher().absolute_bounds().y == kRows - 1);
 
     // Down to one terminal: the bar goes, and the footer stays away because
-    // that is what the reader asked for. `/bin/cat` is alive in the window,
+    // that is what the reader asked for. The child is alive in the window,
     // so closing it asks first — the reader's own Enter is part of the path.
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kCloseTerminal)));
     f.settle();
@@ -510,5 +510,3 @@ CK_TEST(the_chrome_state_survives_the_bar_coming_and_going) {
     CK_CHECK(f.client.window_switcher().collapsed());
     CK_CHECK(f.client.window_switcher().absolute_bounds().y == kRows - 1);
 }
-
-#endif  // !defined(_WIN32)

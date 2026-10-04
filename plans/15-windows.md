@@ -7,6 +7,406 @@ Status: In progress · 2026-10-03 · owner directed
 
 ### Latest checkpoint — 2026-10-04
 
+Pre-landing checkpoint: the candidate now passes Mac AppleClang Release61/61
+(181.84s) and Debug ASan/UBSan61/61 (253.58s), Debian13 ARM64 GCC13.3
+Release/FORTIFY61/61 (128.43s), and native Windows11 25H2 ARM64 MSVC
+Release35/35 (38.59s), all CTest exits0 and zero-warning builds, against
+clean ckVision `ddb73e20` (released0.1.15/public `1dd00956`). Unix runs use
+app manifest `f9efe827d1623a3a2357f1386e1d8d110f61f14f3e17012082edd0ba26f84b2d`;
+native manifest `54840e4989552ea2cc76f0a28e9c1cab321aa3820487a04f276c992648faf007`
+differs only in the native fixture's lifecycle/policy/interval corrections.
+The portable resource suite now includes seven cases, including a decoded
+wire report surviving the client's local statistics timer.
+
+An actually compiled production root-PID gate mutation fails both new native
+server and local footer cases (nine assertions, CTest8); byte-exact restoration
+rebuilds and passes the full35/35 again (36.85s, exit0). The root fixture
+creates a real detached descendant, touches4MiB, waits for its readiness,
+then exits: tests observe rootPID=-1 and one live job member, real resident
+memory and subsequent CPU intervals, in both named-pipe fan-out and the local
+Application. This is a headless UI fixture, not a live WindowsTerminal
+visual acceptance claim.
+
+Fixture failures found: core observation handles cannot close a terminal;
+replacing a launch spec erased the mandatory exit policy and made PID=-1
+vacuously pass; first CPU samples have no interval. Corrected fixtures use
+the Terminal lifecycle wrapper, assert a positive initial identity and actual
+Exited state, and require the subsequent measured intervals. The first
+mutation restoration also exposed Git's default CRLF conversion; the exact
+source hash refused it, bytes were restored and recompiled, then the mutation
+was repeated with core.autocrlf=false and both restoration gates passed.
+
+Final candidate docs, corrected labels and retirement of a stale Windows
+parking-lot comment are not compiled-behavior changes. A clean-commit gate
+still precedes landing. WP53/WP54 remain In progress; helper process service,
+console-close/job persistence, full native/live acceptance and installed
+Windows packages remain required. No Windows-port completion is claimed.
+
+Release/resource-consumption checkpoint: ckVision0.1.15 is released at
+14:00:23Z, tag peeling to public `1dd00956`, with all seven CI37205721888
+jobs successful. The isolated app uses its typed resources in both server
+and local paths on Windows, querying the owned job even after rootPID=-1.
+Protocol4 preserves state, optional-field availability, lifetime scope and
+native errors. A shared exact saturating CPU-rate converter handles missing
+intervals, rollback and scope changes. Windows memory is labelled Private RSS,
+not PSS/footprint/virtual commit; incomplete and failed observations are not
+zero measurements or Gone. The per-terminal fan-out cache remains intact.
+
+Mac AppleClang Debug ASan/UBSan passes seven focused suites (6.63s, exit0)
+at appv17, including six new pure resource cases, the existing wire/display
+cases and protocol codec, against clean ckVision `ddb73e20`. Subsequent
+additions cover wire mirrors surviving a local timer, and real native
+descendants after root exit in both named-pipe server fan-out and local
+Application footer. Those later fixtures are not yet gated. Current expected
+inventories are Unix61 and Windows35. Full app gates, actual WindowsTerminal
+interaction, helper process services, close/persistence acceptance, packages
+and WP57 audit remain unfinished; no full Windows completion is claimed.
+
+Publication/identity checkpoint (13:35 UTC): ckVision `ddb73e20` is on private
+main, with the pre-existing 33-path progress-widget payload preserved
+(586 insertions/69 deletions) and shared index clean. The identical clean
+commit passes Mac Release226/226 (38.31 s), GCC13.3 Linux226/226 (55.79 s),
+MSVC Windows ARM64218/218 (40.88 s), LLVM23 ASan/UBSan plus fuzz236/236
+(188.93 s), and TSan225/225 (353.50 s); CTest exits0 and normal benchmarks
+pass. Public `1dd00956b23d71e23985b08aceb9b203dc613c9c` passes filtered
+Release220 non-PTY entries plus four PTY entries, zero warnings and strict
+docs, and is pushed to GitHub main. CI37205721888 is running before tagging
+0.1.15; the latest actual release remains0.1.14.
+
+The isolated app now preserves the upstream full-width ProcessId through
+its Terminal wrapper, both consumers, process-table entries/walk and sampling
+parameters. Only actual POSIX native queries narrow after an explicit range
+check. A nonempty portable contract pins DWORD maximum and descendant identity
+and is registered on Windows as well. Mac AppleClang Debug ASan/UBSan passes
+all three targeted identity/POSIX-statistics/wire suites,6.07 s, exit0,
+at app manifest `e37c8ab06453e6217452df4c6363211ccb5d0a11ccd12665dc1e5038a8299462`
+against clean upstream `ddb73e20`. Native/GCC verification of this later app
+delta is still required. The app's dependency is prepared as0.1.15 because
+those types are not in0.1.14; installed-release adoption/publication waits
+for the actual upstream tag. The current targeted measurement predates these
+record/pin edits. Native resource values, visible partial/unavailable reports,
+helpers, close persistence, full native/live acceptance and packages remain.
+
+Versioned resource checkpoint (13:10 UTC): ckVision's isolated 0.1.15 candidate
+uses one source/asset manifest `5ec3410e75479bcc4e51174353ae1e73a42eb7e2eec2dd10d931432cac629eaf`
+for all five lanes: Mac Apple Clang Release 226/226 (42.99 s), Debian 13
+ARM64 GCC 13.3 Release/FORTIFY 226/226 (56.96 s), Windows 11 ARM64 MSVC
+Release 218/218 (72.18 s), Mac LLVM 23 Debug ASan/UBSan plus fuzz 236/236
+(198.17 s), and Debug TSan 225/225 (360.91 s). CTest exits 0, normal benchmark
+gates pass, compiler logs have zero warnings. Actual generated version SVG,
+sixteen report goldens and literal version assertion are included. The final
+validation-document delta is in isolated clean commit
+`ddb73e209ae99b09dc326ae4e3a6fa1d3d45d976`, manifest
+`26004d7f76bd0ac884b1b36e6257d2ccd53fae2a90377171b658d25cea6acd38`;
+committed-source gates are running. Private main and public GitHub have not
+advanced, and no 0.1.15 release is claimed.
+
+The app statistics audit found two actual server fan-out defects: later
+subscribers derived CPU against the first reader's same-time baseline, and a
+late subscriber could miss a held dead terminal's clear notification. The
+isolated app now caches one terminal packet per pass and tracks clears per
+reader/subscription. Its real-socket seven-case suite passes Apple Clang Debug
+ASan/UBSan (5.56 s). Actually recompiling the two original production server
+files, with new regressions retained, fails exactly the shared-packet equality
+and late-subscriber clear assertions (compile exit 0, CTest exit 8). Byte-exact
+restoration, rebuild and targeted repeat pass (5.66 s). This is Mac targeted
+candidate evidence, not Linux/native equivalent coverage or an app landing.
+
+Resource consumption in both server and local client remains open, including
+full-width identities and visible partial/unavailable wire/frame values.
+Non-terminal helper pipes, console-close/job persistence, the complete native
+and live behavior matrix, x64/ARM64 blocking CI and installed packages, and
+WP-57's literal final audit remain. The latest released library is 0.1.14;
+the application's GitHub update is still pending.
+
+Resource-service checkpoint (12:39 UTC): the isolated upstream D-131 candidate
+passes MSVC Windows 11 ARM64 strict Release 218/218, exit 0, 61.66 s, plus
+the benchmark gate. Its six native process/job cases and the real ConPTY
+descendant path cover full-width identity, current resident/private-resident
+memory, cumulative job CPU including exited workers, growing membership and
+denied memory reads. Both compiled negative regressions fail their intended
+assertions (build exit 0, CTest exit 8) and pass after byte-exact restoration;
+the final full rebuild/gate uses restored code. The first mutation driver
+failed before testing due to argument ordering; its restored source was
+rebuilt before any further binary use, and that attempt is not mutation proof.
+
+Earlier frozen candidates pass Mac Release 226/226 (40.55 s) and rpi4 GCC
+13.3 Release/FORTIFY 226/226 (59.96 s), plus the Linux benchmark. Those older
+manifests do not claim to compile the final Windows-only fixture changes.
+Normal compiler builds are zero-warning. The Linux shared-header rebuild is
+492 actions/1715 s, not comparable to the prior 166-action/340 s version-only
+rebuild. Final sanitizer, committed-source, filtered-publication and release
+gates are still required. No process-resource library release is claimed;
+the latest published library remains 0.1.14.
+
+Both ckmux statistics consumers and their actual frame/wire acceptance are
+still outstanding; the current app reports native sampling unsupported.
+Helper processes, console-close/job persistence, complete native/live
+acceptance, x64/ARM64 CI/packages and the final audit remain. The primary
+ckmux checkout/GitHub publication has not advanced during this checkpoint;
+the 0.1.14 pin is in the isolated app candidate, not a published app update.
+
+Release checkpoint (11:43 UTC): all seven ckVision GitHub CI jobs in
+`37198293532` pass at public `be5ca6c11bae745f9abab1be1d43f3b5aa0025f7`.
+v0.1.14 is published (not draft/prerelease); the annotated tag peels to that
+exact public commit. The isolated application's release pin is now 0.1.14.
+A clean committed application adopter gate remains required; older v13
+source-candidate integration evidence is not evidence for this later pin/doc
+delta. Subsequent library process-resource work is isolated and unreleased.
+Its first Mac strict clean build passes the two focused core/POSIX entries;
+the first full sweep is 224/226, failing two documentation checks because the
+new headers are absent from the API index. Native compilation/testing remains
+in progress. No native statistics or full Windows port completion is claimed.
+
+The publication and integration checkpoints below record earlier snapshots.
+
+Publication checkpoint (11:18 UTC): ckVision `931cdff8` is landed on private
+main with the shared progress-widget changes preserved by a before/after
+diff-payload and untracked-inventory audit. The same clean commit passes
+Apple Clang Release 225/225 (54.56 s), GCC 13.3 Linux Release/FORTIFY
+225/225 (59.03 s), MSVC Windows ARM64 Release 216/216 (36.46 s), LLVM 23
+Mac ASan/UBSan plus fuzz 235/235 (211.16 s) and TSan 224/224 (378.04 s),
+all CTest exits 0 and normal benchmark gates green. Windows' first full
+committed sweep is retained as 213/216: three Python documentation/license
+checks could not find Git on PATH. Adding the existing private portable Git
+to that invocation's PATH, without changing source or binaries, passes the
+complete repeat. It was a gate-environment correction, not an assertion skip.
+
+Filtered public snapshot `be5ca6c11bae745f9abab1be1d43f3b5aa0025f7` passes
+219 non-PTY entries, four PTY entries, zero-warning Release and strict docs,
+and is pushed to GitHub main. CI `37198293532` is running; no v0.1.14 tag
+or release has been created. The temporary snapshot build was removed after
+its compact logs and source/asset fingerprints were retained. ckmux still
+needs released dependency adoption and a clean committed app integration
+gate; the passing source-candidate measurements below are not that claim.
+
+Current integration checkpoint (11:06 UTC, isolated candidates): native
+Windows 11 25H2 ARM64 MSVC strict Release passes 32/32 entries, exit 0,
+37.47 s. App manifest `22c167929275c92336699804b2301fade49dd2f956e49653cfb01e0d0949bba8`
+is paired with corrected upstream pre-version manifest
+`ea4dea0000c8d2bfb41e4e482757fbe4bed347cc292ec0a8cf3ae9f39652b962`.
+The same app/library pair passes Apple Clang strict Release 59/59
+(181.57 s), Apple Clang Debug ASan/UBSan 59/59 (259.86 s), and Debian 13
+ARM64 GCC 13.3 Release/FORTIFY 59/59 (125.90 s), all CTest exits 0.
+These are source-candidate integration gates, not clean app-commit gates,
+published Windows packages or a live Windows Terminal certification.
+
+Build records retain exact outputs, compiled-input logs and hashes. Native
+SDK-path replacement rebuilt 59 consumer objects in 97.355 s
+(10:32:54.273Z–10:34:31.616Z), zero warnings. Mac Release rebuilt in 61 s
+and ASan/UBSan in 34 s; the latter's test binary is newly linked while its
+unchanged production executable retains its earlier timestamp. No app was
+launched from that timestamp as evidence of a visual change. Linux rebuilt
+189 actions in 827 s (10:46:10Z–10:59:57Z), after deliberately invalidating
+the imported library's timestamps plus changed application inputs; this is
+not comparable to the older 48-action/307 s application-only rebuild.
+
+Native executable remains
+`C:/Users/klukas/ckmux-windows-20261003-01/app-native-v1-release/Release/ckmux.exe`,
+SHA256 `7109b510190c42a87cb7a7555db7597f818dcec4d4a472eca7f2c121bb0e6031`.
+The 22 nonempty common/native suites and two real process/lifecycle scripts
+retain their original assertions; two Mach-O-only root checks skip on Windows.
+This is still not the complete equivalent native test inventory.
+
+The upstream pre-version candidate now passes Mac Release 225/225,
+Linux Release 225/225, Windows Release 216/216, LLVM 23 Mac Debug
+ASan/UBSan plus fuzz 235/235 and TSan 224/224, plus the three normal
+benchmark gates. Its premature nested-fixture exit is actually corrected,
+not attributed to serialization alone: a compiled original fails both
+400 ms delayed-reader lifecycle/frame assertions, and the real child now
+waits for reader input acknowledgement. The release preparation declares
+0.1.14 and updates literal version/report assets. The first versioned
+commit's Mac Release gate correctly fails a stale report SVG (224/225);
+the reviewed one-glyph regeneration is in the replacement isolated commit
+`931cdff8683386b79c5149922d70dee909264619`. It passes Mac Release 225/225
+(54.56 s) and LLVM 23 ASan/UBSan plus fuzz 235/235 (211.16 s), CTest
+exits 0. Final TSan/native/Linux committed and filtered-publication gates
+remain in progress. None of this is a published 0.1.14 dependency pin yet.
+
+Next requirements remain upstream non-terminal helper pipes and native
+process statistics, bounded console-close completion and actual client/job
+persistence, complete native wire/multi-reader/descendant/environment-change
+acceptance, live Windows Terminal input/menu/mouse/window behavior,
+published dependency adoption, blocking x64/ARM64 CI, install-tested ZIP and
+installer artifacts with runtime policy/checksums, and the final WP-57 audit.
+WP-53/WP-54 remain In progress. The checkpoints below are historical.
+
+Native test-inventory checkpoint (10:22 UTC, isolated candidate): Windows 11
+25H2 ARM64 MSVC strict Release passes 32/32 CTest entries, exit 0, 45.56 s.
+There are 22 nonempty common/native suites, two actual process/lifecycle
+scripts and eight build/checker entries. Two existing Mach-O-only checkers
+return skipped on Windows; they do not establish native dead-code coverage.
+The four newly enabled suites retain their original copy-mode, prefix-key,
+notification and minimize/chrome assertions, dispatching real Application
+events with an actual ConPTY child from this build. A separate native case
+proves that child's process identity and transformed input response, rather
+than mistaking console input echo for child output. This is not the complete
+Unix-equivalent inventory or the live Windows Terminal walkthrough.
+
+Frozen app manifest: `7fccb2657778b338b32f9b6a9f5eb2388eea6153ee566b2e1a52b1769b5f4f5b`.
+Build 10:19:54.617Z–10:20:12.631Z, 18.013 s, 59 compiled objects, zero warnings;
+main.cpp, protocol/grid fixtures and the revised native shell fixture compile.
+The prior wider fixture rebuild was 70.484 s. Actual executable:
+`C:/Users/klukas/ckmux-windows-20261003-01/app-native-v1-release/Release/ckmux.exe`,
+SHA256 `fa4687d5370a565a0ead9f76918671e40cc4f0d9ae081b524301c90aec6c4820`.
+No user-facing window was launched or visually certified.
+
+The first full native 28-entry sweep passed 27/28: generated documentation
+corrupted the UTF-8 em dash and used CRLF instead of the checked-in LF bytes.
+GenerateDocs now declares UTF-8 process output and Unix newlines; the exact
+byte-equality assertion stays, with explicit LF/non-ASCII partners. The next
+32-entry sweep passed every original and newly ported suite except a new
+fixture's incorrect requirement that a silent child already be Running.
+The shared emulator is Ready until output arrives; the corrected fixture
+asserts Ready, a live process id, transformed output and then Running.
+Both failed sweeps are retained; neither is reported as a passing gate.
+
+Native integration uses an isolated unreleased ckVision SDK, not an assertion
+that these changes are in published 0.1.13. Library source manifest
+`6553ac4eaa9a4b36da35230c8bdd163667590d1f4d5d147e6ce93017451868e5`
+passes native MSVC ARM64 216/216 (115.39 s) and Linux GCC 13.3
+Release/FORTIFY 225/225 (58.78 s), CTest exits 0 and both benchmark gates pass.
+The library's CkTest bridge now accepts constant conditions without MSVC
+C4127, retaining single evaluation, contextual conversion and real failure
+reporting; a strict standalone contract checks positives and expected failure.
+No warning is disabled in ckmux. The Mac sanitizer sweeps for these bytes
+are not green: concurrent appearance/generated-golden timeouts and nested
+child output assertions failed; a serialized ASan repeat still misses the
+200 ms nested fixture frame. That fixture is being replaced upstream by
+reader acknowledgement, with a delayed-reader regression. New full library
+gates, commit gates and a release remain required. Earlier Mac app ASan/UBSan
+59/59 (310.54 s) predates the current fixtures and is historical evidence only.
+
+Outstanding work is unchanged in scope: upstream generic child-pipe helpers
+and process statistics, bounded console-close/job persistence, complete native
+wire/flow-control and child-tree acceptance, live Windows Terminal behavior,
+current all-platform/sanitizer commit gates, a newly published dependency pin,
+x64/ARM64 blocking CI and installed ZIP/installer verification. WP-53/WP-54
+remain In progress. These changes are isolated and not yet landed/published.
+
+Earlier production checkpoint (09:24 UTC):
+
+Actual native application checkpoint (09:24 UTC, isolated candidate): the
+production Windows 11 25H2 ARM64 MSVC Release executable builds with `/W4
+/WX /permissive- /utf-8`; all 33 production objects are present. Native
+host selection, Unicode entry/path conversion, portable connection ownership,
+native wait-source routing and detached server startup are integrated. The
+Windows guard is removed. The latest incremental process-TU/relink gate is
+09:10:43.520Z–09:10:52.380Z, 8.857 s, zero warnings, version/help exits 0.
+Frozen application manifest: `7a70ee2442aff4515081775fc42825388a786653dec0b6111dcac5bf3100307c`.
+Exact executable: `C:/Users/klukas/ckmux-windows-20261003-01/app-native-v1-release/Release/ckmux.exe`,
+SHA256 `0bf00bced297eb1549ce5d441ccb9a49f30348757d03f1d3484ef4bd895405c5`.
+This first complete production build has testing OFF: it is not a full native
+application test-inventory gate or a user-facing window certification.
+
+A real CLI smoke creates one detached server and one actual cmd child,
+proves both survive two CLI exits, then explicitly shuts down both (exit 0).
+The stronger application lifecycle script starts eight real ckmux clients
+concurrently: one server PID 6128 owns eight cmd children, every named session
+survives the starters, diagnostics reach a Unicode configuration-directory
+log, and explicit shutdown removes the server and all eight children. Exit 0.
+This is native application IPC/startup/persistence evidence, not interactive
+multi-reader reattachment, history/layout, or live desktop acceptance.
+
+The first detached smoke failed before listening: separately reopening both
+standard writers with secure CRT freopen denied the second writer and closed
+stderr. The server then crashed while reporting daemonization failure. Native
+daemon setup now opens one shared append log, duplicates its descriptor onto
+initialized standard streams, uses NUL input and makes handles non-inheritable.
+The production-process regression verifies Unicode names, preservation of
+existing bytes across two launches, both binary writer streams, detached
+console state, NUL input, no inherited handles and explicit failed-log refusal.
+Strict targeted native gate: 1/1, exit 0, 11.51 s. The compiled frozen original
+implementation fails that regression (build exit 0, CTest nonzero); restoring
+the corrected input passes 1/1 again (5.60 s), source identity checked.
+The first concurrency script lost a short-lived starter's ExitCode through
+Start-Process's later lookup although all eight output files named their
+sessions. It now owns each process handle from creation through exit; no
+application behavior, success assertion or timeout was weakened.
+
+Shared-loop regression gates: Apple Clang strict Release 59/59, CTest exit 0,
+182.38 s, frozen app manifest `22bc5743669b60e3f94c530031ae31d05227516b4edb93ced30b23859ef83b1b`;
+rpi4 Debian 13 ARM64 GCC 13.3 Release/FORTIFY 59/59, exit 0, 125.87 s,
+manifest `4b9c266eb9e286ca6ace608675f99da87424ad455906ba2b590054e1953286d6`.
+The latter compiles 48 fresh incremental actions in 307 s and explicitly
+invalidates changed inputs against the original clean-build manifest: an
+earlier archive overlay preserved old mtimes and retained a stale poller object,
+causing a link failure. Hashes of source alone did not establish compiled input
+freshness; the repaired gate recompiles poller.cpp and checks the full inventory.
+These frozen gates precede the latest Windows-only daemon code/tests.
+
+The adopter pin is now released ckVision 0.1.13/public `e001070f`, whose seven
+CI jobs passed in `37174128133`. Native compilation additionally consumes the
+unreleased isolated D-128/D-129/D-130 candidate: shared CRT argv encoding,
+strict UTF-8/UTF-16 services and Unicode trace-file opening. Its frozen v4
+manifest `bfb3161744ace523d0ca7f1dea55cb4c994a8d5f8754d531ba4ab515af1b4478`
+passes Mac 224/224, GCC 13.3 Linux 224/224 and MSVC ARM64 215/215, all CTest
+exits 0 and benchmark gates green. Further LLVM 23 sanitizer/fuzz validation
+finds missing explicit cstdlib includes, corrected upstream; its first complete
+sweep is 233/234, with all ten corpus cases passing but installed-package
+consumer linkage failing after the fixture selected Apple Clang instead of
+LLVM 23. The fixture now propagates and verifies its actual compiler; the
+replacement gate is pending. No passing full sanitizer claim or new library
+release follows from this checkpoint.
+
+Outstanding: upstream generic non-terminal child-pipe service for configured
+clipboard helpers (U-WIN-HELPER-PROCESS), native process statistics, console-close
+shutdown and client/job persistence policy, complete native suite inventory,
+interactive reattachment and the WP-55 live Windows Terminal acceptance matrix,
+supported sanitizer/clean-commit gates, a newly published dependency pin, x64
+and ARM64 CI and installed ZIP/installer release verification. WP-53 and WP-54
+remain In progress; WP-55–WP-57 are not done. The older checkpoints below are
+historical snapshots, not current executable or release claims.
+
+Native IPC candidate (07:39 UTC, isolated from the shared checkout):
+`src/platform/windows_pipe.*` now supplies SID-scoped canonical pipe/mutex
+names, a protected current-user/SYSTEM ACL, first-instance collision refusal,
+remote-client refusal, client and server token-SID checks, and non-inheritable
+handles. Accept is overlapped and rearms before returning a connection.
+`WindowsPipeStream` supplies stable overlapped read/write buffers, bounded
+read/flush work, byte-stream framing, disconnect readiness, 4 MiB high water,
+and a 32 MiB hard cap. Its 64 KiB chunks also bound queue metadata under
+thousands of tiny writes. No integer descriptor carries a native HANDLE.
+
+Windows 11 25H2 ARM64 MSVC strict Release builds the isolated harness with
+zero warnings (five compile actions, 8.413 s). Its one CTest entry contains
+twelve native cases, all passing, exit 0 (1.15 s). They inspect the actual
+protected two-trustee DACL, prove eight real concurrent starters yield one
+winner, exercise 130 readiness sources through ckVision's WindowsWaitSet,
+transfer binary bytes bidirectionally with small read budgets, grow/drain a
+backpressured queue, reject an uncoordinated pipe collision, and repeat fifty
+pending accept/read/write teardowns with unchanged process handle counts.
+Thread counts are measured before/after the readiness and transfer cases.
+Four compiled mutations (ACL protection, first-instance guard, copied tail
+byte, chunk coalescing) fail their intended assertions; restored source hashes
+match and all twelve cases pass again, CTest exit 0 (1.70 s).
+
+Frozen harness manifest SHA256:
+`80711cc276c98a38cd26d5ce3fac7baa5b679e38f675c7c6b46bb4753cff6f8e`.
+Restored executable: `C:/Users/klukas/ckmux-windows-20261003-01/ipc-v4-native-build/Release/ckmux_native_ipc.exe`,
+SHA256 `1cd10ccde04631ec96a48e2418c54b058bc68311cd949c3cc0b0ec23ccf5fe26`.
+The harness uses clean local ckVision `13282588`, library SHA256
+`0b850306ebf2e6831e2a640873f39a33c80c1dffa9bc41ad546a7b17ecbcfe04`;
+it does not certify a released-library or full-application build. This work
+is not landed. Stream/connection identity and waits must still be integrated
+into the actual client/server loops, and detached process/shutdown, native
+host selection, complete acceptance and packages remain unfinished. The
+top-level Windows build guard remains honest; no native app was launched.
+
+Linux fallback checkpoint: frozen ckmux adopter manifest
+`c5d4777847fef560141ab82b999c04cd99b6bc87bc8cf3c1cb8995cc1d447a98`
+passes strict Debian 13 ARM64 GCC 14.2 Release on rpi4, 59/59 (133.73 s),
+CTest exit 0, against the clean actual public v0.1.13 tag `e001070f`.
+Fresh 278-action build: 07:02:03Z–07:16:32Z, 869 s; no prior comparable
+same-host baseline existed. This proves those frozen bytes, not this later
+IPC candidate. Both GCC and Clang sanitizer smoke programs fail before main
+on that host; its booted kernel configuration states ARM64_VA_BITS=39. The
+ASan project build was interrupted after that startup failure was confirmed,
+not reported as a test verdict. Private authenticated Debian GCC 13/Clang 19
+packages leave system packages unchanged. Further GCC 13 Release gates are
+running separately. The shared ckdev VM's bash still reports I/O error;
+it has not been restarted without coordination.
+
 ckVision v0.1.12 is released at 02:25:13Z on 2026-10-04, tag peeling to
 public `cfe9fdfd`. GitHub CI `37169919485` completed successfully in all seven
 jobs. The ckmux adopter pins 0.1.12. Its actual cold GitHub fetch asserts the

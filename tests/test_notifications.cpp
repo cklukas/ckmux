@@ -12,8 +12,6 @@
 // the desktop, and these tests are about it being there, saying the right
 // thing, and going away again at the right time (or not at all, for the one
 // class that must wait for the reader).
-#if !defined(_WIN32)
-
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -23,6 +21,7 @@
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/widgets/common_components.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -37,7 +36,7 @@ constexpr std::int64_t kToastLife = 5 * kSecond;
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     options.toast_nanos = kToastLife;
     return options;
 }
@@ -457,7 +456,6 @@ CK_TEST(no_menu_offers_one_letter_twice) {
     }
 }
 
-#endif  // !defined(_WIN32)
 
 CK_TEST(the_move_page_says_what_esc_does_in_the_move_size_mode) {
     // ckVision's one keyboard move/size mode (its D-093) restores the starting

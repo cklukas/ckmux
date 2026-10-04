@@ -174,7 +174,7 @@ std::vector<Message> every_message() {
     messages.emplace_back(FocusTerm{11});
     messages.emplace_back(ZoomTerm{11, 1});
 
-    SetLayout report;
+    ckm::proto::SetLayout report;
     report.entries.push_back(LayoutEntry{11, Rect{-6, 4, 44, 14}, 0, 0, TileFraction{}});
     report.entries.push_back(LayoutEntry{12, Rect{3, 0, 22, 7}, 1, 1, TileFraction{}});
     messages.emplace_back(std::move(report));
@@ -193,7 +193,9 @@ std::vector<Message> every_message() {
     messages.emplace_back(TermStats{11, 8370, 220'200'960, 100'663'296,
                                     static_cast<std::uint8_t>(
                                         static_cast<std::uint8_t>(TermStatsFlag::HasReal) |
-                                        static_cast<std::uint8_t>(TermStatsFlag::Alive))});
+                                        static_cast<std::uint8_t>(TermStatsFlag::Alive)),
+                                    TermStatsState::Partial, TermStatsScope::OwnedJobLifetime,
+                                    TermStatsMemory::PrivateResident, 3, 2, 5});
 
     GridDelta delta;
     delta.term = 11;
@@ -334,7 +336,7 @@ CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
     arrangement[0].tile = TileFraction{0, 0, kTileFractionWhole / 2, kTileFractionWhole};
     arrangement[2].tile = TileFraction{0, 0, kTileFractionWhole, kTileFractionWhole};
 
-    SetLayout reported;
+    ckm::proto::SetLayout reported;
     reported.entries = arrangement;
     LayoutDelta stated;
     stated.session = 8;
@@ -348,7 +350,7 @@ CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
     // returned is not lifetime-extended.
     const Message report_bytes = round_trip(reported);
     const Message statement_bytes = round_trip(stated);
-    const auto& decoded_report = std::get<SetLayout>(report_bytes);
+    const auto& decoded_report = std::get<ckm::proto::SetLayout>(report_bytes);
     const auto& decoded_statement = std::get<LayoutDelta>(statement_bytes);
     CK_CHECK(decoded_report.entries == decoded_statement.entries);
     CK_CHECK(decoded_report.entries.size() == 3U);
@@ -373,8 +375,8 @@ CK_TEST(a_window_layout_says_the_same_thing_in_both_directions) {
     // statement and not an absence of one: a report that could not say "none
     // left" would leave the server holding the arrangement of a desktop that no
     // longer has anything on it.
-    const Message empty_report = round_trip(SetLayout{});
-    CK_CHECK(std::get<SetLayout>(empty_report).entries.empty());
+    const Message empty_report = round_trip(ckm::proto::SetLayout{});
+    CK_CHECK(std::get<ckm::proto::SetLayout>(empty_report).entries.empty());
 }
 
 CK_TEST(a_frame_states_its_own_length_type_and_zero_flags) {

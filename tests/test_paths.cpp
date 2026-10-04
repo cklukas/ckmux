@@ -27,28 +27,29 @@ namespace {
 
 // `setenv`/`unsetenv` around one case, restored on the way out so suites
 // cannot leak an environment into each other.
-class ScopedHome {
+class ScopedEnvironment {
 public:
-    explicit ScopedHome(const char* value) {
-        if (const char* const previous = std::getenv("HOME")) {
+    ScopedEnvironment(const char* name, const char* value) : name_(name) {
+        if (const char* const previous = std::getenv(name_.c_str())) {
             had_ = true;
             previous_ = previous;
         }
         if (value == nullptr)
-            ::unsetenv("HOME");
+            ::unsetenv(name_.c_str());
         else
-            ::setenv("HOME", value, 1);
+            ::setenv(name_.c_str(), value, 1);
     }
-    ~ScopedHome() {
+    ~ScopedEnvironment() {
         if (had_)
-            ::setenv("HOME", previous_.c_str(), 1);
+            ::setenv(name_.c_str(), previous_.c_str(), 1);
         else
-            ::unsetenv("HOME");
+            ::unsetenv(name_.c_str());
     }
-    ScopedHome(const ScopedHome&) = delete;
-    ScopedHome& operator=(const ScopedHome&) = delete;
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
 
 private:
+    std::string name_;
     bool had_ = false;
     std::string previous_;
 };
@@ -56,7 +57,7 @@ private:
 }  // namespace
 
 CK_TEST(a_path_without_a_tilde_is_handed_back_exactly_as_written) {
-    ScopedHome home("/home/reader");
+    ScopedEnvironment home("HOME", "/home/reader");
     CK_CHECK(expand_user_path("/tmp/out.txt") == std::filesystem::path("/tmp/out.txt"));
     CK_CHECK(expand_user_path("relative/out.txt") == std::filesystem::path("relative/out.txt"));
     CK_CHECK(expand_user_path("") == std::filesystem::path(""));
@@ -69,12 +70,12 @@ CK_TEST(a_bare_tilde_is_the_home_directory_itself) {
     // `rfind("~/", 0) == 0`, which a bare `~` does not satisfy — it only
     // worked because of a separate equality check beside it. Nothing stated
     // that, so it was an accident rather than a decision.
-    ScopedHome home("/home/reader");
+    ScopedEnvironment home("HOME", "/home/reader");
     CK_CHECK(expand_user_path("~") == std::filesystem::path("/home/reader"));
 }
 
 CK_TEST(a_tilde_with_a_path_under_it_lands_under_the_home_directory) {
-    ScopedHome home("/home/reader");
+    ScopedEnvironment home("HOME", "/home/reader");
     CK_CHECK(expand_user_path("~/Documents") == std::filesystem::path("/home/reader/Documents"));
     CK_CHECK(expand_user_path("~/Documents/ckmux-print-0-2.txt") ==
              std::filesystem::path("/home/reader/Documents/ckmux-print-0-2.txt"));
@@ -88,7 +89,7 @@ CK_TEST(another_users_home_is_left_alone_rather_than_guessed_at) {
     // account's home out of a configuration string — and refusing it is a
     // decision. Asserted so that a later "improvement" has to argue with a
     // test rather than with nobody.
-    ScopedHome home("/home/reader");
+    ScopedEnvironment home("HOME", "/home/reader");
     CK_CHECK(expand_user_path("~root/secrets") == std::filesystem::path("~root/secrets"));
     CK_CHECK(expand_user_path("~other") == std::filesystem::path("~other"));
 }
@@ -98,7 +99,7 @@ CK_TEST(a_relative_home_is_refused_rather_than_used) {
     // `relative/Documents`, resolved against wherever the client happened to
     // be started — the same unfindable-document defect one notch milder, and
     // the case `environment_directory` exists to reject.
-    ScopedHome home("not/absolute");
+    ScopedEnvironment home("HOME", "not/absolute");
     const std::filesystem::path resolved = expand_user_path("~/Documents");
     CK_CHECK(resolved.is_absolute());
     CK_CHECK(resolved.string().rfind("not/absolute", 0) != 0);
@@ -111,8 +112,46 @@ CK_TEST(an_absent_home_still_answers_with_an_absolute_path_and_never_a_literal_t
     // A guard whose failure mode is the defect it guards against is not one.
     // `config_file_path()` already contemplates "no HOME at all", so this
     // environment is documented in the same header.
-    ScopedHome home(nullptr);
+    ScopedEnvironment home("HOME", nullptr);
     const std::filesystem::path resolved = expand_user_path("~/Documents");
     CK_CHECK(resolved.is_absolute());
     CK_CHECK(resolved.string().find('~') == std::string::npos);
+}
+
+CK_TEST(environment_path_preserves_explicit_relative_values_and_empty_means_absent) {
+    ScopedEnvironment home("HOME", "relative/reader");
+    CK_CHECK(ckm::platform::environment_path("HOME") == std::filesystem::path("relative/reader"));
+    CK_CHECK(ckm::platform::environment_directory("HOME") == nullptr);
+    {
+        ScopedEnvironment empty("HOME", "");
+        CK_CHECK(ckm::platform::environment_path("HOME").empty());
+    }
+    CK_CHECK(ckm::platform::environment_path("HOME") == std::filesystem::path("relative/reader"));
+}
+
+CK_TEST(environment_path_is_observed_again_after_the_host_value_changes) {
+    ScopedEnvironment home("HOME", "/home/first");
+    CK_CHECK(ckm::platform::environment_path("HOME") == std::filesystem::path("/home/first"));
+    {
+        ScopedEnvironment changed("HOME", "/home/second");
+        CK_CHECK(ckm::platform::environment_path("HOME") == std::filesystem::path("/home/second"));
+    }
+    CK_CHECK(ckm::platform::environment_path("HOME") == std::filesystem::path("/home/first"));
+}
+
+CK_TEST(explicit_config_paths_are_observed_fresh_and_empty_restores_directory_policy) {
+    ScopedEnvironment home("HOME", "/home/reader");
+    ScopedEnvironment xdg("XDG_CONFIG_HOME", "/home/config");
+    ScopedEnvironment config("CKMUX_CONFIG", "relative/first.conf");
+    CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("relative/first.conf"));
+    {
+        ScopedEnvironment changed("CKMUX_CONFIG", "/home/second.conf");
+        CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("/home/second.conf"));
+    }
+    CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("relative/first.conf"));
+    {
+        ScopedEnvironment empty("CKMUX_CONFIG", "");
+        CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("/home/config/ckmux/ckmux.conf"));
+    }
+    CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("relative/first.conf"));
 }

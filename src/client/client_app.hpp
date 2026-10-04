@@ -38,6 +38,7 @@
 #include "client/stats_format.hpp"
 #include "common/config.hpp"
 #include "common/proto.hpp"
+#include "common/stats.hpp"
 #include "cvision/term/terminal_subsession.hpp"
 #include "cvision/ui/application.hpp"
 #include "cvision/ui/layout.hpp"
@@ -914,13 +915,7 @@ private:
     // CPU baseline exists only for locally sampled terminals; a mirror's rate
     // was derived on the server.
     std::unordered_map<const ckv::term::TerminalSubsession*, proto::TermStats> latest_stats_;
-    struct LocalCpuBaseline {
-        std::uint64_t cpu_nanos = 0;
-        std::int64_t at_nanos = 0;
-        // A flag rather than a sentinel value, for WP-38's reason: a clock
-        // may legitimately read zero.
-        bool primed = false;
-    };
+    using LocalCpuBaseline = CpuBaseline;
     std::unordered_map<const ckv::term::TerminalSubsession*, LocalCpuBaseline> local_cpu_;
     // The local sampler's timer, 0 while none is armed (Application's ids
     // start at 1). Armed while any readout is on; cancelled when the last
@@ -1103,7 +1098,7 @@ private:
         // the window a reader is looking at rather than the third one in the
         // desktop's insertion order. The two agree until a window in the
         // middle closes, and then only the caption is visible.
-        int number = 0;
+        std::size_t number = 0;
         // What this window was last seen to be saying (WP-19), so the border
         // override, the host bell and the footer are each touched once per
         // CHANGE rather than rewritten on every poll — this runs several times

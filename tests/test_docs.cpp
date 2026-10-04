@@ -101,6 +101,8 @@ CK_TEST(the_pages_key_reference_is_the_build_generated_artifact) {
     const std::string source = checked_in_keys();
     CK_CHECK(!built.empty());
     CK_CHECK(source == built);
+    CK_CHECK(built.find('\r') == std::string::npos);
+    CK_CHECK(built.find("| `^B 1-9` | Focus Terminal by Number | — |") != std::string::npos);
     CK_CHECK(built.find("generated from the same registry") != std::string::npos);
     CK_CHECK(built.find("## Copy mode and paste") != std::string::npos);
 }

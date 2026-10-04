@@ -19,7 +19,8 @@ function(render_document format template output)
         COMMAND "${CKMUX_BINARY}" "--internal-key-appendix=${format}"
         RESULT_VARIABLE result
         OUTPUT_VARIABLE appendix
-        ERROR_VARIABLE problem)
+        ERROR_VARIABLE problem
+        ENCODING UTF-8)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR
             "ckmux could not generate the ${format} key appendix (exit ${result}): ${problem}")
@@ -32,8 +33,10 @@ function(render_document format template output)
         message(FATAL_ERROR
             "${template} must contain @CKMUX_KEY_APPENDIX@ exactly once; found ${marker_count}")
     endif()
-    string(REPLACE "@CKMUX_KEY_APPENDIX@" "${appendix}" content "${content}")
-    file(WRITE "${output}" "${content}")
+    # The registry produces UTF-8. Do not decode its bytes using the Windows
+    # console code page, or publish host-dependent text-mode line endings.
+    string(REPLACE "\r\n" "\n" CKMUX_KEY_APPENDIX "${appendix}")
+    configure_file("${template}" "${output}" @ONLY NEWLINE_STYLE UNIX)
 endfunction()
 
 render_document(markdown "${CKMUX_MARKDOWN_TEMPLATE}" "${CKMUX_OUTPUT_DIR}/keys.md")

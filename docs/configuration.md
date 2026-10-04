@@ -35,7 +35,7 @@ Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 | `resize-windows-to-fit` | `false` | After a reattach on a smaller screen has moved an oversized window up and left, whether a second, resizing step shrinks it to fit. |
 | `show-cpu` | `false` | CPU readout on every terminal window's footer (View menu). |
 | `show-memory-rss` | `false` | Memory (RSS) readout. |
-| `show-memory-real` | `false` | Memory readout in the platform's own "what does it actually cost" metric. |
+| `show-memory-real` | `false` | macOS footprint, Linux PSS, or Windows private resident working-set pages (labelled `Private RSS`, not virtual commit charge). Missing fields are not measured zero. |
 
 ## [terminal]
 
