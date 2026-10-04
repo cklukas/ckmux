@@ -13,6 +13,7 @@ set(CKMUX_TEST_SOURCES
     test_big_clock.cpp
     test_budgets.cpp
     test_cli.cpp
+    test_cli_session_replies.cpp
     test_capability_grace.cpp
     test_client_pacing.cpp
     test_client_smoke.cpp
@@ -68,9 +69,12 @@ if(WIN32)
     # intact. These common sources exercise data and injected-service routes.
     set(CKMUX_TEST_SOURCES
         test_commands.cpp
+        test_command_reachability.cpp
         test_attach_flags.cpp
+        test_big_clock.cpp
         test_capability_grace.cpp
         test_clipboard_exports.cpp
+        test_cli_session_replies.cpp
         test_config_filesystem.cpp
         test_copy_mode.cpp
         test_docs.cpp
@@ -85,8 +89,10 @@ if(WIN32)
         test_process_identity.cpp
         test_resource_stats.cpp
         test_remote_terminal.cpp
+        test_reader_modes_client.cpp
         test_scratch_directory.cpp
         test_shell_policy.cpp
+        test_session_desktop_client.cpp
         test_stats_format.cpp
         test_windows_shell_host.cpp
         test_windows_paths.cpp

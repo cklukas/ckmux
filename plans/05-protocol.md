@@ -93,7 +93,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 |---|---|---|---|
 | `Hello` | above | **live** | first message, mandatory |
 | `ListSessions` | — | **live** | picker + `ckmux ls` |
-| `NewSession` | `name str?, spawn_first u8, cmd str?` | **live** | empty name means the server names it (`session-N`); answered with `SessionList` to every greeted client — creating a session stales every picker |
+| `NewSession` | `name str?, spawn_first u8, cmd str?` | **live** | empty name means the server names it (`session-N`); answered with the immediate `SessionList` snapshot to its requester and subscribed UI pickers. Idle CLI utilities receive no unrelated pushes: concurrent creations must not consume another request's confirmation. |
 | `Attach` | `session u64, cols u16, rows u16, pixel_w u16, pixel_h u16, host_sixel u8, mode u8` | **live** | session 0 = "the default one": the session already there, or a new one on a server that has none — a cold `ckmux` start is one round trip. **Always granted**, and `mode` decides what that costs the readers already there: `0` take over — every one of them is detached first (`Detached{takeover}`, best-effort bounded flush; an unresponsive old client never delays the new attach), which is latest-client-wins and the default with no flag; `1` join — they stay (WP-44, `--share`); `2` watch — they stay and this client's own session-changing messages are refused server-side (WP-49, `--watch`). The field shipped as `share` with WP-44 carrying 0/1 and is widened rather than replaced, so both existing values keep their meaning. Pixel size feeds `TIOCSWINSZ` pixel fields & XTWINOPS 14/16 replies; `host_sixel` is what the client's OUTER terminal advertised, which is what a child's own advertisement must reflect (WP-16) |
 | `Detach` | — | **live** | also implicit on socket close |
 | `ClientResize` | `cols, rows, pixel_w, pixel_h` | **live** | the reader's own window, whenever it changes while attached (`ServerSession::desktop_resized`, asked of the host terminal on every pass of the client's loop and sent only when the size actually moved). The cell metric it carries is what a child's `TIOCSWINSZ` pixel fields and its XTWINOPS answers derive from, so a reader who resized their window — or changed its font — used to keep the old metric until they detached and came back (R8) |
@@ -108,7 +108,7 @@ handler — and re-derived on the date in this file's header (m-docs in
 | `ZoomTerm` | `term u64, on u8` | *encode-only* | maximize/restore |
 | `RenameSession` | `id u64, name str` | **live** | |
 | `RenameTerminal` | `id u64, name str` | **live** | the name a READER gives one terminal, which the server keeps as session state and states back on `TermMeta` and in the attach snapshot (`TerminalState.custom_title`). It does not replace what the child claims with OSC 0/2: that goes on being recorded underneath, which is what gives "use the default title again" a CURRENT title to hand the caption back to rather than whatever it said when the reader pinned it. An **empty name clears the override** — the one place this deliberately differs from `RenameSession`, where empty means "leave it alone" because a session with no name is a row in the picker with nothing to point at. Clamped to `kMaxTitleBytes` where it is stored, on a character boundary, through the same function the child's own title goes through |
-| `KillSession` | `session u64, force u8, grace_seconds u16` | **live** | ask every child first (`request_termination()`); kill the survivors at the deadline only if `force` |
+| `KillSession` | `session u64, force u8, grace_seconds u16` | **live** | ask every child first (`request_termination()`); kill the survivors at the deadline only if `force`. A CLI requester subscribes to completion lists until this exact session disappears; after completion it receives no unrelated list pushes. |
 | `KillServer` | — | **live** | `ckmux kill-server`, over its own connect path so running it twice does not start a server in order to kill one |
 | `SetReaderMode` | `scope u8, mode u8` | **live** | changes a reader mode without re-attaching. `scope`: `0` this client, `1` every OTHER reader of this session. `mode` is `Attach.mode`'s three values, so `{others, take over}` evicts through `Detached{takeover}`. `{me, take over}` is refused; a watcher may send only `{me, join}` to stop watching. Enforcement is server-side, so a stale client cannot type through watch mode. There is no owner; any attached reader may aim a permitted change at the others (WP-49/WP-50). |
 | `Input` | `term u64, blob` | **live** | already-encoded child bytes — keys/mouse/focus are encoded **client-side** by ckVision's `TerminalView` against mirrored mode state ([04](04-terminal-emulation.md)); the server just writes to the PTY (queued) |
@@ -549,7 +549,11 @@ counter rollback and scope changes clear has_cpu; a subsequent valid interval
 can report measured 0%. Integer rate arithmetic saturates rather than wraps.
 An observed empty owned job becomes Gone; failed or unreadable jobs do not.
 Footers label Windows private memory `Private RSS`, expose partial/unavailable
-observations, and clear gone subjects. Statistics remain transient, not saved.
+observations, and clear gone subjects. Each subscribed reader receives one
+Gone clear. A held TermClosed exit banner keeps that record: it does not
+remove the window, even when its display tick follows the statistics packet.
+Actual window removal or a new attachment/subscription retires the record.
+Statistics remain transient, not saved.
 
 `custom_title` on `TerminalState` and `TermMeta` (WP-36) is v3 by the same
 reasoning and under the same pairing rule. It also retires the last

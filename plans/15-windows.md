@@ -7,6 +7,85 @@ Status: In progress · 2026-10-03 · owner directed
 
 ### Latest checkpoint — 2026-10-04
 
+Reply-delivery correction candidate: Windows11 ARM64 MSVC strict Release
+passes40/40 (52.09s), exit0, at manifest
+`d31c1ee96fb9386293a7562c16715267581b05826141f807182696ee9c1cf1df`,
+against released ckVision0.1.15. The eight actual concurrent application
+starters now return their own names. Three deterministic real-IPC cases
+preserve UI pushes, named/unnamed CLI replies and kill completion/unsubscribe.
+Compiling the original server/CLI with these regressions on Mac Release
+fails all three (nine assertions, CTest8); byte-exact restore and rebuild
+passes the focused suite. The final native fixture pumps acceptance between
+connections because the named-pipe listener rearms in the server loop;
+all three clients are greeted before the intentionally ordered requests.
+The first fixture also confused a generated name with its wire id; the
+actual next_session_name contract selects the next session-N suffix.
+Native compiled-negative and clean committed full gates are still required.
+
+Clean-commit gate caught concurrent CLI reply misdelivery: Mac Release61/61
+(183.65s) and Debug ASan/UBSan61/61 (261.12s) pass at detached `0ae58237`,
+but native ARM64 MSVC is38/39 (48.60s): starter1 prints `win-native-0`
+although the server log proves all eight correctly named sessions were made.
+The error is an unrelated SessionList broadcast reaching an already-greeted
+CLI before its own NewSession reply. This failed gate is not a green landing.
+The isolated correction sends creation/rename replies to their requester and
+picker updates to UI clients only, retaining a precise pending-kill CLI
+subscription until its target disappears. Three deterministic common/native
+real-IPC cases cover the forced creation ordering, unnamed creation/current
+listing, and kill completion followed by unsubscribe. Inventories become
+Unix62 and Windows40. Compiled-negative and full committed gates are still
+required; no native completion or live WindowsTerminal acceptance is claimed.
+
+Held-clear/native-equivalence candidate: full frozen v2 manifest
+`74165e26a87a604ffaef1c4d95c2f114750b508137d00c6f6c27835627f7afa3`
+passes Mac AppleClang Release61/61 (185.24s), Debug ASan/UBSan61/61
+(244.51s), Debian13 ARM64 GCC13.3 Release/FORTIFY61/61 (126.29s),
+and native Windows11 ARM64 MSVC Release39/39 (48.13s), all exits0 and
+zero warnings, against clean released ckVision `ddb73e20`/0.1.15.
+The native equivalent uses a real successful zero-exit child and the owned
+job's Gone observation before advancing the display clock; the held banner
+must not cause another clear. The final fixture additionally asserts positive
+initial identity and non-Failed state. These are candidate measurements;
+clean committed-source gates still precede landing and filtered publication.
+The CI failure mechanism is in ckmux lifecycle bookkeeping, not a ckVision
+limitation or an application-side library workaround.
+An actually compiled native production mutation also fails exactly the new
+held-banner ordering assertion (CTest8). Byte-exact reversal, rebuilding and
+the full native39/39 repeat pass (45.99s, exit0); no mutation is left in place.
+
+Post-publication checkpoint: private `3d1a3bc5` is landed clean and filtered
+public `70209c31` is pushed to GitHub with the released0.1.15 pin. The same
+clean commit passes Mac Release61/61 (182.35s), Mac ASan/UBSan61/61
+(251.74s), GCC13.3 ARM64 Release/FORTIFY61/61 (129.59s), and MSVC ARM64
+Release35/35 (36.00s), exits0. The cold filtered-public adopter additionally
+fetches actual released tag `1dd00956` and passes61/61 (234.96s).
+GitHub CI37211950514 passes both Mac jobs but fails both Ubuntu x64 GCC13.3
+Debug jobs in the repeated-dead-clear assertions. Local Release evidence
+does not establish a passing Debug/public CI gate.
+
+The focused rpi GCC13.3 Debug diagnostic reproduces both failures against
+the verified Release0.1.15 SDK. A held TermClosed banner erased its reader's
+already-sent Gone record when the statistics pass preceded the display tick.
+The isolated correction retires this record only on actual window removal.
+A new injected-clock ordering regression fails with compiled original server
+code (three assertions across the eight cases, including the new case) and
+the corrected server passes all eight. No assertion is disabled or weakened;
+temporary packet instrumentation is removed. Native equivalent and full
+committed gates of this later correction remain required.
+
+Four existing UI suites are also ported with their assertions intact:
+command reachability (8 cases), big clock (9), reader modes (9), and desktop
+client panning/rows (9). Each fixture requires positive real child identity
+and non-Failed/non-Exited state. Native Windows uses the exact build helper;
+Unix retains /bin/cat. Before the later held-clear correction, this candidate
+passes MSVC39/39 (50.10s), MacRelease61/61 (183.27s), MacASan/UBSan61/61
+(258.88s), and GCCRelease61/61 (126.52s), exits0. These are real ConPTY
+children with headless Application event/render assertions, not a live
+WindowsTerminal walkthrough. WP53/54 and full native compatibility remain open.
+
+The earlier checkpoints below are historical snapshots, not current release
+or completion claims.
+
 Pre-landing checkpoint: the candidate now passes Mac AppleClang Release61/61
 (181.84s) and Debug ASan/UBSan61/61 (253.58s), Debian13 ARM64 GCC13.3
 Release/FORTIFY61/61 (128.43s), and native Windows11 25H2 ARM64 MSVC

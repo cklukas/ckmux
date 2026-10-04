@@ -19,6 +19,7 @@
 
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/testing/cktest.hpp"
+#include "live_terminal_child.hpp"
 
 namespace {
 
@@ -43,11 +44,13 @@ struct Fixture {
     std::vector<Asked> asks;
     ClientApp client;
 
-    Fixture() : client(app, make_options()) {}
+    Fixture() : client(app, make_options()) {
+        ckmtest::check_live_terminal_children(client.desktop());
+    }
 
     ClientOptions make_options() {
         ClientOptions options;
-        options.settings.shell = "/bin/cat";
+        options.settings.shell = ckmtest::live_terminal_child();
         options.set_reader_mode = [this](ReaderScope scope, AttachMode mode) {
             asks.push_back(Asked{scope, mode});
         };

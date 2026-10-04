@@ -834,9 +834,10 @@ void Server::handle(Client& client, const proto::Message& message) {
         }
         std::fprintf(stderr, "ckmux server: session %llu \"%s\" created\n",
                      static_cast<unsigned long long>(session.id), session.name.c_str());
-        // The list, not just an id: the client that asked wants to show the
-        // result, and every other client's picker is now out of date.
-        broadcast_session_list();
+        // Answer this request and update UI pickers. Other CLI utilities are
+        // not subscribers: a concurrent starter must not consume this list
+        // as confirmation of the session it has not created yet.
+        broadcast_session_list(&client);
         return;
     }
     if (const auto* request = std::get_if<proto::KillSession>(&message)) {
@@ -849,6 +850,8 @@ void Server::handle(Client& client, const proto::Message& message) {
             send(client, error);
             return;
         }
+        if (client.kind == proto::ClientKind::Cli)
+            client.awaiting_session_removal = session->id;
         begin_kill(*session, request->force != 0, static_cast<int>(request->grace_seconds));
         return;
     }
@@ -883,7 +886,7 @@ void Server::handle(Client& client, const proto::Message& message) {
             return;
         }
         session->name = request->name.empty() ? session->name : request->name;
-        broadcast_session_list();
+        broadcast_session_list(&client);
         return;
     }
     if (const auto* request = std::get_if<proto::RenameTerminal>(&message)) {
@@ -2263,20 +2266,28 @@ void Server::send_session_list(Client& client) {
         list.sessions.push_back(std::move(info));
     }
     send(client, list);
+    if (client.awaiting_session_removal != 0 &&
+        std::none_of(list.sessions.begin(), list.sessions.end(), [&](const proto::SessionInfo& info) {
+            return info.id == client.awaiting_session_removal;
+        }))
+        client.awaiting_session_removal = 0;
 }
 
-void Server::broadcast_session_list() {
-    // Everybody, CLI clients included — this is the ANSWER to a request. A
-    // `ckmux new` is a CLI client whose whole output is the list this produces,
-    // and the one time it was narrowed to UI clients that command hung and
-    // exited non-zero.
+void Server::broadcast_session_list(Client* requester) {
+    // UI clients subscribe to picker updates. CLI clients receive their own
+    // synchronous reply, or completion lists while their requested session
+    // kill is pending. Broadcasting unrelated changes to every CLI made eight
+    // concurrent starters report somebody else's successful creation.
     //
     // Whatever the tick was going to say has just been said, and better: this
     // list is current. Clearing here keeps a pending flag from putting a
     // second, identical list behind an immediate one.
     session_list_dirty_ = false;
     for (const std::unique_ptr<Client>& watcher : clients_)
-        if (watcher->greeted) send_session_list(*watcher);
+        if (watcher->greeted &&
+            (watcher->kind == proto::ClientKind::Ui || watcher.get() == requester ||
+             watcher->awaiting_session_removal != 0))
+            send_session_list(*watcher);
 }
 
 void Server::flush_reader_counts() {
@@ -2726,7 +2737,10 @@ void Server::send(Client& client, const proto::Message& message) {
     if (std::holds_alternative<proto::Attached>(message) ||
         std::holds_alternative<proto::Detached>(message))
         client.stats_dead_announced.clear();
-    else if (const auto* closed = std::get_if<proto::TermClosed>(&message))
+    // A held exit banner is not window removal: a Gone packet may have
+    // arrived before this display tick, and its one-time clear still stands.
+    else if (const auto* closed = std::get_if<proto::TermClosed>(&message);
+             closed != nullptr && closed->hold == 0)
         client.stats_dead_announced.erase(closed->term);
     bool oversize = false;
     const std::string frame = proto::encode(message, &oversize);

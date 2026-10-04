@@ -6,8 +6,6 @@
 // both at once, and any key puts it away. Driven through real key dispatch
 // and the real menu bar, because "a reader can show the time" is a claim about
 // keys and menus, not about a handler.
-#if !defined(_WIN32)
-
 #include <string>
 #include <vector>
 
@@ -18,6 +16,7 @@
 #include "cvision/widgets/big_clock.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/terminal_view.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -31,7 +30,7 @@ namespace {
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     // 23 September 2026, 14:05:09, wherever the test runs.
     options.local_now = [] {
         return ckm::client::LocalMoment{ckv::widgets::DateValue{2026, 9, 23},
@@ -46,7 +45,9 @@ struct Fixture {
     Application app{terminal, clock};
     ClientApp client;
 
-    explicit Fixture(ClientOptions options = test_options()) : client{app, std::move(options)} {}
+    explicit Fixture(ClientOptions options = test_options()) : client{app, std::move(options)} {
+        ckmtest::check_live_terminal_children(client.desktop());
+    }
 
     bool press(ckv::KeyChord chord) { return app.dispatch(ckv::KeyEvent{std::move(chord)}); }
     bool press_char(const std::string& text) {
@@ -352,5 +353,3 @@ CK_TEST(a_client_that_cannot_read_the_time_offers_no_clock) {
     g.settle();
     CK_CHECK(g.app.commands().is_enabled(g.id_of(ckm::client::commands::kShowClock)));
 }
-
-#endif  // !defined(_WIN32)

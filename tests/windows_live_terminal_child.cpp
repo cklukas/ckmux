@@ -49,6 +49,9 @@ int job_root() {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if ((argc == 2 && std::wstring(argv[1]) == L"--exit-zero") ||
+        (argc == 3 && std::wstring(argv[1]) == L"-c" && std::wstring(argv[2]) == L"--exit-zero"))
+        return 0;
     if (argc == 3 && std::wstring(argv[1]) == L"--job-descendant") return job_descendant(argv[2]);
     if ((argc == 2 && std::wstring(argv[1]) == L"--job-root") ||
         (argc == 3 && std::wstring(argv[1]) == L"-c" && std::wstring(argv[2]) == L"--job-root"))
