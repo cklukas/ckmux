@@ -5,6 +5,114 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Latest checkpoint — 2026-10-04
+
+ckVision v0.1.12 is released at 02:25:13Z on 2026-10-04, tag peeling to
+public `cfe9fdfd`. GitHub CI `37169919485` completed successfully in all seven
+jobs. The ckmux adopter pins 0.1.12. Its actual cold GitHub fetch asserts the
+clean tag commit, then passes macOS Apple Clang strict Release 59/59
+(236.09 s). Debian 13 ARM64 GCC 13.3 Release passes 59/59 (101.62 s),
+Clang 19 Debug ASan/UBSan passes 59/59 (137.85 s), and the native Windows
+ARM64 MSVC strict Release shell-only harness passes two CTest entries/eleven
+cases (2.40 s). All exits are 0. Frozen app manifest:
+`548ee56e20f7223bc8ec4080500b9a481c1c86a779e85b4f9450df3bcd724950`.
+These gates precede this record update; a clean committed integration gate
+is required before landing. Uncommitted subsequent Windows diagnostic APIs
+are not included in the release or these adoption gates.
+
+Mac configure/build ran 02:31:30Z–02:32:09Z, 39 s including five seconds
+configuration; the comparable 0.1.11 cold gate used six seconds configuration
+and 42 seconds build. Complete fresh compile actions and clean release
+source/asset fingerprints are checked, rather than elapsed time being proof.
+Output: `/Volumes/PRO-BLADE/tmp/ckmux-windows-20261003-01/mac-ckmux-adopt-012.foVjxB/ckmux`,
+SHA256 `1b27df4d5d566987863fc58b05388694bedd0521476755f841a927964165b41c`.
+No user-facing application was launched or visually certified.
+
+Readiness/input checkpoint: ckVision `81198549` is landed; filtered public
+`cfe9fdfd` is pushed and GitHub CI `37169919485` passed. Native Windows
+ARM64 MSVC strict Release passes 211/211 (50.33 s), including ten readiness
+cases. Compiled no-rearm and >64-source-drop mutations fail intended assertions;
+restoration and full source hashes are checked. Mac clean-commit 222/222
+(37.69 s), Linux GCC 13.3 Release 222/222 (23.03 s), Clang 19 Debug
+ASan/UBSan plus fuzz 232/232 (126.91 s), GCC 13.3 Debug TSan 221/221
+(280.29 s) and all three platform benchmark gates pass, exits 0. Independent
+filtered publication passes 216 non-PTY plus four PTY tests and strict docs.
+Release 0.1.12 is published; adopter landing awaits the clean commit gate.
+
+Host-selection audit finds another upstream gap: main currently relies on
+PosixTerminal-only output-capture, graphics-trace and mouse-report APIs;
+WindowsTerminal lacks them and Terminal has no shared diagnostics contract.
+U-WIN-HOST-DIAGNOSTICS in [07](07-ckvision-integration.md) must be implemented
+upstream, not bypassed here. Complete native app/IPC/acceptance/packages remain
+unfinished. Concrete-backend diagnostics parity is being implemented upstream
+under D-077/D-127: injected capture and trace, decoder-owned report counts,
+normal restoration and record/replay tests. Its first native focused gate
+passed capture/count/replay cases but a legacy console viewport resize fixture
+failed to observe a resize; a real ConPTY resize fixture now replaces that
+assumption and is not yet verified. The records below retain earlier
+checkpoints, not current refs.
+
+Adoption gate update (01:26 UTC): the isolated ckmux 0.1.11 pin cold-fetches
+the actual GitHub tag at `77356c9d` and builds with zero warnings on Mac.
+Linux GCC 13.3 Release passes 59/59 (101.64 s), Clang 19 Debug ASan/UBSan
+passes 59/59 (146.64 s), and the native MSVC ARM64 shell-only harness passes
+its two CTest entries/eleven cases against a fresh clean `0eb28039` library
+build (2.12 s). CTest exits are 0. The released-library Mac sweep is 58/59:
+the existing flood prefix-dismissal case failed again at its unchanged
+eight-second assertion. This failed gate is not replaced by the earlier
+passing candidate record, and adoption is not landed yet.
+
+The failure exposed an upstream mechanism: POSIX `poll()` resolved pending
+Escape only on a zero return, so a continuously readable extra socket could
+starve it. `InputDecoder::next_timeout_nanos()` also omitted lone Escape.
+Two deterministic regressions compile and fail on the original code, then
+pass with the isolated upstream correction. Broad Mac decoder/POSIX and
+documentation/provenance checks pass; three actual ckmux flood runs against
+the correction pass without changing the timeout. Further Linux and native
+Windows checks plus full library/release gates remain open. No ckmux fix
+or workaround is applied for this library defect.
+
+ckVision `462bf4c9` is landed; its initial public CI `37163490098` passed
+Linux, Windows, ASan, UBSan, TSan and fuzz but failed the Mac POSIX terminal
+suite on SIGALRM (219/220). Upstream `0eb28039` fixes only that fixture's
+pending-alarm teardown and adds a deterministic forked regression. A compiled
+discard-removal mutation builds successfully and fails, with the child killed
+by SIGALRM. No timeout, skipped coverage or application workaround was added.
+
+The correction passes Mac Apple Clang strict Release 222/222 (38.64 s),
+Debian 13 ARM64 GCC 13.3 Release 222/222 (24.39 s), Linux Clang 19 Debug
+ASan/UBSan plus fuzz 232/232 (136.46 s), GCC 13.3 Debug TSan 221/221
+(262.04 s), native Windows ARM64 MSVC strict Release 210/210 (38.88 s);
+all CTest exits 0 at parallel 2, benchmark gates pass. The clean detached
+commit additionally passes Mac 222/222 (43.46 s). Public `77356c9d` passes
+a separate clean Release build, 216 non-PTY plus four PTY tests and strict
+documentation. GitHub CI `37165521471` completed successfully in all seven
+jobs. [v0.1.11](https://github.com/cklukas/ckVision/releases/tag/v0.1.11)
+was published at 00:57:55Z on 2026-10-04, its tag peeling to `77356c9d`.
+The isolated ckmux adopter now pins 0.1.11; released-library and clean-commit
+gates are required before landing. Peer progress-widget work was preserved.
+
+A standalone native experiment derived from Microsoft's documented
+[wait-packet creation](https://learn.microsoft.com/en-us/windows/win32/devnotes/ntcreatewaitcompletionpacket),
+[association](https://learn.microsoft.com/en-us/windows/win32/devnotes/ntassociatewaitcompletionpacket)
+and [cancellation](https://learn.microsoft.com/en-us/windows/win32/devnotes/ntcancelwaitcompletionpacket)
+passes on Windows 11 25H2 ARM64/MSVC strict Release: 130 independent manual
+events (half already signaled, half signaled after association) deliver unique
+completion keys; process thread counts remain equal. The console extension
+uses its own fresh console: an empty input queue remains unsignaled, then a
+written key generates one completion and is read back unchanged. Both native
+probe exits are 0. This is feasibility evidence, not a shipped API, a fair
+wait loop, cancellation/rearming proof, or full native ckmux acceptance.
+The reusable implementation belongs upstream. Its new isolated candidate
+passes seven native MSVC ARM64 strict Release cases (one CTest entry,
+exit 0, 0.81 s total): 130 simultaneous sources, duplicate/empty sources,
+rearming and fairness, 200 cancellation races, invalid-handle recovery,
+handle cleanup and the public WindowsTerminal input/wake/extra-source path.
+The strengthened candidate additionally passes closed-handle rejection,
+two-instance isolation and native process-exit readiness (ten native cases).
+This implementation is not committed or released; compiled negative tests
+and full library gates remain required. WP-53–WP-57 remain open.
+
 Windows leaves the post-v1 parking lot at the owner's request. This port
 preserves the complete ckmux client/server model: closing a client leaves
 its programs running; reattachment restores current cells, history, images,
@@ -44,7 +152,12 @@ deadline; force-kill reaches the whole child job, not only its root PID.
 Default shell selection uses a valid configured executable, then ComSpec,
 then the system cmd.exe. PowerShell command arguments and cmd command
 arguments are explicit and distinct; POSIX login argv[0] has no Windows
-meaning. Unicode paths/arguments/environment use Windows wide APIs.
+meaning. `login-shell` is POSIX-only: interactive Windows shells retain their
+native profile behavior. PowerShell starts with `-NoLogo`; a one-shot command
+uses `-NoLogo -NoProfile -Command`. cmd starts interactively with no synthetic
+argv[0], or uses ckVision's explicit command-processor factory for a command.
+Other explicitly configured shells must support `-c` for one-shot commands.
+Unicode paths/arguments/environment use Windows wide APIs.
 Configuration and durable logs live under the user's LocalAppData, with
 documented overrides. Native clipboard, file saving and process statistics
 must expose environmental failures rather than quietly losing work.
@@ -66,6 +179,85 @@ suite is not Windows coverage. Real events and real child processes prove
 public routes; fixtures alone do not prove the user's running terminal.
 
 ## Current evidence and remaining work
+
+The isolated shell-host candidate composes launches through the same common
+policy for client-local and server-owned terminals, with fresh native host
+observations and injected executable checks. It uses ckVision D-125's command
+factory rather than quoting cmd text here. Apple Clang strict Release builds
+all targets and passes six selected suites (shell policy, existing shell,
+server terminals, client smoke and both architecture checks), exit 0, 3.48 s
+at parallel 2. The first regex selected only the architecture checks and is
+not shell evidence. Native fixtures additionally exercise changing ComSpec,
+Unicode shell paths, interactive input/resize/exit and explicit PowerShell.
+Their first compile used a concrete-only exit accessor; it is corrected to
+the portable status field. The next run exposed malformed UTF-8 conversion
+escaping the path boundary; the adapter now uses ckVision's existing validator.
+Native output verification is still under investigation. No Windows application
+build or completed WP-53 claim follows from these focused candidates.
+
+The subsequently compiled Mac candidate passes 59/59 strict Release suites,
+CTest exit 0, 238.10 s at parallel 2. Later edits touch only the native-only
+fixture and this evidence note; this count does not claim those later native
+bytes were compiled on Mac. Native interactive cmd, explicit PowerShell and
+executable validation pass, but the relocated Unicode/ampersand cmd case
+still fails its output assertion despite exit 37. Keeping cmd's installed
+MUI resources removes one fixture error but does not make that case green.
+System cmd succeeds from the same Unicode working directory. A direct
+Windows ProcessStartInfo control succeeds in all four combinations of plain/
+ampersand Unicode executable paths and system/relocated ComSpec. This points
+the next investigation at the ConPTY/native launch context, not a ckmux
+quoting workaround. A subsequent separator control isolates the image-token
+spelling: eight mixed/forward-slash launches fail output verification while
+their native-backslash counterparts pass with the same commands, cwd and
+ComSpec. cmd interprets a slash component as a switch. The correction belongs
+upstream: D-125 encodes cmd's image token with native separators and explicitly
+supports interactive launches as well as one-shot commands. The adopter now
+uses that typed factory in both modes, without path normalization or quoting
+in production ckmux. New full library and adopter gates are pending; the
+earlier counts above do not certify the revised API. Final library
+landing/publication and release-pin adoption remain pending.
+
+Final correction checkpoint (2026-10-04 UTC): ckVision `462bf4c9` is landed
+locally and its filtered GitHub snapshot `f609cbe7` is pushed. The final source
+manifest `080de577b4b3aaa130aca8d445ee2ec0f38b73600f2268f608474f887df56c73`
+passes Apple Clang strict Release 222/222 (72.29 s), Debian 13 ARM64 GCC 13.3
+Release 222/222 (32.87 s), Clang 19 Debug ASan/UBSan plus fuzz 232/232
+(163.71 s), GCC 13.3 Debug TSan 221/221 (275.00 s), and Windows 11 25H2 ARM64
+MSVC strict Release 210/210 (92.89 s). CTest exits 0 at parallel 2;
+benchmark gates pass, and modern ConPTY passes 32/32. A compiled mutation
+removing native image-token separators fails eight assertions; restored native
+cases pass 32/32. The final clean committed Mac gate passes 222/222 (43.56 s).
+Filtered publication passes 216 non-PTY and four PTY tests plus strict ckdocs.
+That initial GitHub CI `37163490098` later failed the Mac SIGALRM fixture;
+the correction and successful replacement CI/release are recorded in the
+latest checkpoint above. No tag is moved or existing binary relabeled.
+
+The isolated application shell candidate, manifest
+`b918461ee586cc3e9da38b7be49b4ab06fc0c2b6bb8674a61a8b82a0577b89a1`, passes
+Mac strict Release 59/59 (192.46 s), Linux GCC 13.3 Release 59/59 (99.11 s)
+and Linux Clang 19 Debug ASan/UBSan 59/59 (143.44 s), CTest exits 0 at
+parallel 2. A repeat Mac sweep fails the flood row's eight-second prefix-footer
+dismissal assertion once. The unchanged binaries then pass three isolated
+flood reruns and a full 59/59 repeat (183.87 s). That failed sweep is retained,
+the test/deadline is unchanged, and its intermittent cause is not established.
+These are provisional candidate measurements against the then-unlanded
+dependency; the final paired clean-commit gate is still required.
+
+Native MSVC ARM64 shell-only harness: two CTest entries, eleven actual cases,
+exit 0, 3.35 s. It covers configured/default shell policy, malformed paths,
+changing ComSpec, relocated Unicode/ampersand cmd images with their installed
+MUI resources, both image separator spellings, interactive input/resize/exit
+and explicit PowerShell. Source manifest
+`7fa41cc2db94a8738b8c2c915913dbc084aa15b94cc62501e32405f4cbf421e7`;
+library archive `88c17f19cd1eb61c3a787154b7b5ad1cb864f07d373edf2df015b44ea7255c5e`;
+runner `1a48aabb3ed8b418a1d43f740065cd366af39271d552eb2e7c728809955ff96c`.
+Build 23:34:05.269Z–23:34:21.618Z, 16.361 s; exact output
+`C:/Users/klukas/ckmux-windows-20261003-01/ckmux-shell-native-build/Release/ckmux_shell_contract.exe`.
+An earlier evidence-lane rename incorrectly changed the stable harness path;
+CMake stopped before compiling, and that failed log is retained. The completed
+native probe is not a full ckmux executable or live UI acceptance. Later edits
+only correct a PowerShell-profile comment and update these records; final
+commit gates must include those bytes. WP-53–WP-57 remain open.
 
 Initial audit at ckmux `e1bc8ae` and ckVision `6e568df3`: ckmux has no
 Windows backend and rejects non-UNIX CMake configurations. ckVision has

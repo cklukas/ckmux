@@ -276,6 +276,28 @@ The Windows-port session's own, 2026-10-03:
   in the provenance guard. Candidate code gates did not cover that later
   documentation delta. Clarifying the factual wording fixes the guard without
   weakening it; the full gate must include the final documentation bytes.
+- **Filtered by source basenames instead of registered CTest names.** The
+  first shell-focused regex selected only two architecture checks and no
+  shell suites. The count exposed the mismatch before a shell success claim.
+  Enumerate the selected inventory, require its expected count and names,
+  then run it; a successful empty or unrelated selection is not coverage.
+- **Transferred Mac archive metadata as project inputs.** A source archive
+  included Apple sidecars; remote inventory checks stopped before building,
+  despite all intended file hashes matching. Disable archive metadata,
+  compare the complete extracted inventory, and remove only the verified
+  generated sidecars. Correct bytes and correct membership are separate checks.
+
+- **Omitted a public field comment when revising a documented struct.** The
+  launch value had a type-level comment but its new `command` field did not.
+  Focused behavior tests passed; full API-comment gates correctly failed on
+  all three platforms. Document the field itself and check the public API
+  inventory before starting expensive cross-platform rebuilds. Preserve the
+  failed sweeps rather than treating their passing behavior cases as green gates.
+- **Renamed a harness path while renaming only its evidence lane.** A blanket
+  driver substitution changed both log filenames and the existing source
+  harness directory. CMake correctly stopped before compilation. Separate
+  stable input/build paths from lane-specific evidence names; check actual
+  directories before dispatch and retain the failed configuration log.
 
 ### A number without its configuration is not a measurement (2026-08-20)
 

@@ -55,18 +55,8 @@ ckv::term::TerminalLaunchSpec launch_spec_for(const Settings& settings, const Te
     // A command the client asked for runs through the reader's shell, so that
     // `ckmux new 'make -j8 && say done'` means what it looks like. Without a
     // command it is a login shell, resolved the way tmux resolves one.
-    ShellLaunch shell = shell_launch(settings.shell, settings.login_shell);
-    if (!spec.command.empty()) {
-        // `-c <command>` rather than a login shell: a client that asked for
-        // `make -j8 && say done` means the whole thing, operators included, so
-        // it goes through a shell rather than being split into argv here.
-        shell.argv0.clear();
-        shell.arguments = {"-c", spec.command};
-    }
-
-    ckv::term::TerminalLaunchSpec launch =
-        ckv::term::TerminalLaunchSpec::program(shell.executable, shell.arguments);
-    launch.argv0 = shell.argv0;
+    const ShellLaunch shell = shell_launch(settings.shell, settings.login_shell, spec.command);
+    ckv::term::TerminalLaunchSpec launch = terminal_launch_spec(shell);
     launch.working_directory = spec.working_directory.empty() ? std::string("/") : spec.working_directory;
     launch.environment = spec.environment.empty() ? child_environment(settings) : spec.environment;
 

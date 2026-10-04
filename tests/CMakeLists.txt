@@ -54,9 +54,14 @@ set(CKMUX_TEST_SOURCES
     test_server_loop.cpp
     test_server_terminals.cpp
     test_shell.cpp
+    test_shell_policy.cpp
     test_stats_display.cpp
     test_stats_format.cpp
     test_stats_wire.cpp)
+
+if(WIN32)
+    list(APPEND CKMUX_TEST_SOURCES test_windows_shell_host.cpp)
+endif()
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
