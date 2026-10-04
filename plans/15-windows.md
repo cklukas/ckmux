@@ -5,7 +5,117 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
-### Latest checkpoint — 2026-10-04
+### Latest checkpoint — 2026-10-04, 23:39 UTC
+
+ckVision v0.1.16 is released at public `a38928cf` (private `b8aca7e5`),
+published 23:38:47Z. All seven exact-public CI37243144550 jobs pass. The
+source now pins16 and consumes the shared helper and detached-process APIs.
+Library generic launch services contain no server/session semantics. A fresh
+Mac AppleClang21 strict Release build against installed16, with source
+preference and dependency downloads disabled, passes64/64 at parallel2 in
+235.17s. All223 source/asset hashes agree before and after the gate. This is
+pre-landing evidence; final clean committed-source verdicts are recorded in
+the landing's verification section, and native acceptance remains incomplete.
+
+Three more complete suites now run on native Windows: configuration (51
+actual cases), statistics-display toggles with real child PID/state guards
+(two cases), and session naming over actual named pipes (six cases). The
+configuration fixture uses unique configured-root scratch and restores the
+Unicode OS environment. Both read-failure assertions execute under a retained
+native sharing denial rather than silently relying on POSIX permission bits;
+all four POSIX location-policy cases retain their Unix coverage and Windows
+has its eight native path-policy cases. A new environment regression proves
+Unicode values and prior/absent value restoration.
+
+Mac AppleClang Release and Debug ASan/UBSan, Debian13 ARM64 GCC13.3
+Release/FORTIFY and Windows11 ARM64 MSVC Release pass the two new focused
+configuration/readout entries. All six naming cases pass ten repeats on
+each of those configurations. Full native candidate: 47/47 CTest entries,
+exit0 at parallel2, 77.21s; executable SHA256
+`792f36c6ec4bf2c958e9e1fd58df67f088844f16f84e2b2e17fcd2cfa230fb3f`.
+The first full driver stopped before CTest because PowerShell treated ordinary
+server stderr diagnostics as terminating errors; only the driver was corrected
+to inspect the native exit status. The successful repeat retains all cases.
+This is candidate/headless evidence, not complete native equivalence, live
+Windows Terminal acceptance or a Windows release. WP53–57 remain open.
+
+### Earlier checkpoint — 2026-10-04, 22:56 UTC
+
+Persistence defect reproduced with the actual Windows ARM64 executable: the
+CLI reports success but a controlled permissive inner/restrictive outer job
+retains the server and three terminal-host/shell descendants; closing that
+outer job kills all four observed handles. Breakaway alone was insufficient.
+The isolated correction delegates generic independent-process launch to
+ckVision D-133. The library knows no server, endpoint, session or protocol:
+it verifies that a suspended child is outside all jobs before resuming.
+ckmux supplies its invocation and retains readiness/IPC semantics. The first
+six native library cases, strengthened entry witness and compiled guard-omission
+negative pass after restoration. D-133 landed in ckVision `dc3312f3`, filtered
+public `786617f8`. Clean committed library gates pass Mac/GCC Release 229/229
+and native ARM64 MSVC 222/222. The application candidate passes native 42/42,
+including actual CLI launch, authenticated endpoint discovery, positive server
+identity, ancestor-job closure, continued use and explicit shutdown. Compiling
+the old application startup fails the restrictive-job case; byte-exact restored
+source passes 42/42. This is controlled-job persistence, not a live Windows
+Terminal close/reattach verdict. WP54/55 remain open.
+
+Four new real-wire cases pass Mac/GCC Release, Mac ASan/UBSan and Windows ARM64
+MSVC: oversized length, unknown type and missing required payload drop only
+the offender, while an already connected client/session and a subsequent
+connection remain usable; partial/coalesced valid frames still work. A compiled
+omission of the production server's malformed-frame drop fails exactly three
+assertions. Production source is byte-exact restored. This coverage is an
+uncommitted candidate, not a completed secure-IPC package.
+
+All 15 original rename UI cases are enabled for native Windows with actual
+live-child guards. Repeated native diagnostics showed a late ConPTY startup
+title replacing the injected OSC title. The fixture now waits for a real
+upper-case child response before caption stimuli, preserving all application
+assertions and allowing legitimate child titles. Mac Release repeats pass.
+The first Windows readiness build failed at a core/process-interface mismatch
+before any tests. The next rig incorrectly sent LF rather than the established
+Windows child's CR Enter input and timed out. After correcting only those
+fixture errors, all 15 cases pass 10 native Windows repeats in 19.90s, CTest0.
+The complete native candidate gate subsequently passes 44/44 in 81.62s,
+MSVC strict Release, CTest0. This remains candidate/headless evidence; a
+clean committed release adopter and actual Windows Terminal walkthrough are
+not established by that run.
+
+Captured helper integration v3 separately passes native Windows ARM64 MSVC
+Release41/41, Mac Release63/63, Mac Debug ASan/UBSan63/63 and Debian13 ARM64
+GCC13.3 Release/FORTIFY63/63, all CTest exits0. ckVision helper code is landed
+privately at b1a4ccd and subsequently dc3312f3/filtered public786617f8, but
+is NOT released0.1.16. Hosted CI37239077787 fails Mac and Windows. Mac diagnostics
+record first output after 4.275ms followed by more than150ms without progress;
+no startup error. The positive external stimulus now continuously produces
+output for360ms instead of depending on bounded sleep wake-up; the150ms idle
+budget, exact12 retained bytes and success assertions remain, with truncation
+required. Windows stopped at controller independence during job-fixture setup.
+A test-only same-user scheduled host runs all six unchanged controlled-job
+cases without weakening library containment. Both revised native suites pass
+10 repeats; the scheduled path also passes explicitly. Full revised Mac/GCC
+Release229/229 and LLVM23 ASan/UBSan plus fuzz239/239 pass. Hosted re-verification
+remains required. Release pin/adoption, full native
+and live acceptance, x64/ARM64 blocking CI, packages and final audit remain.
+
+The following older checkpoints are historical candidate evidence.
+
+Captured helper candidate: ckVision D-132 prepares0.1.16 with shared invocation
+values and real native binary-pipe runners, not PTY/ConPTY helpers. Native
+ARM64 MSVC220/220, Mac/GCC Release228/228 and Mac ASan/UBSan238/238 pass at
+the v6 frozen candidate; four compiled Windows production negatives prove
+inheritance, idle deadline, output draining and successful-descendant policy.
+Version16 adds explicit timeout-root reaping, POSIX resource failure and
+signal wakeup cases. TSan initially timed out the independent instrumented
+child's runtime shutdown after all expected bytes; the corrected test keeps
+the runner/library instrumented and models an ordinary external executable,
+without relaxing deadlines. Final versioned assets/platform gates are pending.
+The isolated ckmux bridge now delegates to this library, enables the configured
+helper hook on Windows, and tests actual copy-key dispatch plus unknown-exit
+and partial-input failures. The released dependency pin remains0.1.15 until
+the actual upstream0.1.16 release exists. Nothing is landed/released by this
+checkpoint; WP53/54 and full Windows acceptance/packaging remain incomplete.
+
 
 Reply-delivery correction candidate: Windows11 ARM64 MSVC strict Release
 passes40/40 (52.09s), exit0, at manifest

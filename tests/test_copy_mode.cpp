@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "client/client_app.hpp"
+#include "platform/clipboard.hpp"
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/term/terminal_emulator.hpp"
 #include "cvision/testing/cktest.hpp"
@@ -520,6 +521,63 @@ CK_TEST(one_configured_copy_aggregates_host_and_helper_refusals_and_keeps_the_te
     app.step(0);
     // One dismissal clears every failure for this copy, not one of two boxes.
     CK_CHECK(!app.is_modal());
+}
+
+CK_TEST(a_configured_copy_uses_the_library_helper_bridge_and_preserves_failed_selections) {
+    class Helper final : public ckv::core::ProcessRunner {
+    public:
+        int path = 0;
+        unsigned calls = 0;
+        ckv::core::ProcessRunResult run(const ckv::core::ProcessRunRequest& request) override {
+            ++calls;
+            CK_CHECK(request.input == "helper selection");
+            CK_CHECK(request.launch.arguments == std::vector<std::string>{"configured-helper"});
+            CK_CHECK(request.descendants == ckv::core::ProcessDescendantPolicy::ReleaseOnSuccess);
+            ckv::core::ProcessRunResult result;
+            result.state = ckv::core::ProcessRunState::Completed;
+            result.input_bytes_total = request.input.size();
+            result.input_bytes_written = request.input.size();
+            if (path != 1) result.exit = ckv::core::ProcessExitStatus{ckv::core::ProcessExitKind::Normal, 0};
+            if (path == 2) {
+                result.input_bytes_written = 1;
+                result.stderr_capture.bytes = "helper refused private input";
+            }
+            return result;
+        }
+    } helper;
+    for (int path = 0; path < 3; ++path) {
+        helper.path = path;
+        helper.calls = 0;
+        ckv::MemoryClipboardWriter writer;
+        ckv::term::HeadlessTerminal terminal{Size{110, 35}};
+        ManualClock clock;
+        Application app{terminal, clock, writer};
+        auto options = test_options();
+        options.settings.clipboard = {{ckm::ClipboardTarget::Kind::Exec, "configured-helper"}};
+        std::string problem;
+        options.clipboard_writer = [&](const std::string& command, std::string_view text) {
+            const auto launch = ckv::core::ProcessLaunchSpec::program("explicit-processor", {command});
+            return ckm::platform::write_to_command(helper, launch, text, &problem);
+        };
+        options.clipboard_problem = [&] { return problem; };
+        ClientApp client{app, std::move(options)};
+        // Dispatch the real prefix, copy-mode and yank keys through Application.
+        if (!yank_first_line(app, "helper selection")) return;
+        CK_CHECK(helper.calls == 1);
+        CK_CHECK(client.copy_mode() == nullptr);
+        CK_CHECK(client.internal_clipboard() == "helper selection");
+        // An exec-only target must not also publish through the host writer.
+        CK_CHECK(app.clipboard_text().empty());
+        CK_CHECK(app.is_modal() == (path != 0));
+        if (path != 0) {
+            const auto message = clipboard_message_in(app.root());
+            CK_CHECK(message.find("configured-helper") != std::string::npos);
+            if (path == 2) CK_CHECK(message.find("helper refused private input") != std::string::npos);
+            app.dispatch(ckv::KeyEvent{ckv::KeyChord{ckv::Key::Enter, ckv::Modifier::None, ""}});
+            app.step(0);
+            CK_CHECK(!app.is_modal());
+        }
+    }
 }
 
 CK_TEST(a_configured_helper_without_a_launch_bridge_is_not_silently_accepted) {

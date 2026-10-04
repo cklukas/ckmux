@@ -8,7 +8,8 @@
 // every other key exactly where they were.
 #include "common/config.hpp"
 
-#include <unistd.h>
+#include "scratch_directory.hpp"
+#include "scoped_environment.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -31,35 +32,56 @@ namespace {
 // Its own directory per test, removed when the test leaves however it leaves,
 // so nothing here depends on — or disturbs — the machine's real configuration.
 //
-// The name carries this process's id. A fixed path is shared state between
-// every run of the suite on the machine: two at once (`ctest -j`, a sanitizer
-// build beside a plain one) would each remove_all the other's directory
-// mid-test, and the failure that produces looks like a config bug rather than
-// like the collision it is.
+// Exclusive creation under the configured test root prevents concurrent
+// configurations from removing one another's scratch files.
 class ScratchConfig {
 public:
     explicit ScratchConfig(const std::string& name)
-        : directory_(std::filesystem::temp_directory_path() /
-                     ("ckmux-config-" + name + "-" +
-                      std::to_string(static_cast<long long>(::getpid())))) {
-        std::error_code ignored;
-        std::filesystem::remove_all(directory_, ignored);
-        std::filesystem::create_directories(directory_, ignored);
-    }
+        : directory_("ckmux-config-" + name) {}
     ~ScratchConfig() {
         // A test that took the permissions off the file to make it unreadable
         // leaves them off; the directory still has to go, on the failing path
         // as much as on the passing one.
-        std::error_code ignored;
-        std::filesystem::permissions(path(), std::filesystem::perms::owner_read,
-                                     std::filesystem::perm_options::add, ignored);
-        std::filesystem::remove_all(directory_, ignored);
+        restore_readable();
     }
     ScratchConfig(const ScratchConfig&) = delete;
     ScratchConfig& operator=(const ScratchConfig&) = delete;
 
-    const std::filesystem::path& directory() const { return directory_; }
-    std::filesystem::path path() const { return directory_ / "ckmux.conf"; }
+    const std::filesystem::path& directory() const { return directory_.path(); }
+    std::filesystem::path path() const { return directory_.path() / "ckmux.conf"; }
+
+    bool make_unreadable() {
+#if defined(_WIN32)
+        // A native sharing denial makes reading fail even for an administrator;
+        // POSIX permission bits do not restrict Windows reads. Keep the handle
+        // alive for both the probe and the load/save operation under test.
+        read_blocker_ = ::CreateFileW(path().c_str(), GENERIC_READ,
+            FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        CK_CHECK(read_blocker_ != INVALID_HANDLE_VALUE);
+#else
+        std::error_code ignored;
+        std::filesystem::permissions(path(), std::filesystem::perms::none, ignored);
+#endif
+        std::ifstream probe(path());
+#if defined(_WIN32)
+        CK_CHECK(!probe);
+#endif
+        return !probe;
+    }
+
+    void restore_readable() {
+#if defined(_WIN32)
+        if (read_blocker_ != INVALID_HANDLE_VALUE) {
+            (void)::CloseHandle(read_blocker_);
+            read_blocker_ = INVALID_HANDLE_VALUE;
+        }
+#else
+        std::error_code ignored;
+        std::filesystem::permissions(path(), std::filesystem::perms::owner_read,
+                                     std::filesystem::perm_options::add, ignored);
+#endif
+    }
 
     void write(const std::string& contents) const {
         std::ofstream out(path(), std::ios::trunc);
@@ -74,7 +96,10 @@ public:
     }
 
 private:
-    std::filesystem::path directory_;
+    ckmtest::ScratchDirectory directory_;
+#if defined(_WIN32)
+    HANDLE read_blocker_ = INVALID_HANDLE_VALUE;
+#endif
 };
 
 // A warning names its file in full and then the line: "…/ckmux.conf:4: …".
@@ -85,40 +110,7 @@ bool warns_at(const std::string& text, const std::filesystem::path& path, int li
     return text.rfind(path.string() + ":" + std::to_string(line) + ": ", 0) == 0;
 }
 
-// Takes the permissions off a file, and answers whether that actually made it
-// unreadable. Running as root, or on a filesystem that does not carry
-// permissions, it does not — and the two tests that need an unreadable file
-// then skip rather than assert something untrue about the machine they are on.
-bool make_unreadable(const std::filesystem::path& path) {
-    std::error_code ignored;
-    std::filesystem::permissions(path, std::filesystem::perms::none, ignored);
-    std::ifstream probe(path);
-    return !probe;
-}
-
-// Restores whichever of the location variables a test changes.
-class ScopedEnvironment {
-public:
-    explicit ScopedEnvironment(std::string name) : name_(std::move(name)) {
-        const char* const current = std::getenv(name_.c_str());
-        had_value_ = current != nullptr;
-        if (had_value_) previous_ = current;
-    }
-    ~ScopedEnvironment() {
-        if (had_value_) (void)::setenv(name_.c_str(), previous_.c_str(), 1);
-        else (void)::unsetenv(name_.c_str());
-    }
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-    void set(const std::string& value) const { (void)::setenv(name_.c_str(), value.c_str(), 1); }
-    void clear() const { (void)::unsetenv(name_.c_str()); }
-
-private:
-    std::string name_;
-    bool had_value_ = false;
-    std::string previous_;
-};
+using ckmtest::ScopedEnvironment;
 
 }  // namespace
 
@@ -412,7 +404,6 @@ CK_TEST(a_save_does_not_touch_another_processes_unrelated_scratch_file) {
     // execution. Competing revision behavior has its own injected race cases.
     ScratchConfig scratch("scratch-name");
     scratch.write("[general]\nlogin-shell = true\n");
-    const std::string mine = std::to_string(static_cast<long long>(::getpid()));
     // A leftover from a *different* process must not be touched by this one:
     // it is another client's save in flight.
     const std::filesystem::path theirs = scratch.path().string() + ".tmp.999999";
@@ -422,7 +413,10 @@ CK_TEST(a_save_does_not_touch_another_processes_unrelated_scratch_file) {
     }
     CK_CHECK(save_setting(scratch.path(), "general", "login-shell", bool_setting(false)));
     CK_CHECK(std::filesystem::exists(theirs));
-    CK_CHECK(!std::filesystem::exists(scratch.path().string() + ".tmp." + mine));
+    std::size_t temporary_files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(scratch.directory()))
+        if (entry.path().filename().string().starts_with("ckmux.conf.tmp.")) ++temporary_files;
+    CK_CHECK(temporary_files == 1U); // the unrelated sibling, and no new scratch
     CK_CHECK(!load_settings(scratch.path()).settings.login_shell);
     std::error_code ignored;
     std::filesystem::remove(theirs, ignored);
@@ -430,14 +424,41 @@ CK_TEST(a_save_does_not_touch_another_processes_unrelated_scratch_file) {
 
 // --- Where the file is ------------------------------------------------
 
-CK_TEST(an_explicit_config_path_wins_over_every_convention) {
-    ScopedEnvironment config("CKMUX_CONFIG");
-    ScopedEnvironment xdg("XDG_CONFIG_HOME");
-    config.set("/somewhere/ckmux-test.conf");
-    xdg.set("/elsewhere");
-    CK_CHECK(ckm::platform::config_file_path() == std::filesystem::path("/somewhere/ckmux-test.conf"));
+CK_TEST(test_environment_restores_unicode_paths_and_absent_values) {
+    ckmtest::ScratchDirectory scratch("config-environment");
+    const auto first = scratch.path() / std::filesystem::path(u8"\u8a2d\u5b9a-\U0001f600.conf");
+    const auto second = scratch.path() / "other.conf";
+    ScopedEnvironment original("CKMUX_TEST_RESTORE");
+    original.clear();
+    {
+        ScopedEnvironment changed("CKMUX_TEST_RESTORE");
+        changed.set_path(first);
+        CK_CHECK(ckm::platform::environment_path("CKMUX_TEST_RESTORE") == first);
+    }
+    CK_CHECK(ckm::platform::environment_path("CKMUX_TEST_RESTORE").empty());
+    original.set_path(first);
+    {
+        ScopedEnvironment changed("CKMUX_TEST_RESTORE");
+        changed.set_path(second);
+        CK_CHECK(ckm::platform::environment_path("CKMUX_TEST_RESTORE") == second);
+        changed.clear();
+        CK_CHECK(ckm::platform::environment_path("CKMUX_TEST_RESTORE").empty());
+    }
+    CK_CHECK(ckm::platform::environment_path("CKMUX_TEST_RESTORE") == first);
 }
 
+CK_TEST(an_explicit_config_path_wins_over_every_convention) {
+    ScratchConfig scratch("override");
+    ScopedEnvironment config("CKMUX_CONFIG");
+    ScopedEnvironment xdg("XDG_CONFIG_HOME");
+    config.set_path(scratch.path());
+    xdg.set("/elsewhere");
+    CK_CHECK(ckm::platform::config_file_path() == scratch.path());
+}
+
+#if !defined(_WIN32)
+// Windows location conventions have their eight native cases in
+// test_windows_paths.cpp; XDG/HOME assertions are specifically POSIX policy.
 CK_TEST(the_xdg_config_home_is_honoured_when_it_is_set) {
     ScopedEnvironment config("CKMUX_CONFIG");
     ScopedEnvironment xdg("XDG_CONFIG_HOME");
@@ -480,6 +501,12 @@ CK_TEST(with_nowhere_to_look_there_is_no_config_file_rather_than_a_relative_one)
     home.clear();
     CK_CHECK(ckm::platform::config_file_path().empty());
     // ...and an empty path reads as "unconfigured" rather than crashing.
+    CK_CHECK(load_settings(std::filesystem::path{}).settings == Settings{});
+    CK_CHECK(!save_setting(std::filesystem::path{}, "general", "login-shell", "true"));
+}
+#endif
+
+CK_TEST(an_empty_path_is_unconfigured_and_cannot_be_saved) {
     CK_CHECK(load_settings(std::filesystem::path{}).settings == Settings{});
     CK_CHECK(!save_setting(std::filesystem::path{}, "general", "login-shell", "true"));
 }
@@ -810,7 +837,7 @@ CK_TEST(a_config_that_cannot_be_read_says_so_instead_of_pretending_it_is_absent)
     // reader spends an evening wondering why their prefix key changed back.
     ScratchConfig scratch("unreadable");
     scratch.write("[general]\nlogin-shell = false\n");
-    if (!make_unreadable(scratch.path())) return;  // root, or a permissionless filesystem
+    if (!scratch.make_unreadable()) return;  // POSIX root/permissionless filesystem only
     const ckm::LoadedSettings loaded = load_settings(scratch.path());
     CK_CHECK(loaded.settings == Settings{});  // the built-in defaults, unchanged
     CK_CHECK(loaded.warnings.size() == 1U);
@@ -829,11 +856,9 @@ CK_TEST(saving_into_a_config_that_cannot_be_read_refuses_rather_than_replacing_i
     // setting.
     ScratchConfig scratch("unreadable-save");
     scratch.write("[general]\nlogin-shell = false\nprefix = C-a\n");
-    if (!make_unreadable(scratch.path())) return;
+    if (!scratch.make_unreadable()) return;
     CK_CHECK(!save_setting(scratch.path(), "general", "login-shell", bool_setting(true)));
-    std::error_code ignored;
-    std::filesystem::permissions(scratch.path(), std::filesystem::perms::owner_read,
-                                 std::filesystem::perm_options::add, ignored);
+    scratch.restore_readable();
     CK_CHECK(scratch.read() == "[general]\nlogin-shell = false\nprefix = C-a\n");
 }
 

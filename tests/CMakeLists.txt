@@ -18,6 +18,7 @@ set(CKMUX_TEST_SOURCES
     test_client_pacing.cpp
     test_client_smoke.cpp
     test_clipboard_exports.cpp
+    test_clipboard_helpers.cpp
     test_config.cpp
     test_config_filesystem.cpp
     test_copy_mode.cpp
@@ -55,6 +56,7 @@ set(CKMUX_TEST_SOURCES
     test_attach_flags.cpp
     test_server_lifecycle.cpp
     test_server_loop.cpp
+    test_server_wire_security.cpp
     test_server_terminals.cpp
     test_shell.cpp
     test_shell_policy.cpp
@@ -74,7 +76,10 @@ if(WIN32)
         test_big_clock.cpp
         test_capability_grace.cpp
         test_clipboard_exports.cpp
+        test_clipboard_helpers.cpp
         test_cli_session_replies.cpp
+        test_server_wire_security.cpp
+        test_config.cpp
         test_config_filesystem.cpp
         test_copy_mode.cpp
         test_docs.cpp
@@ -89,11 +94,14 @@ if(WIN32)
         test_process_identity.cpp
         test_resource_stats.cpp
         test_remote_terminal.cpp
+        test_rename_terminal.cpp
         test_reader_modes_client.cpp
         test_scratch_directory.cpp
         test_shell_policy.cpp
         test_session_desktop_client.cpp
+        test_session_names.cpp
         test_stats_format.cpp
+        test_stats_display.cpp
         test_windows_shell_host.cpp
         test_windows_paths.cpp
         test_windows_pipe.cpp)
@@ -104,6 +112,9 @@ if(WIN32)
     add_executable(ckmux_windows_process_child windows_process_child.cpp)
     target_link_libraries(ckmux_windows_process_child PRIVATE ckmux_platform)
     ckmux_strict(ckmux_windows_process_child)
+    add_executable(ckmux_windows_server_ancestry windows_server_ancestry.cpp)
+    target_link_libraries(ckmux_windows_server_ancestry PRIVATE ckmux_platform)
+    ckmux_strict(ckmux_windows_server_ancestry)
     add_executable(ckmux_windows_live_child windows_live_terminal_child.cpp)
     ckmux_strict(ckmux_windows_live_child)
 endif()
@@ -135,6 +146,13 @@ if(WIN32)
             -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}")
     set_tests_properties(windows_process_contract PROPERTIES LABELS "native;process" TIMEOUT 30)
     if(TARGET ckmux)
+        add_test(NAME windows_server_ancestry
+            COMMAND "${CKMUX_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_server_ancestry.ps1"
+                -Binary "$<TARGET_FILE:ckmux>"
+                -Probe "$<TARGET_FILE:ckmux_windows_server_ancestry>"
+                -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}")
+        set_tests_properties(windows_server_ancestry PROPERTIES LABELS "native;process;ipc;e2e" TIMEOUT 90)
         add_test(NAME windows_server_lifecycle
             COMMAND "${CKMUX_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_server_lifecycle.ps1"

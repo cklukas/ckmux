@@ -12,6 +12,8 @@
 // screen the client is drawing on.
 #include "common/shell.hpp"
 #include "platform/clipboard.hpp"
+#include "cvision/term/process_runner.hpp"
+#include "cvision/term/posix_clock.hpp"
 
 #include <csignal>
 #include <sys/stat.h>
@@ -32,6 +34,16 @@ using ckm::ShellLaunch;
 using ckm::shell_launch;
 
 namespace {
+
+bool write_clipboard_command(const std::string& command, std::string_view text,
+                             std::string* diagnostics = nullptr,
+                             int idle_budget_ms = ckm::platform::kClipboardIdleBudgetMs) {
+    if (command.empty()) return false;
+    ckv::term::PosixClock clock;
+    ckv::term::NativeProcessRunner runner(clock);
+    const auto launch = ckv::core::ProcessLaunchSpec::program("/bin/sh", {"-c", command});
+    return ckm::platform::write_to_command(runner, launch, text, diagnostics, idle_budget_ms);
+}
 
 // Restores $SHELL however the test leaves, so one case cannot decide the
 // next one's environment.
@@ -270,7 +282,7 @@ CK_TEST(the_copied_text_reaches_the_helper_on_its_standard_input) {
     CK_CHECK(!scratch.path().empty());
     const std::filesystem::path copied = scratch.path() / "copied";
     std::string diagnostics;
-    CK_CHECK(ckm::platform::write_to_command("cat > '" + copied.string() + "'",
+    CK_CHECK(write_clipboard_command("cat > '" + copied.string() + "'",
                                              "hello, clipboard", &diagnostics));
     CK_CHECK(contents_of(copied) == "hello, clipboard");
     // A helper that said nothing said nothing: an empty copy is not a message.
@@ -284,7 +296,7 @@ CK_TEST(a_helper_that_says_something_says_it_to_ckmux_and_not_to_the_drawn_scree
     // one message a reader needed would be the one they could not read. So it
     // is captured, and comes back where a caller can put it somewhere sensible.
     std::string diagnostics;
-    CK_CHECK(!ckm::platform::write_to_command("echo spoken; echo trouble >&2; exit 3", "text",
+    CK_CHECK(!write_clipboard_command("echo spoken; echo trouble >&2; exit 3", "text",
                                               &diagnostics));
     CK_CHECK(diagnostics.find("trouble") != std::string::npos);
     CK_CHECK(diagnostics.find("spoken") != std::string::npos);
@@ -292,12 +304,12 @@ CK_TEST(a_helper_that_says_something_says_it_to_ckmux_and_not_to_the_drawn_scree
 
 CK_TEST(a_helper_that_cannot_be_run_at_all_is_a_failed_copy_rather_than_a_silent_one) {
     std::string diagnostics;
-    CK_CHECK(!ckm::platform::write_to_command("exec /nonexistent/clipboard-helper", "text",
+    CK_CHECK(!write_clipboard_command("exec /nonexistent/clipboard-helper", "text",
                                               &diagnostics));
     // /bin/sh says why, and the reason survives the fork rather than the frame.
     CK_CHECK(!diagnostics.empty());
     // And an empty command is refused before anything is forked at all.
-    CK_CHECK(!ckm::platform::write_to_command("", "text"));
+    CK_CHECK(!write_clipboard_command("", "text"));
 }
 
 CK_TEST(a_helper_that_never_finishes_is_given_up_on_rather_than_freezing_the_client) {
@@ -306,7 +318,7 @@ CK_TEST(a_helper_that_never_finishes_is_given_up_on_rather_than_freezing_the_cli
     // applying what the server sends, for as long as the helper feels like it.
     // `ssh elsewhere pbcopy` to a machine that has gone away is that helper.
     const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
-    CK_CHECK(!ckm::platform::write_to_command("sleep 30", "text", nullptr, /*idle_budget_ms=*/150));
+    CK_CHECK(!write_clipboard_command("sleep 30", "text", nullptr, /*idle_budget_ms=*/150));
     const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - started)
                             .count();
@@ -331,7 +343,7 @@ CK_TEST(a_program_ckmux_starts_does_not_inherit_the_sigpipe_it_ignores_for_itsel
     CK_CHECK(ignored.swapped());
 
     std::string diagnostics;
-    (void)ckm::platform::write_to_command(
+    (void)write_clipboard_command(
         "cat /dev/zero | dd bs=1 count=1 of=/dev/null 2>/dev/null", "", &diagnostics);
     CK_CHECK(diagnostics.empty());
 }

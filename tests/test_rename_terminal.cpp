@@ -14,8 +14,7 @@
 //
 // Driven headlessly the way main.cpp drives the client: real Application,
 // real menus, real mouse reports, real OSC bytes fed at the seam the PTY
-// writes into. The child is /bin/cat, which stays alive and says nothing.
-#if !defined(_WIN32)
+// writes into. The exact build child (Windows) or /bin/cat (Unix) stays alive.
 
 #include <optional>
 #include <string>
@@ -31,6 +30,7 @@
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 #include "cvision/widgets/window_switcher_bar.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -42,7 +42,7 @@ namespace {
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     return options;
 }
 
@@ -51,6 +51,11 @@ struct Fixture {
     ManualClock clock;
     Application app{terminal, clock};
     ClientApp client{app, test_options()};
+
+    Fixture() {
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
+    }
 };
 
 struct ConfiguredFixture {
@@ -59,7 +64,10 @@ struct ConfiguredFixture {
     Application app{terminal, clock};
     ClientApp client;
 
-    explicit ConfiguredFixture(ClientOptions options) : client{app, std::move(options)} {}
+    explicit ConfiguredFixture(ClientOptions options) : client{app, std::move(options)} {
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
+    }
 };
 
 ckv::ui::CommandId id_of(Application& app, std::string_view key) {
@@ -328,6 +336,8 @@ CK_TEST(each_terminal_carries_its_own_name_and_only_its_own) {
     f.app.step(0);
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
     f.app.step(0);
+    ckmtest::check_live_terminal_children(f.client.desktop(), 2);
+    ckmtest::settle_live_terminal_children(f.client.desktop());
     ckv::widgets::Window* const first = f.client.desktop().windows()[0];
     ckv::widgets::Window* const second = f.client.desktop().windows()[1];
     child_claims(f, first, "one");
@@ -357,6 +367,8 @@ CK_TEST(renaming_from_the_window_bar_names_the_row_clicked_not_the_one_in_front)
     f.app.step(0);
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
     f.app.step(0);
+    ckmtest::check_live_terminal_children(f.client.desktop(), 2);
+    ckmtest::settle_live_terminal_children(f.client.desktop());
     ckv::widgets::Window* const first = f.client.desktop().windows()[0];
     ckv::widgets::Window* const second = f.client.desktop().windows()[1];
     CK_CHECK(f.client.desktop().active_window() == second);
@@ -567,6 +579,8 @@ CK_TEST(the_window_bar_does_not_re_size_a_button_for_every_caption_a_program_wri
     // than one.
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
     f.app.step(0);
+    ckmtest::check_live_terminal_children(f.client.desktop(), 2);
+    ckmtest::settle_live_terminal_children(f.client.desktop());
     ckv::widgets::Window* const first = f.client.desktop().windows()[0];
     CK_CHECK(f.client.window_switcher().visible());
 
@@ -610,6 +624,8 @@ CK_TEST(a_name_the_reader_gives_re_sizes_its_button_without_waiting) {
     f.app.step(0);
     CK_CHECK(f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal)));
     f.app.step(0);
+    ckmtest::check_live_terminal_children(f.client.desktop(), 2);
+    ckmtest::settle_live_terminal_children(f.client.desktop());
     ckv::widgets::Window* const second = f.client.desktop().windows()[1];
     child_claims(f, second, "a caption of a fairly generous length");
 
@@ -629,5 +645,3 @@ CK_TEST(a_name_the_reader_gives_re_sizes_its_button_without_waiting) {
     // Narrower at once, although the shrink delay is half a minute away.
     CK_CHECK(button_width(1) < wide);
 }
-
-#endif

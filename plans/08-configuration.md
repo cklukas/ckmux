@@ -308,3 +308,17 @@ per terminal by nature: a program printing in *this* window is a question
 about *this* window, and answering it globally the first time it happens
 would be the wrong default. It is settable nowhere else — no env var, no
 hidden key — only in its dialog and the `[printer]` section it stores.
+
+## Configured clipboard helpers
+
+An `exec:<command>` target is trusted command syntax: `/bin/sh -c` on POSIX,
+or the native system `cmd.exe /d /s /c` on Windows, with AutoRun disabled.
+It does not use a terminal, the configured interactive shell, or selected
+text as command arguments. The host's current working directory is explicit.
+ckVision supplies the private binary stdin, independent bounded/drained
+stdout/stderr and idle-progress deadline. A known zero root exit and complete
+stdin transfer are required for success; unknown status is a failure.
+Successful clipboard-holder descendants may survive, while failed or timed-out
+helpers clean the library-owned group/job. Failure keeps the internal copy and
+shows one warning with bounded private diagnostics. This candidate capability
+requires the upcoming ckVision0.1.16 release before adopter publication.
