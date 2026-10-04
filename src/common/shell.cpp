@@ -2,75 +2,81 @@
 // SPDX-License-Identifier: MIT
 #include "common/shell.hpp"
 
-#include <pwd.h>
-#include <unistd.h>
-
-#include <cstdlib>
-#include <string_view>
-
 namespace ckm {
 namespace {
 
-std::string_view base_name(std::string_view path) {
-    const std::size_t slash = path.rfind('/');
-    if (slash == std::string_view::npos) return path;
-    const std::string_view tail = path.substr(slash + 1);
-    // A path ending in '/' has no name to take; tmux falls back to the whole
-    // string there rather than producing an empty argv[0].
+std::string_view base_name(std::string_view path, ShellPlatform platform) {
+    const std::size_t separator = platform == ShellPlatform::Windows
+                                      ? path.find_last_of("/\\") : path.rfind('/');
+    if (separator == std::string_view::npos) return path;
+    const std::string_view tail = path.substr(separator + 1);
     return tail.empty() ? path : tail;
 }
 
-// The three conditions tmux's checkshell() applies, matched deliberately (see
-// the header) and each for a reason of its own: absolute, because a bare name
-// would have to be resolved against a PATH the new terminal has not built yet;
-// executable, because otherwise the failure arrives after the fork, in a child
-// with nowhere to report it; and not ckmux itself, because a $SHELL pointing
-// back here opens a multiplexer inside every terminal the multiplexer opens.
-bool usable_shell(const char* path) {
-    if (path == nullptr || *path != '/') return false;
-    if (base_name(path) == "ckmux") return false;
-    return ::access(path, X_OK) == 0;
+bool ascii_equal(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        const char c = left[index];
+        const char folded = c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
+        if (folded != right[index]) return false;
+    }
+    return true;
+}
+
+bool usable(const ShellHost& host, std::string_view candidate) {
+    return !candidate.empty() && host.usable_executable && host.usable_executable(candidate);
 }
 
 }  // namespace
 
-std::string resolve_shell() {
-    // $SHELL first: it is what the reader chose, and it is what every other
-    // terminal on their machine honours.
-    if (const char* const from_environment = std::getenv("SHELL"); usable_shell(from_environment))
-        return from_environment;
-    // Then the account's own shell. This is the case where ckmux was started
-    // by something that does not export SHELL — a launcher, cron, an IDE —
-    // and guessing /bin/sh would silently demote the reader's shell.
-    if (const passwd* const entry = ::getpwuid(::getuid());
-        entry != nullptr && usable_shell(entry->pw_shell))
-        return entry->pw_shell;
-    // Guaranteed to exist on a POSIX system. Not a preference; a floor.
-    return "/bin/sh";
+std::string resolve_shell(const ShellHost& host, std::string_view configured) {
+    if (!configured.empty() && (host.platform == ShellPlatform::Posix || usable(host, configured)))
+        return std::string(configured);
+    if (usable(host, host.environment_shell)) return host.environment_shell;
+    if (host.platform == ShellPlatform::Posix && usable(host, host.account_shell)) return host.account_shell;
+    // /bin/sh is POSIX's guaranteed floor; Windows' system executable still
+    // needs validation because the host query or file access can fail.
+    if (host.platform == ShellPlatform::Posix || usable(host, host.system_shell)) return host.system_shell;
+    return {};
 }
 
-ShellLaunch shell_launch(const std::string& shell, bool login) {
+std::string resolve_shell() { return resolve_shell(platform::shell_host()); }
+
+ShellLaunch shell_launch(const ShellHost& host, const std::string& shell, bool login,
+                         std::string_view command) {
     ShellLaunch launch;
-    // No shell configured means the reader's own, which is what `[general]
-    // shell` is documented to default to (the configuration spec) — and resolving it HERE is
-    // the point: this is the one function both the client and the server reach
-    // a shell through, and a caller that forgot would produce a launch spec with
-    // no program in it. That is not a hypothetical: with no configuration file
-    // at all, every terminal ckmux opened failed to launch, in M1 and in the
-    // server, and nothing noticed because every test set a shell explicitly.
-    launch.executable = shell.empty() ? resolve_shell() : shell;
-    if (!login) {
-        // Explicit rather than relying on the shell noticing its stdin is a
-        // terminal: it always is here, but a shell that was told plainly is
-        // a shell that cannot be talked out of it.
-        launch.arguments = {"-i"};
+    launch.executable = resolve_shell(host, shell);
+    if (launch.executable.empty()) return launch;
+    if (host.platform == ShellPlatform::Windows) {
+        const std::string_view name = base_name(launch.executable, host.platform);
+        const bool cmd = ascii_equal(name, "cmd.exe") || ascii_equal(name, "cmd");
+        const bool powershell = ascii_equal(name, "powershell.exe") || ascii_equal(name, "powershell") ||
+                                ascii_equal(name, "pwsh.exe") || ascii_equal(name, "pwsh");
+        if (cmd) {
+            launch.windows_command = ckv::core::WindowsCommandProcessorLaunch{};
+            if (!command.empty()) launch.windows_command->command = std::string(command);
+        } else if (!command.empty()) {
+            if (powershell) launch.arguments = {"-NoLogo", "-NoProfile", "-Command", std::string(command)};
+            else launch.arguments = {"-c", std::string(command)};
+        } else if (powershell) launch.arguments = {"-NoLogo"};
         return launch;
     }
-    // The dash, and nothing else, is what makes this a login shell. No
-    // argument does it: -l is bash and zsh but not every shell, and the
-    // convention every shell does agree on is the one login(1) established.
-    launch.argv0 = "-" + std::string(base_name(launch.executable));
+    if (!command.empty()) launch.arguments = {"-c", std::string(command)};
+    else if (!login) launch.arguments = {"-i"};
+    else launch.argv0 = "-" + std::string(base_name(launch.executable, host.platform));
     return launch;
+}
+
+ShellLaunch shell_launch(const std::string& shell, bool login, std::string_view command) {
+    return shell_launch(platform::shell_host(), shell, login, command);
+}
+
+ckv::core::TerminalLaunchSpec terminal_launch_spec(const ShellLaunch& launch) {
+    ckv::core::TerminalLaunchSpec spec = launch.windows_command
+        ? ckv::core::TerminalLaunchSpec::windows_command_processor(launch.executable, launch.windows_command->command)
+        : ckv::core::TerminalLaunchSpec::program(launch.executable, launch.arguments);
+    spec.argv0 = launch.argv0;
+    return spec;
 }
 
 }  // namespace ckm

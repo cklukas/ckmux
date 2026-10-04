@@ -1753,8 +1753,7 @@ ckv::widgets::Window* ClientApp::open_terminal(std::string title) {
                                  std::max(6, area.height - 4 - offset)});
 
     const ckm::ShellLaunch shell = ckm::shell_launch(options_.settings.shell, options_.settings.login_shell);
-    ckv::term::TerminalLaunchSpec launch =
-        ckv::term::TerminalLaunchSpec::program(shell.executable, shell.arguments);
+    ckv::term::TerminalLaunchSpec launch = ckm::terminal_launch_spec(shell);
     // Bounded, and this is a serverless terminal running the READER'S OWN
     // login shell -- the case ckVision's unbounded policy cannot close. An
     // interactive shell ignores SIGTERM by design, so under `WaitForExit` a
