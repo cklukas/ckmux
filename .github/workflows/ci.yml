@@ -1,4 +1,5 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
 #
 # Every gating lane builds ckmux against the PINNED ckVision release. The pin
 # is stated exactly once — CKMUX_CKVISION_VERSION in CMakeLists.txt — and the
@@ -30,11 +31,17 @@ jobs:
             sanitize: "address,undefined"
             ckvision: pinned
             name: macos-asan-ubsan
-          - os: ubuntu-latest
+          # Keep the package baseline gated, and test the new LTS explicitly.
+          # Do not let ubuntu-latest silently change either compiler/sysroot.
+          - os: ubuntu-24.04
             sanitize: ""
             ckvision: pinned
             name: linux
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
+            sanitize: ""
+            ckvision: pinned
+            name: linux-ubuntu-26.04
+          - os: ubuntu-26.04
             sanitize: ""
             ckvision: head
             name: linux-ckvision-head

@@ -55,7 +55,8 @@ program in the window, exactly as it would without ckmux.
 
 Release packages are available from the
 [latest GitHub release](https://github.com/cklukas/ckmux/releases/latest).
-The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Ubuntu
+The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Linux
+packages are built on Ubuntu 24.04; CI also gates Ubuntu 26.04. Ubuntu
 20.04 is no longer supported: v0.1.3 to v0.1.5 carried a separately named
 Ubuntu 20.04 DEB, and v0.1.5 remains the release to use there. Starting with
 v0.1.2, each release also carries a Homebrew formula that builds ckmux from

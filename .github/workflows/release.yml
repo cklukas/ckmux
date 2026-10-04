@@ -26,7 +26,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Build on the older supported LTS: upgrading the runner also
+          # upgrades the package's system-library requirements.
+          - os: ubuntu-24.04
             generators: "TGZ;DEB;RPM"
             name: linux-x86_64
           - os: macos-latest
@@ -154,7 +156,7 @@ jobs:
   publish:
     if: github.ref_type == 'tag'
     needs: [package, homebrew]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
