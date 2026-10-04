@@ -295,9 +295,9 @@ int run_new(const std::filesystem::path& socket, const std::filesystem::path& ex
     (void)connection.stream.send(proto::encode(ask));
     (void)connection.stream.flush();
 
-    // The server answers a `NewSession` with the whole list, to this client
-    // and every other — so the confirmation and the new session's name arrive
-    // together, and the id is the highest one in it (ids only ever go up).
+    // The server answers this NewSession with its immediate list snapshot.
+    // Other CLI requests cannot push a list onto this connection, so the
+    // highest id is this creation even when several starters are concurrent.
     proto::Message answer;
     if (!await_message(connection.stream, reader, answer)) {
         std::fprintf(stderr, "ckmux: the server did not confirm the new session\n");
@@ -351,8 +351,8 @@ int run_kill_session(const std::filesystem::path& socket, const CliRequest& requ
 
     // A kill is asked, not done: the programs in it are given the grace the
     // configuration allows (the session model), so what is waited for here is the
-    // server saying the session is gone — which it does by sending every
-    // greeted client the list again.
+    // server saying the session is gone. This CLI connection receives updates
+    // only while its exact kill is pending, not other utilities' replies.
     for (;;) {
         proto::Message answer;
         if (!await_message(connection.stream, connection.reader, answer, 10000)) {

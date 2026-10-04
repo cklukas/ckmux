@@ -134,6 +134,58 @@ CK_TEST(native_server_stats_preserve_owned_descendants_after_root_exit_and_fan_o
     terminal.close();
 }
 
+CK_TEST(native_held_exit_banner_preserves_a_clear_that_preceded_the_display_tick) {
+    ckmtest::ScratchDirectory scratch("native-held-clear-order");
+    const auto endpoint = std::filesystem::path("held-clear-" + std::to_string(::GetCurrentProcessId()));
+    ckm::Settings settings;
+    settings.shell = CKMUX_TEST_CHILD_PATH;
+    settings.login_shell = false;
+    settings.on_exit = ckm::ExitPolicy::Hold;
+    settings.max_fps = 1;
+    ckv::ManualClock clock;
+    ckm::server::Server server({endpoint, settings}, clock);
+    CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
+    Reader reader;
+    CK_CHECK(reader.connect(endpoint));
+    CK_CHECK(attach(server, clock, reader));
+    CK_CHECK(clock.now_nanos() < 1'000'000'000);
+    ckm::server::TerminalSpec spec;
+    spec.command = "--exit-zero";
+    spec.working_directory = scratch.path().string();
+    auto& terminal = server.open_terminal(0, spec);
+    CK_CHECK(terminal.process_id() > 0);
+    CK_CHECK(terminal.session().state() != ckv::core::TerminalSubsessionState::Failed);
+    const auto id = terminal.id();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (terminal.process_id() > 0 && std::chrono::steady_clock::now() < deadline) {
+        CK_CHECK(server.step());
+        ::Sleep(1);
+    }
+    CK_CHECK(terminal.process_id() == -1);
+    CK_CHECK(!terminal.exit_announced());
+    reader.say(ckm::proto::WatchStats{1});
+    std::vector<Stats> stats;
+    while (stats.empty() && std::chrono::steady_clock::now() < deadline) {
+        CK_CHECK(server.step());
+        reader.stats(stats);
+        ::Sleep(1);
+    }
+    CK_CHECK(stats.size() == 1U);
+    if (stats.size() == 1U) {
+        CK_CHECK(stats.front().term == id);
+        CK_CHECK(stats.front().state == ckm::proto::TermStatsState::Gone);
+    }
+    CK_CHECK(!terminal.exit_announced());
+    stats.clear();
+    clock.advance(1'000'000'000);
+    CK_CHECK(server.step());
+    for (int pass = 0; pass < 10; ++pass) { reader.stats(stats); ::Sleep(1); }
+    CK_CHECK(terminal.exit_announced());
+    CK_CHECK(server.terminals().find(id) != nullptr);
+    CK_CHECK(stats.empty());
+    terminal.close();
+}
+
 CK_TEST(native_local_footer_samples_the_job_after_root_exit) {
     ckmtest::ScratchDirectory scratch("native-resource-footer");
     ckv::term::HeadlessTerminal host({100, 30});

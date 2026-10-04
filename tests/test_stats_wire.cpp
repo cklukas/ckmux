@@ -397,6 +397,51 @@ CK_TEST(a_late_stats_subscriber_gets_its_own_single_dead_terminal_clear) {
     forget(socket);
 }
 
+CK_TEST(a_held_exit_banner_does_not_repeat_a_clear_that_preceded_its_flush_tick) {
+    const auto socket = private_socket("held-clear-order");
+    forget(socket);
+    auto settings = test_settings();
+    settings.on_exit = ckm::ExitPolicy::Hold;
+    settings.max_fps = 1;
+    ckv::ManualClock clock;
+    Server server(Server::Options{socket, settings}, clock);
+    CK_CHECK(server.start() == Server::StartStatus::Listening);
+    WireClient client;
+    CK_CHECK(client.connect(socket));
+    CK_CHECK(greet_and_attach(server, client));
+    auto& terminal = server.open_terminal(0, spec_running("exit 0"));
+    const auto id = terminal.id();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (terminal.process_id() > 0 && std::chrono::steady_clock::now() < deadline)
+        CK_CHECK(server.step());
+    CK_CHECK(terminal.process_id() == -1);
+    CK_CHECK(!terminal.exit_announced());
+
+    // Child exit is already observed, but the injected display clock has not
+    // reached the next flush tick. The first subscription samples Gone now.
+    client.say(ckm::proto::WatchStats{1});
+    std::vector<ckm::proto::TermStats> stats;
+    (void)collect_stats(server, client, stats, 3);
+    CK_CHECK(stats.size() == 1U);
+    if (stats.size() == 1U) {
+        CK_CHECK(stats.front().term == id);
+        CK_CHECK(stats.front().state == ckm::proto::TermStatsState::Gone);
+    }
+    CK_CHECK(!terminal.exit_announced());
+
+    // Now the held TermClosed banner is sent before the next stats pass. It
+    // does not remove the window and must not forget that this reader cleared
+    // its readout already. A real close remains a different lifecycle event.
+    stats.clear();
+    clock.advance(1'000'000'000);
+    (void)collect_stats(server, client, stats, 3);
+    CK_CHECK(terminal.exit_announced());
+    CK_CHECK(server.terminals().find(id) != nullptr);
+    CK_CHECK(stats.empty());
+    server.terminals().close_all();
+    forget(socket);
+}
+
 CK_TEST(a_dead_child_is_announced_once_and_then_never_again) {
     const std::filesystem::path socket = private_socket("dead");
     forget(socket);

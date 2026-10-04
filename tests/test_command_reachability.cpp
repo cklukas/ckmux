@@ -17,8 +17,6 @@
 // single source of truth for every surface that mentions a key: a binding is
 // live (someone handles it) or deliberately dark (a predicate returns false,
 // so it is greyed and unclickable everywhere). Silence is the bug.
-#if !defined(_WIN32)
-
 #include <cstdio>
 #include <set>
 #include <string>
@@ -31,6 +29,7 @@
 #include "cvision/term/virtual_display.hpp"
 #include "cvision/testing/cktest.hpp"
 #include "cvision/widgets/menu.hpp"
+#include "live_terminal_child.hpp"
 
 using ckm::client::ClientApp;
 using ckm::client::ClientOptions;
@@ -43,7 +42,7 @@ namespace {
 
 ClientOptions test_options() {
     ClientOptions options;
-    options.settings.shell = "/bin/cat";  // stays alive, says nothing (test_client_smoke)
+    options.settings.shell = ckmtest::live_terminal_child();
     return options;
 }
 
@@ -52,6 +51,8 @@ struct Fixture {
     ManualClock clock;
     Application app{terminal, clock};
     ClientApp client{app, test_options()};
+
+    Fixture() { ckmtest::check_live_terminal_children(client.desktop()); }
 };
 
 // The commands ckmux deliberately shows greyed, and why. Anything else that
@@ -362,5 +363,3 @@ CK_TEST(terminal_report_shows_the_hosts_evidence_with_the_decoded_count) {
     CK_CHECK(decoded_line);
     CK_CHECK(capability_row);
 }
-
-#endif  // !_WIN32

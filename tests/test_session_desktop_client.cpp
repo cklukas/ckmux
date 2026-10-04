@@ -19,6 +19,7 @@
 
 #include "cvision/term/headless_terminal.hpp"
 #include "cvision/testing/cktest.hpp"
+#include "live_terminal_child.hpp"
 
 namespace {
 
@@ -117,12 +118,13 @@ struct PanFixture {
     PanFixture()
         : client{app, [this] {
                      ClientOptions options;
-                     options.settings.shell = "/bin/cat";
+                     options.settings.shell = ckmtest::live_terminal_child();
                      options.report_layout = [this](const std::vector<WindowPlacement>& placed) {
                          reports.push_back(placed);
                      };
                      return options;
                  }()} {
+        ckmtest::check_live_terminal_children(client.desktop());
         app.step(0);
     }
 };

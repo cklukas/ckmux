@@ -184,6 +184,10 @@ private:
         proto::FrameReader reader;
         bool greeted = false;
         proto::ClientKind kind = proto::ClientKind::Ui;
+        // A CLI utility is not a picker subscriber. Only a pending kill needs
+        // later lists, until its exact target disappears; unrelated pushes
+        // must never be mistaken for the reply to its next request.
+        SessionId awaiting_session_removal = 0;
         // A CLI client's Hello named a protocol version this server does not
         // speak, so its Refuse carries the words "end the running server with
         // `ckmux kill-server`" — but killing a mismatched server needs a
@@ -340,13 +344,10 @@ private:
     // folding is a locale question this has no business answering.
     const Session* session_named(std::string_view name, SessionId except_id = 0) const;
     void send_session_list(Client& client);
-    // The same list to every client that has greeted, which is what a picker
-    // anywhere on this machine is showing. One name for the loop that six
-    // sites were spelling out, and — since WP-48 — for two more that were
-    // missing: an attach and a detach change `SessionInfo::attached` without
-    // changing the set of sessions, so the count that reports simultaneity was
-    // refreshed by everything except the events that move it.
-    void broadcast_session_list();
+    // Update UI pickers, the explicit requester, and CLI utilities waiting
+    // for their requested kill to finish. Idle CLI connections receive no
+    // unsolicited list that could be mistaken for another request's answer.
+    void broadcast_session_list(Client* requester = nullptr);
     // The unsolicited half of the same fact (WP-48): pushed to UI clients that
     // are keeping up, and deferred for any that are not. See the definition —
     // the two narrowings are wrong for `broadcast_session_list`, which answers
