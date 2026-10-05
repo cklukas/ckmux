@@ -315,6 +315,8 @@ inline void end_process(ckv::core::ProcessId child) {
 
 // The real client, in a terminal, with its screen decoded — a reader's ckmux.
 struct Reader {
+    // A fixture may force incremental VT parsing to exercise partial frames.
+    std::size_t drain_bytes = 64u << 10u;
     ScratchDirectory home{"reader-client"};
     std::unique_ptr<ckv::term::TerminalSubsession> client;
 
@@ -370,15 +372,15 @@ struct Reader {
                client->state() != ckv::core::TerminalSubsessionState::Exited;
     }
 
-    void press(std::string_view keys) {
+    void press(std::string_view keys, int settle_ms = 400) {
         client->send_input(keys);
-        settle(400);
+        settle(settle_ms);
     }
 
     void settle(int ms) {
         const clock_type::time_point until = clock_type::now() + std::chrono::milliseconds(ms);
         while (clock_type::now() < until) {
-            (void)client->drain(64 * 1024);
+            (void)client->drain(drain_bytes);
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
@@ -412,7 +414,7 @@ struct Reader {
         const clock_type::time_point deadline =
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
-            (void)client->drain(64 * 1024);
+            (void)client->drain(drain_bytes);
             if (screen().find(needle) != std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -429,7 +431,7 @@ struct Reader {
         const clock_type::time_point deadline =
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
-            (void)client->drain(64 * 1024);
+            (void)client->drain(drain_bytes);
             if (screen().find(needle) == std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -440,7 +442,7 @@ struct Reader {
         const clock_type::time_point deadline =
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         while (clock_type::now() < deadline) {
-            (void)client->drain(64 * 1024);
+            (void)client->drain(drain_bytes);
             if (client->state() == ckv::core::TerminalSubsessionState::Exited) return true;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }

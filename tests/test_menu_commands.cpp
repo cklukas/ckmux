@@ -474,12 +474,16 @@ CK_TEST(closing_the_last_terminal_tells_the_whole_truth_and_ends_the_session) {
     CK_CHECK(reader.start(socket));
     CK_CHECK(reader.sees("Terminal 1"));
 
-    reader.press("\x02" "x");
+    // Force incremental delivery and do not assume that a fixed settle delay
+    // made the complete dialog visible. The title can precede its body.
+    reader.drain_bytes = 128;
+    reader.press("\x02" "x", 0);
     CK_CHECK(reader.sees("Close terminal"));
-    CK_CHECK(reader.screen().find("asks it to quit") != std::string::npos);
-    CK_CHECK(reader.screen().find("Kill it if it has not quit") != std::string::npos);
-    CK_CHECK(reader.screen().find("Move instead") != std::string::npos);
-    CK_CHECK(reader.screen().find("This is the last terminal") != std::string::npos);
+    CK_CHECK(reader.sees("asks it to quit"));
+    CK_CHECK(reader.sees("Kill it if it has not quit"));
+    CK_CHECK(reader.sees("Move instead"));
+    CK_CHECK(reader.sees("This is the last terminal"));
+    reader.drain_bytes = 64u << 10u;
     reader.press("\r");
 
     // The shell dies on the asking, its session dies empty, and the client is

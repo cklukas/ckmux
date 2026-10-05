@@ -31,6 +31,7 @@ function Owned-Servers {
     })
 }
 $clients=@()
+$childProcesses=@()
 $passed=$false
 try {
     $absent=Run-CLI 'absent' @('ls') 1
@@ -72,13 +73,23 @@ try {
         $_.ParentProcessId -eq $serverPid -and $_.Name -eq 'cmd.exe'
     })
     if ($children.Count -ne 8) { throw 'Detached server did not own eight actual native shell children' }
+    foreach ($child in $children) {
+        $process=Get-Process -Id $child.ProcessId -ErrorAction Stop
+        # Acquire and retain a kernel handle while the known child is alive.
+        # Later PID lookup can observe a recycled identity, and server exit
+        # alone does not prove every member's exit notification has arrived.
+        $null=$process.Handle
+        $childProcesses+=$process
+    }
+    $children | Select-Object ProcessId,ParentProcessId,CreationDate,ExecutablePath |
+        ConvertTo-Json | Out-File (Join-Path $scope 'children.json')
     $listed=Run-CLI 'list' @('ls')
     for ($index=0; $index -lt 8; $index++) {
         if (-not $listed.Contains('win-native-'+$index)) { throw 'Session disappeared after starter exit' }
     }
     if (@(Owned-Servers).Count -ne 1) { throw 'Read-only list lost detached server' }
-    foreach ($child in $children) {
-        if (-not (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue)) { throw 'Native child died with a CLI client' }
+    foreach ($child in $childProcesses) {
+        if ($child.HasExited) { throw 'Native child died with a CLI client' }
     }
     $log=Join-Path $configRoot ($instance+'.log')
     if (-not (Get-Content $log -Raw).Contains('ckmux server: listening')) { throw 'Unicode log path lost real server diagnostics' }
@@ -90,14 +101,18 @@ try {
         Start-Sleep -Milliseconds 50
     } while ([DateTime]::UtcNow -lt $deadline)
     if ($remaining.Count -ne 0) { throw 'Explicit shutdown left the owned server running' }
-    foreach ($child in $children) {
-        if (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue) { throw 'Explicit shutdown left an owned native child running' }
+    foreach ($child in $childProcesses) {
+        $remainingMilliseconds=[Math]::Max(0,[int]($deadline-[DateTime]::UtcNow).TotalMilliseconds)
+        if (-not $child.WaitForExit($remainingMilliseconds)) {
+            throw ('Explicit shutdown left owned native child '+$child.Id+' running past the shutdown deadline')
+        }
     }
     if (-not (Get-Content $log -Raw).Contains('ckmux server: stopped')) { throw 'Orderly shutdown diagnostic missing' }
     $passed=$true
     Write-Output ('Native application: eight concurrent starters, one server '+$serverPid+', eight cmd children, CLI-exit persistence, Unicode logs and complete shutdown: PASS')
 } finally {
     foreach ($client in $clients) { $client.Dispose() }
+    foreach ($child in $childProcesses) { $child.Dispose() }
     if (@(Owned-Servers).Count -gt 0) {
         $ErrorActionPreference='Continue'
         & $Binary kill-server *> "$scope/cleanup.log"
