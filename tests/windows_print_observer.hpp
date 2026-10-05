@@ -30,7 +30,11 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     // https://devblogs.microsoft.com/scripting/weekend-scripter-determine-process-that-locks-a-file/
     HANDLE duplicate = nullptr;
     if (!::DuplicateHandle(process, remote, ::GetCurrentProcess(), &duplicate, 0,
-                           FALSE, DUPLICATE_SAME_ACCESS)) return std::nullopt;
+                           FALSE, DUPLICATE_SAME_ACCESS)) {
+        std::fprintf(stderr, "Observer duplicate File handle %p failed: %lu\n", remote,
+                     static_cast<unsigned long>(::GetLastError()));
+        return std::nullopt;
+    }
     using Query = NTSTATUS (NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, void*, ULONG, ULONG*);
     const auto module = ::GetModuleHandleW(L"ntdll.dll");
     const FARPROC address = module ? ::GetProcAddress(module, "NtQueryObject") : nullptr;
@@ -43,14 +47,18 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     const auto status = query ? query(duplicate, static_cast<OBJECT_INFORMATION_CLASS>(1),
         buffer.data(), static_cast<ULONG>(buffer.size()), &length) : static_cast<NTSTATUS>(-1);
     (void)::CloseHandle(duplicate);
-    if (status < 0 || length > buffer.size()) return std::nullopt;
+    if (status < 0 || length > buffer.size()) {
+        std::fprintf(stderr, "Observer File name status=%08lx length=%lu\n",
+                     static_cast<unsigned long>(status), static_cast<unsigned long>(length));
+        return std::nullopt;
+    }
     const auto* name = reinterpret_cast<const UNICODE_STRING*>(buffer.data());
     if (name->Length == 0) return std::wstring{};
     const auto start = reinterpret_cast<std::uintptr_t>(buffer.data());
     const auto text = reinterpret_cast<std::uintptr_t>(name->Buffer);
     if (name->Length % sizeof(wchar_t) != 0 || text < start ||
         text - start > buffer.size() || name->Length > buffer.size() - (text - start))
-        return std::nullopt;
+        { std::fprintf(stderr, "Observer File name buffer bounds rejected\n"); return std::nullopt; }
     return std::wstring(name->Buffer, name->Length / sizeof(wchar_t));
 }
 
