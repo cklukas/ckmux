@@ -108,7 +108,7 @@ if(WIN32)
         test_windows_shell_host.cpp
         test_windows_paths.cpp
         test_windows_pipe.cpp)
-    list(APPEND CKMUX_TEST_SOURCES test_windows_resource_stats.cpp test_windows_reader.cpp)
+    list(APPEND CKMUX_TEST_SOURCES test_windows_resource_stats.cpp test_windows_reader.cpp test_windows_terminals.cpp)
     add_executable(ckmux_ipc_race_probe windows_pipe_race_probe.cpp)
     target_link_libraries(ckmux_ipc_race_probe PRIVATE ckmux_platform)
     ckmux_strict(ckmux_ipc_race_probe)
@@ -126,6 +126,9 @@ endif()
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
+# Real subsession tests discover ConPTY beside their own executable. Qualify
+# the same selected runtime as the application, not an accidental inbox copy.
+ckmux_deploy_windows_runtime(ckmux_tests "${CMAKE_INSTALL_BINDIR}")
 if(WIN32)
     add_dependencies(ckmux_tests ckmux_ipc_race_probe ckmux_windows_process_child ckmux_windows_live_child ckmux_windows_exit_child)
     target_compile_definitions(ckmux_tests PRIVATE
@@ -302,6 +305,7 @@ set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 set(CKMUX_LABELS_test_stats_display "pty")
 set(CKMUX_LABELS_test_windows_resource_stats "native;pty;e2e")
+set(CKMUX_LABELS_test_windows_terminals "native;pty")
 set(CKMUX_LABELS_test_windows_reader "native;pty;ipc;e2e")
 set(CKMUX_TIMEOUT_test_windows_reader 240)
 set(CKMUX_LABELS_test_session_desktop_client "pty")

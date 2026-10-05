@@ -211,8 +211,8 @@ jobs:
           ctest --test-dir build -C Release --show-only=json-v1 > "$env:CKMUX_RELEASE_SCRATCH/inventory.json"
           if($LASTEXITCODE -ne 0) { throw 'Native release inventory failed' }
           $inventory=Get-Content "$env:CKMUX_RELEASE_SCRATCH/inventory.json" -Raw | ConvertFrom-Json
-          if($inventory.tests.Count -ne 52) { throw 'Unexpected native release inventory' }
-          foreach($required in @('windows_distribution_policy','windows_server_ancestry','windows_server_lifecycle','suite_test_reader_modes','suite_test_session_desktop','suite_test_windows_reader')) {
+          if($inventory.tests.Count -ne 53) { throw 'Unexpected native release inventory' }
+          foreach($required in @('windows_distribution_policy','windows_server_ancestry','windows_server_lifecycle','suite_test_reader_modes','suite_test_session_desktop','suite_test_windows_reader','suite_test_windows_terminals')) {
             if($required -notin $inventory.tests.name) { throw "Native release gate absent: $required" }
           }
           ./ckmux/tools/windows/test-native.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build" `
@@ -234,15 +234,42 @@ jobs:
           }
 
       - name: Full installation and lifecycle in a fresh standard-user profile
+        if: matrix.architecture == 'arm64'
         run: |
           $prefix="$env:GITHUB_WORKSPACE/packages/ckmux-$env:CKMUX_RELEASE_VERSION-Windows-${{ matrix.architecture }}"
           ./ckmux/tools/windows/test-package.ps1 -Zip "$prefix.zip" -Msi "$prefix.msi" `
             -BuildExecutable "$env:GITHUB_WORKSPACE/build/Release/ckmux.exe" -Architecture ${{ matrix.architecture }} `
             -Version "$env:CKMUX_RELEASE_VERSION" -TemporaryRoot "$env:CKMUX_RELEASE_SCRATCH/t" `
             -LifecycleScript "$env:GITHUB_WORKSPACE/ckmux/tests/windows_server_lifecycle.ps1"
+
+      - name: Verify immutable release inputs
+        run: |
           foreach($inputFile in (Get-Content "$env:CKMUX_RELEASE_SCRATCH/inputs.json" -Raw | ConvertFrom-Json)) {
             if((Get-FileHash -LiteralPath $inputFile.path).Hash -cne $inputFile.sha256) { throw 'Release input changed during acceptance' }
           }
+
+      # Default Windows Server MSI policy rejects unmanaged per-user installs.
+      # Keep that policy intact and gate exact x64 packages on Windows 11 below.
+      - name: Preserve independent x64 build inputs for desktop installation
+        if: matrix.architecture == 'x64'
+        run: |
+          $destination=Join-Path $env:CKMUX_RELEASE_SCRATCH 'install-inputs'
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          foreach($relative in @('ckmux.exe','conpty.dll','Microsoft.ConPTY.Runtime.json','Microsoft.ConPTY.LICENSE.txt','x64/OpenConsole.exe','arm64/OpenConsole.exe')) {
+            $source=Join-Path "$env:GITHUB_WORKSPACE/build/Release" $relative
+            $copy=Join-Path $destination $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path $copy) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $copy
+            if((Get-FileHash $source).Hash -cne (Get-FileHash $copy).Hash) { throw 'Independent build-input copy differs' }
+          }
+          Copy-Item -LiteralPath "$env:CKMUX_RELEASE_SCRATCH/build-record.json" -Destination "$destination/build-record.json"
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.architecture == 'x64'
+        with:
+          name: windows-install-inputs-x64
+          path: ${{ env.CKMUX_RELEASE_SCRATCH }}/install-inputs/
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
         with:
@@ -262,6 +289,54 @@ jobs:
             ${{ env.CKMUX_RELEASE_SCRATCH }}/t/package-host-*/**
             build/Testing/Temporary/*.log
             build/CMakeCache.txt
+
+  windows-x64-install:
+    name: install-windows-x64-on-windows11-arm64
+    needs: [windows-package]
+    runs-on: windows-11-vs2026-arm
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ckmux
+      - name: Select explicit desktop installation scratch
+        run: |
+          $scope=Join-Path $env:RUNNER_TEMP ('ckmux-x64-install-'+[Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path "$scope/t" | Out-Null
+          "CKMUX_INSTALL_SCRATCH=$scope" >> $env:GITHUB_ENV
+          foreach($variable in @('TEMP','TMP','TMPDIR')) { "$variable=$scope/t" >> $env:GITHUB_ENV }
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages-windows-x64
+          path: packages
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-install-inputs-x64
+          path: independent-build
+      - name: Verify x64 inputs and full fresh-standard-user installation
+        run: |
+          $version=[regex]::Match((Get-Content ckmux/CMakeLists.txt -Raw),'project\(ckmux VERSION ([0-9.]+) ').Groups[1].Value
+          $record=Get-Content independent-build/build-record.json -Raw | ConvertFrom-Json
+          if(!$version -or $record.source -cne '${{ github.sha }}' -or $record.architecture -cne 'x64' -or $record.exit -ne 0 -or
+              $record.output_sha256 -ine (Get-FileHash independent-build/ckmux.exe).Hash) { throw 'Independent x64 build identity mismatch' }
+          foreach($extension in @('zip','msi')) {
+            $filename="ckmux-$version-Windows-x64.$extension"
+            $sum=Get-Content "packages/$filename.sha256" -Raw
+            if($sum -notmatch '^([0-9a-fA-F]{64})  ([^\r\n]+)\s*$' -or $Matches[2] -cne $filename -or
+                $Matches[1] -ine (Get-FileHash "packages/$filename").Hash) { throw 'Downloaded x64 package digest mismatch' }
+          }
+          ./ckmux/tools/windows/test-package.ps1 -Zip "$env:GITHUB_WORKSPACE/packages/ckmux-$version-Windows-x64.zip" `
+            -Msi "$env:GITHUB_WORKSPACE/packages/ckmux-$version-Windows-x64.msi" `
+            -BuildExecutable "$env:GITHUB_WORKSPACE/independent-build/ckmux.exe" -Architecture x64 -Version $version `
+            -TemporaryRoot "$env:CKMUX_INSTALL_SCRATCH/t" -LifecycleScript "$env:GITHUB_WORKSPACE/ckmux/tests/windows_server_lifecycle.ps1"
+      - name: Preserve desktop x64 installation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-desktop-install-evidence
+          path: ${{ env.CKMUX_INSTALL_SCRATCH }}/t/package-host-*/**
 
   homebrew:
     name: package-homebrew
@@ -313,7 +388,7 @@ jobs:
 
   publish:
     if: github.ref_type == 'tag'
-    needs: [package, windows-package, homebrew]
+    needs: [package, windows-package, windows-x64-install, homebrew]
     runs-on: ubuntu-26.04
     permissions:
       contents: write

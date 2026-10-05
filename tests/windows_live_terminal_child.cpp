@@ -23,7 +23,7 @@ int job_descendant(const wchar_t* event_name) {
     return 0;
 }
 
-int job_root() {
+int job_root(bool keep_alive = false) {
     wchar_t executable[32768]{};
     if (!::GetModuleFileNameW(nullptr, executable, 32768)) return 12;
     const std::wstring name = L"Local\\ckmux-resource-ready-" + std::to_wstring(::GetCurrentProcessId());
@@ -40,17 +40,79 @@ int job_root() {
     }
     const DWORD signaled = ::WaitForSingleObject(ready, 5000);
     ::CloseHandle(ready);
+    const DWORD descendant_pid = child.dwProcessId;
     ::CloseHandle(child.hThread);
     ::CloseHandle(child.hProcess);
     if (signaled != WAIT_OBJECT_0) return 15;
     if (std::puts("OWNED-DESCENDANT-READY") == EOF || std::fflush(stdout) != 0) return 16;
+    if (std::printf("OWNED-DESCENDANT-PID %lu\r\n", static_cast<unsigned long>(descendant_pid)) < 0 ||
+        std::fflush(stdout) != 0) return 18;
+    if (keep_alive) ::Sleep(30000);
     return 0;
+}
+
+BOOL WINAPI ignore_control(DWORD) { return TRUE; }
+
+int geometry() {
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if (!::GetConsoleScreenBufferInfo(::GetStdHandle(STD_OUTPUT_HANDLE), &info)) return 19;
+    if (std::printf("CHILD-GEOMETRY %d %d\r\n", static_cast<int>(info.dwSize.X),
+        static_cast<int>(info.dwSize.Y)) < 0 || std::fflush(stdout) != 0) return 20;
+    return 0;
+}
+
+int flood(const char* line) {
+    const ULONGLONG end = ::GetTickCount64() + 30000;
+    while (::GetTickCount64() < end) {
+        if (std::puts(line) == EOF || std::fflush(stdout) != 0) return 21;
+    }
+    return 0;
+}
+
+int print_controller() {
+    if (std::puts("PRINT-FIXTURE-READY") == EOF || std::fflush(stdout) != 0) return 22;
+    for (;;) {
+        const int byte = std::getchar();
+        if (byte == EOF) return std::ferror(stdin) != 0 ? 23 : 0;
+        if (byte < '1' || byte > '3') continue;
+        if (std::printf("\x1b[5idocument-%c\r\n\x1b[4iPRINT-DONE-%c\r\n", byte, byte) < 0 ||
+            std::fflush(stdout) != 0) return 24;
+    }
 }
 }
 
 int wmain(int argc, wchar_t** argv) {
     const bool command = argc == 3 && std::wstring(argv[1]) == L"-c";
     const std::wstring mode = command ? argv[2] : (argc == 2 ? argv[1] : L"");
+    if (mode == L"--exit-seven") return 7;
+    if (mode == L"--ran-exit-three") {
+        if (std::puts("ran") == EOF || std::fflush(stdout) != 0) return 25;
+        return 3;
+    }
+    if (mode == L"--read-exit") {
+        for (;;) {
+            const int byte = std::getchar();
+            if (byte == '\n' || byte == '\r') return 0;
+            if (byte == EOF) return 26;
+        }
+    }
+    if (mode == L"--geometry-exit") return geometry();
+    if (mode == L"--geometry") {
+        if (const int code = geometry(); code != 0) return code;
+        for (;;) {
+            const int byte = std::getchar();
+            if (byte == EOF) return 27;
+            if (byte == 'g') { if (const int code = geometry(); code != 0) return code; }
+        }
+    }
+    if (mode == L"--flood-first") return flood("first-child");
+    if (mode == L"--flood-second") return flood("second-child");
+    if (mode == L"--flood-third") return flood("third-child");
+    if (mode == L"--print-controller") return print_controller();
+    if (mode == L"--stubborn-root") {
+        if (!::SetConsoleCtrlHandler(ignore_control, TRUE)) return 28;
+        return job_root(true);
+    }
     if (mode == L"--idle") {
         ::Sleep(3600000);
         return 0;
