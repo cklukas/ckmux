@@ -216,7 +216,14 @@ CK_TEST(native_reader_ends_the_last_session_without_killing_the_client) {
     CK_CHECK(reader.sees("End session"));
     CK_CHECK(reader.screen().find("Kill anything still running") != std::string::npos);
     reader.press("\r");
-    CK_CHECK(reader.sees("No sessions are running yet", 10000));
+    const bool empty_picker = reader.sees("No sessions are running yet", 10000);
+    CK_CHECK(empty_picker);
+    if (!empty_picker) {
+        std::fprintf(stderr, "Last-session client state=%d pid=%lld\n",
+            static_cast<int>(reader.client->state()),
+            static_cast<long long>(reader.client->process_id()));
+        for (const auto& row : reader.rows()) std::fprintf(stderr, "%s\n", row.c_str());
+    }
     CK_CHECK(reader.screen().find("New Session") != std::string::npos);
     CK_CHECK(reader.client->state() != ckv::core::TerminalSubsessionState::Exited);
     auto& servers = ckmtest::harness_servers();

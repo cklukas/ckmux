@@ -295,6 +295,7 @@ struct WindowsPipeStream::State {
     std::size_t read_offset = 0;
     bool reading = false;
     bool writing = false;
+    bool write_failed = false;
 
     void stop() noexcept {
         if (pipe.valid()) {
@@ -319,6 +320,19 @@ struct WindowsPipeStream::State {
     bool fail(std::string_view operation, DWORD error = ::GetLastError()) {
         problem = native_problem(operation, error);
         stop();
+        return false;
+    }
+
+    bool fail_write(DWORD error) {
+        problem = native_problem("writing the pipe", error);
+        // The write has completed with an error (or never became pending).
+        // Do not cancel the independent read: it may already hold final frames.
+        writing = false;
+        write_failed = true;
+        outgoing.clear();
+        outgoing_offset = 0;
+        queued_bytes = 0;
+        (void)::ResetEvent(write.hEvent);
         return false;
     }
 
@@ -352,7 +366,7 @@ const std::string& WindowsPipeStream::problem() const noexcept { return state_->
 void WindowsPipeStream::close() noexcept { state_->stop(); }
 
 bool WindowsPipeStream::send(std::string_view bytes) {
-    if (!open()) return false;
+    if (!open() || state_->write_failed) return false;
     // Refuse the whole frame and disconnect rather than allocating an unbounded
     // queue or dropping a prefix while claiming the connection remains sound.
     if (bytes.size() > kHardLimitBytes - queued()) {
@@ -374,18 +388,19 @@ bool WindowsPipeStream::send(std::string_view bytes) {
 }
 
 bool WindowsPipeStream::flush() {
-    if (!open()) return false;
+    if (!open() || state_->write_failed) return false;
     // Bounded work even when the pipe accepts data continuously.
     std::size_t budget = 1024u * 1024u;
     while (budget != 0) {
         if (state_->writing) {
             DWORD written = 0;
             if (!::GetOverlappedResult(state_->pipe.native_handle(), &state_->write, &written, FALSE)) {
-                if (::GetLastError() == ERROR_IO_INCOMPLETE) return true;
-                return state_->fail("writing the pipe");
+                const DWORD error = ::GetLastError();
+                if (error == ERROR_IO_INCOMPLETE) return true;
+                return state_->fail_write(error);
             }
             state_->writing = false;
-            if (written == 0 || written > state_->queued_bytes) return state_->fail("writing the pipe", ERROR_WRITE_FAULT);
+            if (written == 0 || written > state_->queued_bytes) return state_->fail_write(ERROR_WRITE_FAULT);
             state_->outgoing_offset += written;
             state_->queued_bytes -= written;
             budget -= std::min(budget, static_cast<std::size_t>(written));
@@ -406,7 +421,10 @@ bool WindowsPipeStream::flush() {
         (void)::ResetEvent(state_->write.hEvent);
         const BOOL done = ::WriteFile(state_->pipe.native_handle(), state_->write_buffer.data(),
             static_cast<DWORD>(count), nullptr, &state_->write);
-        if (!done && ::GetLastError() != ERROR_IO_PENDING) return state_->fail("writing the pipe");
+        if (!done) {
+            const DWORD error = ::GetLastError();
+            if (error != ERROR_IO_PENDING) return state_->fail_write(error);
+        }
         state_->writing = true;
     }
     return true;

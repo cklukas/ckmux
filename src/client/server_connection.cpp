@@ -62,7 +62,10 @@ bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::
         // cannot be resynchronised, and guessing means acting on bytes of
         // unknown provenance.
         if (error != proto::DecodeError::Incomplete) return false;
-        if (!stream.open() || !stream.flush()) return false;
+        if (!stream.open()) return false;
+        // A failed outgoing request does not erase a reply already received.
+        // The same read-until-EOF contract applies to CLI and UI consumers.
+        (void)stream.flush();
         const int remaining = millis_left(deadline);
         if (remaining <= 0) return false;
         waiting.clear();
@@ -75,7 +78,7 @@ bool await_message(platform::Stream& stream, proto::FrameReader& reader, proto::
         // still bounds the loop, so retrying cannot spin.
         if (waiting.outcome() == platform::Poller::Outcome::Interrupted) continue;
         if (waiting.outcome() != platform::Poller::Outcome::Ready) return false;
-        if (!stream.flush()) return false;
+        (void)stream.flush();
         std::string arrived;
         const bool alive = stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) return false;

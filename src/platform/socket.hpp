@@ -280,16 +280,17 @@ public:
     // dropping half a frame would desynchronise the stream; what the caller
     // must stop doing is adding more.
     //
-    // False is also the answer when the write itself failed, which is to say
-    // the peer is gone. Both cases mean the same thing to a caller — stop
+    // False is also the answer when the write itself failed. Both cases mean
+    // the same thing to a caller — stop
     // adding — and the caller that needs to tell them apart has `flush()`,
     // which says so directly. What this must never do is discard the failure:
     // a send that answered "fine" for a connection that has died is a server
     // queueing a session's whole output into a socket nobody will ever read.
     bool send(std::string_view bytes);
 
-    // Writes whatever the socket will take. Returns false when the peer is
-    // gone.
+    // Writes whatever the socket will take. False closes only the write side:
+    // further sends fail, the unsendable queue is discarded, and receive()
+    // can still drain final replies until read EOF/error or explicit close.
     bool flush();
 
     // Reads what has arrived, appending to `into`, up to `byte_budget`. Returns
@@ -330,6 +331,7 @@ private:
     int fd_ = -1;
     std::string pending_;
     std::size_t sent_ = 0;
+    bool write_failed_ = false;
 #endif
 };
 

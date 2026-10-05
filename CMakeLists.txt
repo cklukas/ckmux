@@ -1,7 +1,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.28)
-project(ckmux VERSION 0.1.7 LANGUAGES CXX)
+project(ckmux VERSION 0.1.8 LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
@@ -18,7 +18,7 @@ endif()
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.17)
+set(CKMUX_CKVISION_VERSION 0.1.18)
 
 # Windows selects the actual native IPC/process/wait implementations below;
 # it is not a Unix compatibility environment. Acceptance and release status

@@ -507,9 +507,11 @@ Stream::Stream(int fd) : fd_(fd) {
 Stream::~Stream() { close(); }
 
 Stream::Stream(Stream&& other) noexcept
-    : fd_(other.fd_), pending_(std::move(other.pending_)), sent_(other.sent_) {
+    : fd_(other.fd_), pending_(std::move(other.pending_)), sent_(other.sent_),
+      write_failed_(other.write_failed_) {
     other.fd_ = -1;
     other.sent_ = 0;
+    other.write_failed_ = false;
 }
 
 Stream& Stream::operator=(Stream&& other) noexcept {
@@ -518,13 +520,16 @@ Stream& Stream::operator=(Stream&& other) noexcept {
         fd_ = other.fd_;
         pending_ = std::move(other.pending_);
         sent_ = other.sent_;
+        write_failed_ = other.write_failed_;
         other.fd_ = -1;
         other.sent_ = 0;
+        other.write_failed_ = false;
     }
     return *this;
 }
 
 bool Stream::send(std::string_view bytes) {
+    if (!open() || write_failed_) return false;
     pending_.append(bytes);
     // A write that failed means the peer is gone, and that is the one answer a
     // sender must not be given as "fine": a server told nothing goes on
@@ -535,6 +540,7 @@ bool Stream::send(std::string_view bytes) {
 }
 
 bool Stream::flush() {
+    if (!open() || write_failed_) return false;
     while (sent_ < pending_.size()) {
         // Never SIGPIPE. A peer that goes away must not take this process with
         // it: `write` to a socket whose other end has closed raises SIGPIPE,
@@ -557,7 +563,12 @@ bool Stream::flush() {
         }
         if (written < 0 && errno == EINTR) continue;
         if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
-        return false;  // the peer is gone
+        // A write failure says nothing about final bytes still on the read
+        // side. Retire only outgoing work; receive() owns read EOF/error.
+        write_failed_ = true;
+        pending_.clear();
+        sent_ = 0;
+        return false;
     }
     // Reclaim once the dead prefix is worth reclaiming, rather than erasing the
     // front on every write: the same reason the emulator's history keeps an
@@ -599,6 +610,7 @@ void Stream::close() noexcept {
     }
     pending_.clear();
     sent_ = 0;
+    write_failed_ = false;
 }
 
 }  // namespace ckm::platform

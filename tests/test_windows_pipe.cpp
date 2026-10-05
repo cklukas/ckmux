@@ -256,6 +256,36 @@ CK_TEST(windows_pipe_stream_pending_read_signals_disconnect_and_closes) {
     server.close();
 }
 
+CK_TEST(windows_pipe_failed_write_preserves_unread_completed_reply) {
+    using Listener = ckm::platform::WindowsPipeListener;
+    Listener listener;
+    CK_CHECK(listener.listen(label()) == Listener::Status::Listening);
+    auto connected = ckm::platform::WindowsPipeConnect::open(listener.endpoint());
+    wait_accept(listener);
+    auto accepted = listener.accept_one();
+    ckm::platform::WindowsPipeStream client(std::move(connected.connection));
+    ckm::platform::WindowsPipeStream server(std::move(accepted.connection));
+    CK_CHECK(server.send("first"));
+    CK_CHECK(server.send("second"));
+    ckv::term::WindowsClock clock;
+    const auto deadline = clock.now_nanos() + 2'000'000'000;
+    while (server.queued() != 0 && clock.now_nanos() < deadline) CK_CHECK(server.flush());
+    CK_CHECK(server.queued() == 0);
+    server.close();
+    CK_CHECK(!client.send("a request to the closed sender"));
+    CK_CHECK(client.open());
+    CK_CHECK(client.queued() == 0);
+    CK_CHECK(client.buffered_blocks() == 0);
+    CK_CHECK(client.wait_handles().size() == 1);
+    CK_CHECK(!client.flush());
+    CK_CHECK(!client.send("another doomed request"));
+    CK_CHECK(client.queued() == 0);
+    std::string received;
+    while (client.open() && clock.now_nanos() < deadline) (void)client.receive(received, 3);
+    CK_CHECK(received == "firstsecond");
+    CK_CHECK(!client.open());
+}
+
 CK_TEST(windows_pipe_startup_race_uses_eight_real_processes) {
     const auto instance = label();
     const auto event_base = L"Local\\" + std::wstring(instance.begin(), instance.end());

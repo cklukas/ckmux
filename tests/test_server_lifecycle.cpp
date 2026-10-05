@@ -908,9 +908,14 @@ CK_TEST(a_send_whose_peer_has_gone_reports_that_rather_than_answering_fine) {
     if (accepted.fd >= 0) (void)::close(accepted.fd);
 
     CK_CHECK(!stream.send("anything"));
-    // The bytes are still queued: dropping half a frame would desynchronise a
-    // stream that might yet be flushed, and "stop adding" is what false says.
-    CK_CHECK(stream.queued() == 8U);
+    // A permanent write failure retires outgoing work, unlike high-water
+    // backpressure on a still-writable peer. It must never grow a dead queue.
+    CK_CHECK(stream.queued() == 0);
+    CK_CHECK(!stream.wants_write());
+    CK_CHECK(!stream.flush());
+    CK_CHECK(!stream.send("another request"));
+    CK_CHECK(stream.queued() == 0);
+    CK_CHECK(stream.open()); // read EOF or an explicit close ends this half
 
     stream.close();
     listener.close();
