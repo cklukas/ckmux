@@ -75,6 +75,7 @@ if(WIN32)
         test_attach_flags.cpp
         test_big_clock.cpp
         test_capability_grace.cpp
+        test_client_smoke.cpp
         test_clipboard_exports.cpp
         test_clipboard_helpers.cpp
         test_cli_session_replies.cpp
@@ -117,14 +118,17 @@ if(WIN32)
     ckmux_strict(ckmux_windows_server_ancestry)
     add_executable(ckmux_windows_live_child windows_live_terminal_child.cpp)
     ckmux_strict(ckmux_windows_live_child)
+    add_executable(ckmux_windows_exit_child windows_exit_terminal_child.cpp)
+    ckmux_strict(ckmux_windows_exit_child)
 endif()
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
 if(WIN32)
-    add_dependencies(ckmux_tests ckmux_ipc_race_probe ckmux_windows_process_child ckmux_windows_live_child)
+    add_dependencies(ckmux_tests ckmux_ipc_race_probe ckmux_windows_process_child ckmux_windows_live_child ckmux_windows_exit_child)
     target_compile_definitions(ckmux_tests PRIVATE
-        CKMUX_TEST_CHILD_PATH="$<TARGET_FILE:ckmux_windows_live_child>")
+        CKMUX_TEST_CHILD_PATH="$<TARGET_FILE:ckmux_windows_live_child>"
+        CKMUX_TEST_EXIT_CHILD_PATH="$<TARGET_FILE:ckmux_windows_exit_child>")
 endif()
 if(DEFINED ENV{TMPDIR} AND IS_ABSOLUTE "$ENV{TMPDIR}")
     set(CKMUX_TEST_TEMP_DEFAULT "$ENV{TMPDIR}")

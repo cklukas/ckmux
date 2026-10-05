@@ -163,7 +163,10 @@ waits for.
   `Terminal ▸ Printer Settings…` ([06](06-ui-design.md)); `Global` /
   `Save as default` persists them. `login-shell`, `sixel-max-megapixels`,
   `clock`, `kill-grace-seconds`, `resize-windows-to-fit` and `theme` are
-  edited in `Settings ▸ General…`. The write is key-targeted — matching `key = value`
+  edited in `Settings ▸ General…`. The `login-shell` control is POSIX-only:
+  Windows instead explains native shell profile behavior, and saving other
+  settings leaves an existing true or false POSIX preference untouched.
+  The write is key-targeted — matching `key = value`
   lines are rewritten in place (*every* matching line, since the file is read
   back last-line-wins and a Save that lands on the losing line is a Save the
   reader cannot see), a missing key joins its section, and a missing section

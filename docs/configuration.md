@@ -2,10 +2,13 @@
 title: Configuration
 ---
 
-ckmux reads one file: `~/.config/ckmux/ckmux.conf` (precisely:
+On macOS and Linux, ckmux reads `~/.config/ckmux/ckmux.conf` (precisely:
 `$XDG_CONFIG_HOME/ckmux/ckmux.conf`, or the file `CKMUX_CONFIG` names). A
 missing file is the ordinary case — every setting has a default, and this
-page states each one.
+page states each one. Windows uses `%LOCALAPPDATA%\ckmux\ckmux.conf`, falling
+back to the current user's LocalAppData known folder when that environment
+variable is absent or not absolute. `CKMUX_CONFIG` overrides the file on
+every platform.
 
 `ckmux check-config` parses the file and reports every problem with its file
 and line, starting nothing; it exits non-zero when the file has problems. A
@@ -21,7 +24,7 @@ Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 |---|---|---|
 | `prefix` | `C-b` | The one key ckmux takes from the programs inside it. |
 | `shell` | `$SHELL` | What New Terminal runs; empty means your shell, resolved at launch. |
-| `login-shell` | `true` | Start it as a login shell, like every other terminal window on the machine. |
+| `login-shell` | `true` | POSIX only: start an interactive login shell. Windows uses native shell profile behavior and preserves this key without offering it in Settings. |
 | `scrollback` | `10000` | Lines of history per terminal; `0` means remember nothing. |
 | `max-terminals` | `64` | The most terminals one session may hold. |
 | `theme` | `dark` | `dark`, `light`, or `mono`. |

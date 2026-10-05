@@ -5,6 +5,35 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Client UI native-equivalence candidate — 2026-10-05
+
+The full client-smoke suite now registers on Windows with actual build-owned
+ConPTY children, positive identity/live-state checks and response-based title
+readiness. Unique configured-root scratch and native environment restoration
+replace six fixed POSIX environment fixtures; an actual unsuccessful child
+replaces /bin/false. Existing common Application event/render assertions stay.
+Unix runs67 cases; Windows substitutes a native-profile Settings policy case
+for the POSIX-only login-shell case and adds an existing-false-preference
+preservation case, for68. The native CTest inventory is48, explicitly required
+by all three blocking CI lanes.
+
+Compiled original production UI runs all67 initial native cases and fails
+only four native-policy assertions: it advertises POSIX startup files/login
+policy. The application correction removes that Windows-only misleading
+control, explains native profiles and leaves an existing true/false POSIX
+key alone. It does not change ckVision or shell launch semantics. After the
+correction and the extra partner case, native MSVC ARM64 strict Release
+focused CTest passes14.81s, exit0; Mac Release runs67 cases, all pass. The
+first added false-partner fixture omitted its promised existing file, and
+one old modal assertion expected POSIX text; both fixture errors were fixed
+without weakening modal/focus/layout or persistence behavior assertions.
+An invalid hex literal first stopped native compilation before tests; its
+actual corrected rebuild precedes the passing repeat.
+
+These are isolated candidate/headless gates, not a landing, complete native
+equivalence, a live WindowsTerminal verdict or a package release. Clean
+committed-source Mac/GCC/native/sanitizer gates and hosted CI remain required.
+
 ### Hosted generator correction — 2026-10-05
 
 Exact public37a9d57 CI37249181000 stopped all three native lanes at configure:

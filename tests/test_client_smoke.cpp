@@ -3,16 +3,20 @@
 //
 // End-to-end coverage for the ckmux client, driven headlessly exactly the way
 // main.cpp drives it: real Application, real render pipeline, real menu and
-// mouse paths. The child program is /bin/cat rather than a shell — it stays
+// mouse paths. The child program is a native echo helper rather than a shell — it stays
 // alive, says nothing, and therefore keeps these assertions about the UI
 // rather than about a prompt.
-#if !defined(_WIN32)
-
 #include <array>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
+
+#include "live_terminal_child.hpp"
+#include "scoped_environment.hpp"
+#include "scratch_directory.hpp"
 
 #include "client/client_app.hpp"
 #include "cvision/core/text.hpp"
@@ -26,6 +30,7 @@
 #include "cvision/testing/cktest.hpp"
 #include "cvision/ui/standard_roles.hpp"
 #include "cvision/widgets/common_components.hpp"
+#include "cvision/widgets/input_line.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/terminal_view.hpp"
 #include "cvision/widgets/window_switcher_bar.hpp"
@@ -51,7 +56,7 @@ ClientOptions test_options() {
     // A program that simply stays alive, so a window has a live child
     // without the run depending on whose shell is installed. The login
     // form only renames argv[0], which cat does not mind.
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     options.local_now = [] { return ckm::client::LocalMoment{kToday, kNow}; };
     return options;
 }
@@ -61,6 +66,11 @@ struct Fixture {
     ManualClock clock;
     Application app{terminal, clock};
     ClientApp client{app, test_options()};
+
+    Fixture() {
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
+    }
 };
 
 // The same fixture with the settings a test wants to change first.
@@ -70,7 +80,18 @@ struct ConfiguredFixture {
     Application app{terminal, clock};
     ClientApp client;
 
-    explicit ConfiguredFixture(ClientOptions options) : client{app, std::move(options)} {}
+    explicit ConfiguredFixture(ClientOptions options) : client{app, options} {
+        for (const auto* window : client.desktop().windows()) {
+            const auto* view = dynamic_cast<const ckv::widgets::TerminalView*>(window->content());
+            if (view == nullptr) continue;
+            CK_CHECK(view->session().process_id() > 0);
+            CK_CHECK(view->session().state() != ckv::core::TerminalSubsessionState::Failed);
+        }
+        if (options.settings.shell == ckmtest::live_terminal_child()) {
+            ckmtest::check_live_terminal_children(client.desktop());
+            ckmtest::settle_live_terminal_children(client.desktop());
+        }
+    }
 };
 
 // A command's id, looked up the way everything durable does: by key. Ids are
@@ -1030,8 +1051,6 @@ CK_TEST(the_client_renders_under_every_built_in_theme_and_uses_the_configured_on
     CK_CHECK(first_frame_bytes(ckm::Theme::Dark) != first_frame_bytes(ckm::Theme::Light));
 }
 
-#endif
-
 CK_TEST(a_window_caption_follows_the_title_its_program_asks_for) {
     // Programs announce what they are working on with OSC 0 / OSC 2. A
     // multiplexer that ignores it leaves every window called "Terminal N",
@@ -1084,6 +1103,8 @@ CK_TEST(each_terminal_keeps_its_own_caption_and_its_own_fallback) {
     f.app.execute_command(id_of(f.app, ckm::client::commands::kNewTerminal));
     f.app.step(0);
     CK_CHECK(terminal_window_count(f.client) == 2U);
+    ckmtest::check_live_terminal_children(f.client.desktop(), 2);
+    ckmtest::settle_live_terminal_children(f.client.desktop());
 
     ckv::widgets::Window* const first = f.client.desktop().windows()[0];
     ckv::widgets::Window* const second = f.client.desktop().windows()[1];
@@ -1102,14 +1123,37 @@ CK_TEST(each_terminal_keeps_its_own_caption_and_its_own_fallback) {
     CK_CHECK(second->title() == "Terminal 2");  // its own name, not the first's
 }
 
+namespace {
+template <typename TestFixture>
+void focus_picture_limit(TestFixture& fixture) {
+    for (int pass = 0; pass < 20; ++pass) {
+        const auto* field = dynamic_cast<const ckv::widgets::InputLine*>(fixture.app.focused());
+        if (field != nullptr && field->text() == "64") return;
+        fixture.terminal.inject_bytes("\t", 0);
+        fixture.app.step(0);
+    }
+    CK_CHECK(false);
+}
+
+template <typename TestFixture>
+std::string rendered_text(const TestFixture& fixture) {
+    std::string text;
+    const auto frame = fixture.app.current_frame();
+    for (int y = 0; y < frame.size().height; ++y)
+        for (int x = 0; x < frame.size().width; ++x)
+            text += frame.at(ckv::Point{x, y}).grapheme();
+    return text;
+}
+}
+
 CK_TEST(the_settings_dialog_shows_the_picture_limit_as_a_field_and_stores_a_new_one) {
     // Reported from a running ckmux: a program's logo did not appear, and the
     // footer said the terminal was past a limit nobody could see or change.
     // The number is now on screen, editable, and kept.
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-sixel" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-sixel");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
@@ -1126,9 +1170,8 @@ CK_TEST(the_settings_dialog_shows_the_picture_limit_as_a_field_and_stores_a_new_
     CK_CHECK(screen.find("64") != std::string::npos);
     CK_CHECK(screen.find("cut off at its edge") != std::string::npos);
 
-    // Tab into the field, replace the number, Save.
-    f.terminal.inject_bytes("\t", 0);
-    f.app.step(0);
+    // Walk actual Tab events to the named-value field, replace it, Save.
+    focus_picture_limit(f);
     f.terminal.inject_bytes("\x7f\x7f" "128", 0);
     f.app.step(0);
     f.terminal.inject_bytes("\r", 0);
@@ -1140,24 +1183,21 @@ CK_TEST(the_settings_dialog_shows_the_picture_limit_as_a_field_and_stores_a_new_
     CK_CHECK(stored.settings.login_shell);  // the other setting is left alone
     CK_CHECK(stored.warnings.empty());
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
 
 CK_TEST(the_settings_dialog_refuses_a_picture_limit_it_cannot_read) {
     // The veto is the whole point of validating at accept time: the dialog
     // stays up with the bad field focused, and nothing is written.
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-sixel-bad" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-sixel-bad");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
     CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
     f.app.step(0);
-    f.terminal.inject_bytes("\t", 0);
-    f.app.step(0);
+    focus_picture_limit(f);
     f.terminal.inject_bytes("\x7f\x7flots", 0);
     f.app.step(0);
     f.terminal.inject_bytes("\r", 0);
@@ -1171,18 +1211,65 @@ CK_TEST(the_settings_dialog_refuses_a_picture_limit_it_cannot_read) {
     CK_CHECK(screen.find("megapixels") != std::string::npos);  // still up
     CK_CHECK(!std::filesystem::exists(config));                // and nothing saved
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
 
+#if defined(_WIN32)
+CK_TEST(the_settings_dialog_says_native_profiles_without_offering_posix_login_policy) {
+    const ckmtest::ScratchDirectory scratch("native-settings-profiles");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const auto config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
+    Fixture f;
+    f.app.step(0);
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+    const auto text = rendered_text(f);
+    CK_CHECK(text.find("native profile") != std::string::npos);
+    CK_CHECK(text.find(".zprofile") == std::string::npos);
+    CK_CHECK(text.find(".profile") == std::string::npos);
+    CK_CHECK(text.find("Start terminals the way") == std::string::npos);
+    focus_picture_limit(f);
+    f.terminal.inject_bytes("\x7f\x7f" "128\r", 0);
+    f.app.step(0);
+    f.app.step(0);
+    const auto stored = ckm::load_settings(config);
+    CK_CHECK(stored.settings.sixel_max_megapixels == 128);
+    CK_CHECK(stored.settings.login_shell);
+    CK_CHECK(stored.warnings.empty());
+}
+
+CK_TEST(native_settings_save_preserves_an_existing_false_posix_login_preference) {
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-native-preserve");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
+    auto options = test_options();
+    options.settings.login_shell = false;
+    CK_CHECK(ckm::save_setting(config, "general", "login-shell", "false"));
+    CK_CHECK(!ckm::load_settings(config).settings.login_shell);
+    ConfiguredFixture f{options};
+    f.app.step(0);
+    CK_CHECK(f.app.commands().execute(id_of(f.app, ckm::client::commands::kSettings)));
+    f.app.step(0);
+    CK_CHECK(rendered_text(f).find("native profile") != std::string::npos);
+    focus_picture_limit(f);
+    f.terminal.inject_bytes("\x7f\x7f" "128\r", 0);
+    f.app.step(0);
+    f.app.step(0);
+    const ckm::LoadedSettings stored = ckm::load_settings(config);
+    CK_CHECK(!stored.settings.login_shell);
+    CK_CHECK(stored.settings.sixel_max_megapixels == 128);
+    CK_CHECK(stored.warnings.empty());
+}
+#else
 CK_TEST(the_settings_dialog_offers_the_login_shell_choice_and_stores_what_it_is_told) {
     // The whole path a reader takes: open Settings, untick the box, Save —
     // and find that terminals opened afterwards start the other way, and
     // that the answer outlived the dialog.
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-dialog" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-dialog");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
@@ -1210,9 +1297,8 @@ CK_TEST(the_settings_dialog_offers_the_login_shell_choice_and_stores_what_it_is_
     CK_CHECK(!stored.settings.login_shell);
     CK_CHECK(stored.warnings.empty());
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
+#endif
 
 CK_TEST(the_settings_dialog_still_fits_an_eighty_by_twentyfour_terminal) {
     // Two more settings are two more rows, and 80x24 is a real size for a
@@ -1226,12 +1312,15 @@ CK_TEST(the_settings_dialog_still_fits_an_eighty_by_twentyfour_terminal) {
     f.app.step(0);
     CK_CHECK(!f.app.terminal_too_small());
 
-    std::string screen;
-    const ckv::FrameView frame = f.app.current_frame();
-    for (int y = 0; y < frame.size().height; ++y)
-        for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+    const std::string screen = rendered_text(f);
     // Top of the form, both new fields, and the actions: nothing pushed off.
+#if defined(_WIN32)
+    CK_CHECK(screen.find("native profile") != std::string::npos);
+    CK_CHECK(screen.find("Start terminals") == std::string::npos);
+    CK_CHECK(screen.find(".zprofile") == std::string::npos);
+#else
     CK_CHECK(screen.find("Start terminals") != std::string::npos);
+#endif
     CK_CHECK(screen.find("megapixels") != std::string::npos);
     CK_CHECK(screen.find("Clock in the menu bar") != std::string::npos);
     CK_CHECK(screen.find("Colour theme") != std::string::npos);
@@ -1243,10 +1332,10 @@ CK_TEST(cancel_closes_the_settings_dialog_and_stores_nothing) {
     // Reported from a running ckmux: Cancel did nothing at all and the dialog
     // could only be left with Esc. A button that is on screen and inert is
     // worse than one that is not there.
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-cancel" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-cancel");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
@@ -1254,8 +1343,8 @@ CK_TEST(cancel_closes_the_settings_dialog_and_stores_nothing) {
     f.app.step(0);
     CK_CHECK(f.app.is_modal());
 
-    // Untick the login-shell box on the way, so a Cancel that stored anything
-    // would leave evidence.
+    // Change the first editable field, so a Cancel that stored anything would
+    // leave evidence: the POSIX login checkbox or native picture-limit text.
     f.terminal.inject_bytes(" ", 0);
     f.app.step(0);
 
@@ -1280,18 +1369,16 @@ CK_TEST(cancel_closes_the_settings_dialog_and_stores_nothing) {
         for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
     CK_CHECK(screen.find(".zprofile") == std::string::npos);
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
 
 CK_TEST(the_settings_dialog_chooses_the_clock_and_the_theme_and_keeps_both) {
     // Both are chrome the reader is looking at while they choose, so this pins
     // the two halves that matter: the bar changes as the dialog closes, and the
     // answer is in the file for tomorrow.
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-chrome" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-chrome");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
@@ -1332,15 +1419,13 @@ CK_TEST(the_settings_dialog_chooses_the_clock_and_the_theme_and_keeps_both) {
     CK_CHECK(stored.settings.theme == ckm::Theme::Light);
     CK_CHECK(stored.warnings.empty());
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
 
 CK_TEST(turning_the_clock_off_in_the_dialog_takes_it_off_the_bar) {
-    const std::filesystem::path config =
-        std::filesystem::temp_directory_path() / "ckmux-settings-clock-off" / "ckmux.conf";
-    std::filesystem::remove_all(config.parent_path());
-    (void)::setenv("CKMUX_CONFIG", config.c_str(), 1);
+    const ckmtest::ScratchDirectory scratch("ckmux-settings-clock-off");
+    ckmtest::ScopedEnvironment config_environment("CKMUX_CONFIG");
+    const std::filesystem::path config = scratch.path() / "ckmux.conf";
+    config_environment.set_path(config);
 
     Fixture f;
     f.app.step(0);
@@ -1358,8 +1443,6 @@ CK_TEST(turning_the_clock_off_in_the_dialog_takes_it_off_the_bar) {
     CK_CHECK(menu_bar(f.client)->trailing_view() == nullptr);
     CK_CHECK(ckm::load_settings(config).settings.clock == ckm::ClockMode::Off);
 
-    (void)::unsetenv("CKMUX_CONFIG");
-    std::filesystem::remove_all(config.parent_path());
 }
 
 CK_TEST(leaving_a_session_takes_its_windows_down_and_leaves_the_programs_alone) {
@@ -1771,7 +1854,12 @@ CK_TEST(an_arrangement_laid_down_under_a_dialog_leaves_the_dialog_in_front) {
     const ckv::FrameView frame = f.app.current_frame();
     for (int y = 0; y < frame.size().height; ++y)
         for (int x = 0; x < frame.size().width; ++x) screen += frame.at(ckv::Point{x, y}).grapheme();
+#if defined(_WIN32)
+    CK_CHECK(screen.find("native profile") != std::string::npos);
+    CK_CHECK(screen.find("Start terminals") == std::string::npos);
+#else
     CK_CHECK(screen.find("Start terminals") != std::string::npos);
+#endif
     CK_CHECK(screen.find("Save") != std::string::npos);
 }
 
@@ -1858,7 +1946,11 @@ namespace {
 // not tell a badge that reports the status from one that prints a zero.
 ClientOptions exiting_options() {
     ClientOptions options = test_options();
+#if defined(_WIN32)
+    options.settings.shell = CKMUX_TEST_EXIT_CHILD_PATH;
+#else
     options.settings.shell = "/usr/bin/false";
+#endif
     return options;
 }
 
@@ -1875,9 +1967,10 @@ bool pump_until_exited(ConfiguredFixture& f, int milliseconds = 4000) {
             if (view == nullptr) continue;
             using State = ckv::core::TerminalSubsessionState;
             const State state = view->session().state();
-            if (state == State::Exited || state == State::Failed) return true;
+            if (state == State::Failed) return false;
+            if (state == State::Exited) return true;
         }
-        ::usleep(2000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return false;
 }
@@ -2011,7 +2104,10 @@ struct MarkedFixture {
                          };
                      options.ring_host_bell = [this] { ++rings; };
                      return options;
-                 }()} {}
+                 }()} {
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
+    }
 
     void poll() {
         clock.advance(200'000'000);

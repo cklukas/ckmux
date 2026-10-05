@@ -3763,7 +3763,13 @@ void ClientApp::show_settings() {
     // files that turns on and when the change shows up.
     w::DialogDescriptor descriptor;
     descriptor.title = "Settings";
-    const std::size_t login_field = descriptor.fields.size();
+    std::optional<std::size_t> login_field;
+#if defined(_WIN32)
+    descriptor.fields.push_back(
+        w::FieldDescriptor{.label = "  Windows shells use their native profile behavior.",
+                           .kind = w::FieldKind::Note});
+#else
+    login_field = descriptor.fields.size();
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "&Start terminals the way your desktop terminal does",
                            .kind = w::FieldKind::Check,
@@ -3771,6 +3777,7 @@ void ClientApp::show_settings() {
     descriptor.fields.push_back(
         w::FieldDescriptor{.label = "  Runs ~/.zprofile and ~/.profile, so a terminal here has the Dock's PATH.",
                            .kind = w::FieldKind::Note});
+#endif
 
     // The picture limit and the grace, then ONE paragraph answering both — and
     // the shape is a vertical budget rather than a preference. This dialog has
@@ -3865,7 +3872,9 @@ void ClientApp::show_settings() {
             // One report between them: a home directory that cannot be written
             // to fails every save, and being told so four times is being told
             // so once with three extra dialogs in the way.
-            bool stored = apply_login_shell(result.checked[login_field]);
+            // Windows has no POSIX login-shell control. Preserve that stored
+            // preference when a config is shared with a Unix installation.
+            bool stored = !login_field || apply_login_shell(result.checked[*login_field]);
             // The field validator has already refused anything unreadable, so a
             // value that arrives here parses; the check is what makes that a
             // fact rather than an assumption.
