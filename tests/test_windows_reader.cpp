@@ -177,6 +177,10 @@ void print_and_save(std::string_view format) {
     CK_CHECK(saved->extension() == (format == "txt" ? ".txt" : ".ansi"));
     std::ifstream file(*saved, std::ios::binary);
     const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    std::fprintf(stderr, "Native print %.*s saved %zu bytes:",
+        static_cast<int>(format.size()), format.data(), bytes.size());
+    for (const unsigned char byte : bytes) std::fprintf(stderr, " %02x", static_cast<unsigned int>(byte));
+    std::fprintf(stderr, "\n");
     CK_CHECK(bytes == (format == "txt" ? "UI-SPOOLBOLD\n" : "UI-SPOOL\x1b[1mBOLD\x1b[0m\r\n"));
     // This proves the actual child/wire/UI/save positive, not absence of a
     // physical printer/spooler. That needs a separate native observer.
