@@ -7,12 +7,18 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
 include(GNUInstallDirs)
 
+# Select the distributable CRT before creating either application's or fetched
+# library's targets. Installed SDK builds must use the same runtime selection.
+if(MSVC AND NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # The ckVision release this ckmux is developed and released against. The
 # co-development checkout below tracks HEAD by design; every other way of
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.16)
+set(CKMUX_CKVISION_VERSION 0.1.17)
 
 # Windows selects the actual native IPC/process/wait implementations below;
 # it is not a Unix compatibility environment. Acceptance and release status
@@ -257,6 +263,8 @@ add_executable(ckmux src/main.cpp)
 target_link_libraries(ckmux PRIVATE ckmux_client ckmux_server)
 ckmux_strict(ckmux)
 install(TARGETS ckmux RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+include(cmake/WindowsRuntime.cmake)
+ckmux_deploy_windows_runtime(ckmux "${CMAKE_INSTALL_BINDIR}")
 
 set(CKMUX_GENERATED_DOC_DIR "${CMAKE_BINARY_DIR}/docs")
 set(CKMUX_GENERATED_KEYS "${CKMUX_GENERATED_DOC_DIR}/keys.md")
@@ -297,6 +305,7 @@ install(FILES
     docs/getting-started.md
     docs/cli.md
     docs/configuration.md
+    docs/windows.md
     "${CKMUX_GENERATED_KEYS}"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
@@ -323,6 +332,12 @@ if(CKMUX_BUILD_TESTING)
             -DCKMUX_PIN_SCRATCH=${CMAKE_BINARY_DIR}/test-artifacts/ckvision-release-pin
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ckvision_release_pin.cmake)
     set_tests_properties(ckvision_release_pin PROPERTIES LABELS "script;dependency" TIMEOUT 30)
+    add_test(NAME windows_distribution_policy
+        COMMAND ${CMAKE_COMMAND}
+            -DCKMUX_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DCKMUX_PACKAGE_SCRATCH=${CMAKE_BINARY_DIR}/test-artifacts/windows-packaging
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_windows_packaging.cmake)
+    set_tests_properties(windows_distribution_policy PROPERTIES LABELS "script;package" TIMEOUT 30)
 
     # The architecture rule fails like a test because it is one. REQUIRED, so
     # the gate can never vanish silently on a host without an interpreter —
@@ -412,5 +427,8 @@ if(PROJECT_IS_TOP_LEVEL)
     set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
     set(CPACK_RPM_PACKAGE_AUTOREQ ON)
     set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+    if(WIN32)
+        include(cmake/WindowsPackaging.cmake)
+    endif()
     include(CPack)
 endif()

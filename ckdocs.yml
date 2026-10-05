@@ -25,6 +25,8 @@ nav:
     page: docs/index.md
   - title: Getting started
     page: docs/getting-started.md
+  - title: Native Windows
+    page: docs/windows.md
   - title: Reference
     pages:
       - docs/cli.md
