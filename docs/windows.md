@@ -10,11 +10,12 @@ The native Windows port is in progress. The published v0.1.7 release does not
 contain Windows packages. Passing automated native tests is not certification
 of the remaining live Windows Terminal walkthrough or complete installed-app acceptance.
 
-ARM64 prototype packages have passed non-administrator per-user installation,
-installed file verification, version reporting, repair and uninstall, including
-PATH and user-data preservation. These are not published release packages.
-Independent installed-server persistence, x64 package checks and the live
-Windows Terminal walkthrough remain required before release.
+Current x64 and ARM64 candidates have passed full fresh-standard-user ZIP and
+per-user MSI checks: installed file verification, real detached-server and shell
+persistence after starter exit, explicit complete shutdown, repair and uninstall,
+including PATH and user-data preservation. These are not published release
+packages. Packaged graphics and the live Windows Terminal walkthrough remain
+required before release.
 
 The intended release formats are a portable ZIP and a per-user MSI for x64 and
 ARM64. Select the package matching the operating system; use the ARM64 package
@@ -72,3 +73,20 @@ cpack --config build/CPackConfig.cmake -C Release -G WIX
 For x64 use `-A x64 -DCKMUX_WINDOWS_ARCHITECTURE=x64`. A source-only build may
 omit `CKMUX_CONPTY_ARCHIVE` to use the honest no-Sixel inbox fallback. Such a
 build is not the intended graphics-enabled Windows release package.
+
+## Release verification
+
+The release workflow has separate x64 and ARM64 jobs. Each uses a released
+ckVision pin, the qualified runtime, the static CRT and the complete native
+Release inventory, then creates matching ZIP/MSI files and SHA256 sidecars.
+Publication depends on both architectures as well as Unix/Homebrew packaging.
+Manual workflow dispatch exercises those same gates without publishing a release.
+
+`tools/windows/test-package.ps1` runs the full ZIP and MSI installation/lifecycle
+checks in a disposable standard-user profile. Its administrative bootstrap is
+test infrastructure only: the application is never elevated, the worker proves
+it cannot write protected machine settings, and production containment checks
+remain enabled. It requires exact absolute package/build/lifecycle inputs and
+an explicitly selected temporary root. Logs and records are preserved before
+the fixture removes its own account, profile and disposable package copies.
+This automated gate does not replace visible interaction in Windows Terminal.

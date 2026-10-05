@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Pushing a tag v<version> builds ckmux in Release, runs the full test suite
-# in Release, packages the result (TGZ everywhere, plus DEB and RPM on Linux),
+# in Release, packages the result (TGZ on Unix, DEB/RPM on Linux, ZIP/MSI on Windows),
 # proves the generated Homebrew formula by installing it on macOS, and publishes
 # a GitHub release with every package attached. A manual dispatch exercises the
 # same jobs and retains their workflow artifacts without creating a release.
@@ -105,6 +105,164 @@ jobs:
           path: packages/ckmux*
           if-no-files-found: error
 
+  windows-package:
+    name: package-windows-${{ matrix.architecture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025-vs2026
+            architecture: x64
+            cmake_architecture: x86_64
+          - os: windows-11-vs2026-arm
+            architecture: arm64
+            cmake_architecture: arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ckmux
+
+      - name: Select explicit Windows release scratch
+        run: |
+          $scope=Join-Path $env:RUNNER_TEMP ('ckmux-release-'+[Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $scope,"$scope/t" | Out-Null
+          "CKMUX_RELEASE_SCRATCH=$scope" >> $env:GITHUB_ENV
+          foreach($variable in @('TEMP','TMP','TMPDIR')) { "$variable=$scope/t" >> $env:GITHUB_ENV }
+          "DOTNET_CLI_HOME=$scope/dotnet-home" >> $env:GITHUB_ENV
+          "NUGET_PACKAGES=$scope/nuget" >> $env:GITHUB_ENV
+          "NUGET_HTTP_CACHE_PATH=$scope/nuget-http" >> $env:GITHUB_ENV
+          "WIX_EXTENSIONS=$scope/wix-extensions" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.425'
+
+      - name: Install versioned CMake and WiX packaging tools
+        run: |
+          $scope=$env:CKMUX_RELEASE_SCRATCH
+          $filename='cmake-4.4.4-windows-${{ matrix.cmake_architecture }}.zip'
+          $url='https://github.com/Kitware/CMake/releases/download/v4.4.4'
+          Invoke-WebRequest "$url/$filename" -OutFile "$scope/cmake.zip"
+          Invoke-WebRequest "$url/cmake-4.4.4-SHA-256.txt" -OutFile "$scope/cmake-digests.txt"
+          $digest=@(Get-Content "$scope/cmake-digests.txt" | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?'+[regex]::Escape($filename)+'$') })
+          if($digest.Count -ne 1 -or (Get-FileHash "$scope/cmake.zip").Hash -ine $digest[0].Substring(0,64)) { throw 'Publisher CMake digest mismatch' }
+          Expand-Archive -LiteralPath "$scope/cmake.zip" -DestinationPath "$scope/cmake"
+          "$scope/cmake/cmake-4.4.4-windows-${{ matrix.cmake_architecture }}/bin" >> $env:GITHUB_PATH
+          dotnet tool install wix --version 5.0.2 --tool-path "$scope/wix"
+          if($LASTEXITCODE -ne 0) { throw 'Versioned WiX installation failed' }
+          & "$scope/wix/wix.exe" extension add --global WixToolset.UI.wixext/5.0.2
+          if($LASTEXITCODE -ne 0) { throw 'Versioned WiX UI extension installation failed' }
+          "$scope/wix" >> $env:GITHUB_PATH
+          "WIX=$scope/wix" >> $env:GITHUB_ENV
+
+      - name: Obtain the qualified official ConPTY runtime
+        run: |
+          $archive=Join-Path $env:CKMUX_RELEASE_SCRATCH 'conpty-1.24.261001001.nupkg'
+          Invoke-WebRequest 'https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/1.24.261001001/microsoft.windows.console.conpty.1.24.261001001.nupkg' -OutFile $archive
+          if((Get-FileHash $archive).Hash -ine '4d6aaddc1d2385c9f5897df28f33879f699f8f2783315d5204cf3d8c3616ac5f') { throw 'Qualified runtime digest mismatch' }
+          "CKMUX_RELEASE_CONPTY=$archive" >> $env:GITHUB_ENV
+
+      - name: Verify version and configure strict released-dependency build
+        run: |
+          $version=[regex]::Match((Get-Content ckmux/CMakeLists.txt -Raw),'project\(ckmux VERSION ([0-9.]+) ').Groups[1].Value
+          if(!$version) { throw 'Project version is absent' }
+          if('${{ github.ref_type }}' -eq 'tag' -and "v$version" -cne '${{ github.ref_name }}') { throw 'Tag and project version differ' }
+          "CKMUX_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          cmake -S ckmux -B build -G 'Visual Studio 18 2026' -A ${{ matrix.architecture }} `
+            -DCKMUX_PREFER_CKVISION_SOURCE=OFF '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded' `
+            -DCMAKE_TRY_COMPILE_CONFIGURATION=Release -DCKMUX_WINDOWS_ARCHITECTURE=${{ matrix.architecture }} `
+            "-DCKMUX_CONPTY_ARCHIVE=$env:CKMUX_RELEASE_CONPTY" "-DCKMUX_TEST_TEMP_ROOT=$env:CKMUX_RELEASE_SCRATCH/t"
+          if($LASTEXITCODE -ne 0) { throw 'Windows release configure failed' }
+
+      - name: Fingerprint and build current Windows release
+        run: |
+          $library=Join-Path $env:GITHUB_WORKSPACE 'build/_deps/ckvision-src'
+          $pin=[regex]::Match((Get-Content ckmux/CMakeLists.txt -Raw),'set\(CKMUX_CKVISION_VERSION ([0-9.]+)\)').Groups[1].Value
+          $tag=& git -C $library rev-parse "v$pin`^{commit}"
+          if($LASTEXITCODE -ne 0) { throw 'Cannot peel released dependency tag' }
+          $librarySha=& git -C $library rev-parse HEAD
+          if($LASTEXITCODE -ne 0 -or $librarySha -cne $tag) { throw 'Dependency differs from the released pin' }
+          $inputs=@(foreach($source in @('ckmux','build/_deps/ckvision-src')) {
+            $root=Join-Path $env:GITHUB_WORKSPACE $source
+            $files=& git -C $root ls-files
+            if($LASTEXITCODE -ne 0) { throw 'Cannot inventory release inputs' }
+            foreach($file in $files) { $absolute=Join-Path $root $file; @{path=$absolute; sha256=(Get-FileHash -LiteralPath $absolute).Hash} }
+          })
+          $inputs | ConvertTo-Json -Depth 3 > "$env:CKMUX_RELEASE_SCRATCH/inputs.json"
+          $record=@{source='${{ github.sha }}'; library=$librarySha; pin=$pin; architecture='${{ matrix.architecture }}'; configuration='Release static CRT';
+            start=[DateTime]::UtcNow.ToString('o'); baseline='Fresh hosted release build; no same-project comparable baseline recorded'}
+          $watch=[Diagnostics.Stopwatch]::StartNew()
+          cmake --build build --config Release --parallel 4
+          $record.exit=$LASTEXITCODE; $record.end=[DateTime]::UtcNow.ToString('o'); $record.elapsed=$watch.Elapsed.TotalSeconds
+          $record | ConvertTo-Json > "$env:CKMUX_RELEASE_SCRATCH/build-record.json"
+          if($record.exit -ne 0) { throw 'Strict Windows release build failed' }
+          $record.output=Join-Path $env:GITHUB_WORKSPACE 'build/Release/ckmux.exe'
+          $record.output_sha256=(Get-FileHash $record.output).Hash
+          $record.output_timestamp=(Get-Item $record.output).LastWriteTimeUtc.ToString('o')
+          if((Get-Item $record.output).LastWriteTimeUtc -lt [DateTime]::Parse($record.start).AddSeconds(-2)) { throw 'Release executable predates its clean build' }
+          $record | ConvertTo-Json > "$env:CKMUX_RELEASE_SCRATCH/build-record.json"
+
+      - name: Require and run the complete native inventory
+        run: |
+          ctest --test-dir build -C Release --show-only=json-v1 > "$env:CKMUX_RELEASE_SCRATCH/inventory.json"
+          if($LASTEXITCODE -ne 0) { throw 'Native release inventory failed' }
+          $inventory=Get-Content "$env:CKMUX_RELEASE_SCRATCH/inventory.json" -Raw | ConvertFrom-Json
+          if($inventory.tests.Count -ne 52) { throw 'Unexpected native release inventory' }
+          foreach($required in @('windows_distribution_policy','windows_server_ancestry','windows_server_lifecycle','suite_test_reader_modes','suite_test_session_desktop','suite_test_windows_reader')) {
+            if($required -notin $inventory.tests.name) { throw "Native release gate absent: $required" }
+          }
+          ./ckmux/tools/windows/test-native.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build" `
+            -TemporaryRoot "$env:CKMUX_RELEASE_SCRATCH/t" -Configuration Release
+
+      - name: Generate matching ZIP and per-user MSI with checksums
+        run: |
+          foreach($generator in @('ZIP','WIX')) {
+            cpack --config build/CPackConfig.cmake -C Release -G $generator -B "$env:GITHUB_WORKSPACE/packages"
+            if($LASTEXITCODE -ne 0) { throw "Windows packaging failed: $generator" }
+          }
+          $files=@(Get-ChildItem packages -File)
+          if($files.Count -ne 4) { throw 'Expected two packages and two checksum sidecars' }
+          foreach($extension in @('zip','msi')) {
+            $filename="ckmux-$env:CKMUX_RELEASE_VERSION-Windows-${{ matrix.architecture }}.$extension"
+            $sum=Get-Content "packages/$filename.sha256" -Raw
+            if($sum -notmatch '^([0-9a-fA-F]{64})  ([^\r\n]+)\s*$' -or $Matches[2] -cne $filename -or
+                $Matches[1] -ine (Get-FileHash "packages/$filename").Hash) { throw 'Windows package checksum/name mismatch' }
+          }
+
+      - name: Full installation and lifecycle in a fresh standard-user profile
+        run: |
+          $prefix="$env:GITHUB_WORKSPACE/packages/ckmux-$env:CKMUX_RELEASE_VERSION-Windows-${{ matrix.architecture }}"
+          ./ckmux/tools/windows/test-package.ps1 -Zip "$prefix.zip" -Msi "$prefix.msi" `
+            -BuildExecutable "$env:GITHUB_WORKSPACE/build/Release/ckmux.exe" -Architecture ${{ matrix.architecture }} `
+            -Version "$env:CKMUX_RELEASE_VERSION" -TemporaryRoot "$env:CKMUX_RELEASE_SCRATCH/t" `
+            -LifecycleScript "$env:GITHUB_WORKSPACE/ckmux/tests/windows_server_lifecycle.ps1"
+          foreach($inputFile in (Get-Content "$env:CKMUX_RELEASE_SCRATCH/inputs.json" -Raw | ConvertFrom-Json)) {
+            if((Get-FileHash -LiteralPath $inputFile.path).Hash -cne $inputFile.sha256) { throw 'Release input changed during acceptance' }
+          }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-windows-${{ matrix.architecture }}
+          path: packages/ckmux*
+          if-no-files-found: error
+
+      - name: Preserve Windows release gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release-${{ matrix.architecture }}-evidence
+          path: |
+            ${{ env.CKMUX_RELEASE_SCRATCH }}/*.json
+            ${{ env.CKMUX_RELEASE_SCRATCH }}/t/native-test-*/*.log
+            ${{ env.CKMUX_RELEASE_SCRATCH }}/t/native-test-*/record.json
+            ${{ env.CKMUX_RELEASE_SCRATCH }}/t/package-host-*/**
+            build/Testing/Temporary/*.log
+            build/CMakeCache.txt
+
   homebrew:
     name: package-homebrew
     runs-on: macos-latest
@@ -155,13 +313,14 @@ jobs:
 
   publish:
     if: github.ref_type == 'tag'
-    needs: [package, homebrew]
+    needs: [package, windows-package, homebrew]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
+          pattern: packages-*
           path: packages
           merge-multiple: true
 
