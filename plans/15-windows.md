@@ -29,6 +29,14 @@ reply waiter; restoring it passes on x64. Full final-byte integration gates
 are pending; these focused results neither establish the cause of the
 original intermittent picker failure nor complete Windows acceptance.
 
+The first full Mac Release sweep is64/65: the sole failure is an older Unix
+lifecycle assertion requiring eight unsendable bytes to remain queued after a
+permanent write failure. That expectation is updated to require zero queued
+bytes, no write interest, repeated write refusal and an independently open
+read side; its focused Mac repeat passes. This does not weaken high-water
+backpressure coverage or the byte-exact final-reply regressions. Full gates
+must include this final test correction as well.
+
 ### Released SDK18 adoption and current package candidate
 
 ckVision0.1.18/publicfbc83742 is released at2026-10-05T14:20:15Z after all
