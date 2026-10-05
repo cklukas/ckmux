@@ -1259,8 +1259,15 @@ owned child are positive controls. Observation errors fail the assertions;
 printing may create neither a new observed descendant nor an observed parallel,
 USB-printer or named spooler endpoint. This is sampled coverage, not a continuous
 kernel trace or an exhaustive claim about every Windows printer RPC mechanism.
-Native compilation, positive-control and actual print/save results for this
-increment remain pending; no production application/library behavior changed.
+At isolated candidate `1e57043`, strict MSVC ARM64 compilation and the pipe/child
+controls pass, as do both real print/save cases (15.98 s). The ANSI case records
+145 samples, 290 successful client/server handle inventories, zero new observed
+children and zero observed printer endpoints. PSS supplies File types but no
+File names on this host; duplicated File handles use the Microsoft diagnostic
+name query, with a positively confirmed zero-length pipe filename for nameless
+I/O pipes. Observation errors are not silently accepted. The final cleaned-up
+instrumentation, x64/package runs and full integration remain pending; no
+production application/library behavior changed.
 
 The isolated shell-host candidate composes launches through the same common
 policy for client-local and server-owned terminals, with fresh native host

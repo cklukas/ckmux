@@ -55,15 +55,7 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     // ObjectNameInformation is class 1 in the Microsoft diagnostic pattern.
     const auto status = query ? query(duplicate, static_cast<OBJECT_INFORMATION_CLASS>(1),
         buffer.data(), static_cast<ULONG>(buffer.size()), &length) : static_cast<NTSTATUS>(-1);
-    if (status < 0 || length > buffer.size()) {
-        std::array<wchar_t, 32768> final_name{};
-        const DWORD final_length = ::GetFinalPathNameByHandleW(duplicate, final_name.data(),
-            static_cast<DWORD>(final_name.size()), FILE_NAME_OPENED | VOLUME_NAME_NT);
-        std::fprintf(stderr, "Observer File handle=%p kind=%lu console=%d name status=%08lx "
-            "length=%lu final-length=%lu final-error=%lu\n", remote,
-            static_cast<unsigned long>(kind), console ? 1 : 0,
-            static_cast<unsigned long>(status), static_cast<unsigned long>(length),
-            static_cast<unsigned long>(final_length), static_cast<unsigned long>(::GetLastError()));
+    if (status != 0 || length > buffer.size()) {
         DWORD pipe_flags = 0;
         if (kind == FILE_TYPE_PIPE && ::GetNamedPipeInfo(duplicate, &pipe_flags, nullptr, nullptr, nullptr)) {
             using QueryFile = NTSTATUS (NTAPI*)(HANDLE, IO_STATUS_BLOCK*, void*, ULONG,
@@ -79,19 +71,18 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
                 static_cast<ULONG>(buffer.size()), static_cast<FILE_INFORMATION_CLASS>(9)) :
                 static_cast<NTSTATUS>(-1);
             const auto* file_name = reinterpret_cast<const FILE_NAME_INFO*>(buffer.data());
-            std::fprintf(stderr, "Observer pipe filename status=%08lx bytes=%lu\n",
-                static_cast<unsigned long>(file_status), static_cast<unsigned long>(file_name->FileNameLength));
-            if (file_status >= 0 && file_name->FileNameLength % sizeof(wchar_t) == 0 &&
-                file_name->FileNameLength <= buffer.size() - offsetof(FILE_NAME_INFO, FileName)) {
+            if (file_status == 0 && io.Information >= offsetof(FILE_NAME_INFO, FileName) &&
+                io.Information <= buffer.size() && file_name->FileNameLength % sizeof(wchar_t) == 0 &&
+                file_name->FileNameLength <= io.Information - offsetof(FILE_NAME_INFO, FileName)) {
                 (void)::CloseHandle(duplicate);
                 if (file_name->FileNameLength == 0) return std::wstring{};
                 return L"\\Device\\NamedPipe" + std::wstring(file_name->FileName,
                     file_name->FileNameLength / sizeof(wchar_t));
             }
         }
+        std::fprintf(stderr, "Observer File name rejected handle=%p status=%08lx length=%lu\n",
+            remote, static_cast<unsigned long>(status), static_cast<unsigned long>(length));
         (void)::CloseHandle(duplicate);
-        if (final_length > 0 && final_length < final_name.size())
-            return std::wstring(final_name.data(), final_length);
         return std::nullopt;
     }
     (void)::CloseHandle(duplicate);
@@ -101,11 +92,11 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     const auto text = reinterpret_cast<std::uintptr_t>(name->Buffer);
     if (name->Length % sizeof(wchar_t) != 0 || text < start ||
         text - start > buffer.size() || name->Length > buffer.size() - (text - start))
-        { std::fprintf(stderr, "Observer File name buffer bounds rejected\n"); return std::nullopt; }
+        return std::nullopt;
     return std::wstring(name->Buffer, name->Length / sizeof(wchar_t));
 }
 
-inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE inspect = nullptr) {
+inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid) {
     const HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
                                         PROCESS_DUP_HANDLE, FALSE, pid);
     if (!process) return std::nullopt;
@@ -131,14 +122,6 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE 
             type = {entry.TypeName, entry.TypeNameLength / sizeof(wchar_t)};
             // Native PSS may include the terminating NUL in its byte count.
             if (!type.empty() && type.back() == L'\0') type.remove_suffix(1);
-        }
-        if (entry.Handle == inspect) {
-            std::fprintf(stderr, "Observer witness flags=%u type=%u type-name-bytes=%u name-bytes=%u\n",
-                static_cast<unsigned int>(entry.Flags), static_cast<unsigned int>(entry.ObjectType),
-                static_cast<unsigned int>(entry.TypeNameLength),
-                static_cast<unsigned int>(entry.ObjectNameLength));
-            if (entry.TypeName) std::fprintf(stderr, "Observer witness type=%.*ls\n",
-                static_cast<int>(entry.TypeNameLength / sizeof(wchar_t)), entry.TypeName);
         }
         if ((entry.Flags & PSS_HANDLE_HAVE_NAME) && entry.ObjectName) {
             // PSS lengths are bytes, and these buffers need not be NUL terminated.

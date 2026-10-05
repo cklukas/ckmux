@@ -239,10 +239,8 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     if (pipe == INVALID_HANDLE_VALUE) return;
     const auto witness_name = ckmtest::file_object_name(::GetCurrentProcess(), pipe);
     CK_CHECK(witness_name && ckmtest::printer_endpoint(*witness_name));
-    const auto before = ckmtest::named_handles(::GetCurrentProcessId(), pipe);
+    const auto before = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(before.has_value());
-    if (before) for (const auto& object : *before)
-        std::fprintf(stderr, "Observer positive handle: %ls\n", object.c_str());
     CK_CHECK(before && std::any_of(before->begin(), before->end(), ckmtest::printer_endpoint));
     CK_CHECK(::CloseHandle(pipe) != FALSE);
     const auto after = ckmtest::named_handles(::GetCurrentProcessId());
@@ -271,6 +269,8 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     const auto pid = static_cast<DWORD>(child.client->process_id());
     CK_CHECK(!old.contains(pid));
     CK_CHECK(current.contains(pid));
+    std::fprintf(stderr, "Native observer controls: real pipe seen and released; "
+        "owned child PID=%lu is newly observed\n", static_cast<unsigned long>(pid));
     child.quit();
 }
 
