@@ -44,6 +44,20 @@ using ckmtest::Reader;
 using ckmtest::start_server;
 using ckmtest::wait_for_socket;
 
+// The title can arrive before the bottom bar. Wait for the actual pointer
+// target, not a caption anywhere in a partially received terminal frame.
+bool wait_for_two_terminal_bar(Reader& reader) {
+    const auto deadline = clock_type::now() + std::chrono::milliseconds(6000);
+    do {
+        (void)reader.client->drain(reader.drain_bytes);
+        const auto lines = reader.rows();
+        if (lines.size() >= 2U &&
+            lines[lines.size() - 2U].find("Terminal 1") != std::string::npos &&
+            lines[lines.size() - 2U].find("Terminal 2") != std::string::npos) return true;
+        ::usleep(20000);
+    } while (clock_type::now() < deadline);
+    return false;
+}
 
 // Opens Help ▸ Terminal Report from the keyboard, WITHOUT counting keystrokes.
 //
@@ -412,6 +426,7 @@ CK_TEST(a_second_terminal_puts_a_window_bar_on_screen_above_the_footer) {
     reader.press("\x02" "c");
     CK_CHECK(reader.sees("Terminal 2"));
 
+    CK_CHECK(wait_for_two_terminal_bar(reader));
     // Both captions, on one row, immediately above the footer — which is the
     // whole of "positioned above the existing footer".
     const std::vector<std::string> lines = reader.rows();
@@ -476,7 +491,9 @@ CK_TEST(closing_the_last_terminal_tells_the_whole_truth_and_ends_the_session) {
 
     // Force incremental delivery and do not assume that a fixed settle delay
     // made the complete dialog visible. The title can precede its body.
-    reader.drain_bytes = 128;
+    // Keep partial-frame parsing, without imposing a 6.4-KiB/s harness
+    // throttle on already queued output during the six-second title wait.
+    reader.drain_bytes = 4096;
     reader.press("\x02" "x", 0);
     CK_CHECK(reader.sees("Close terminal"));
     CK_CHECK(reader.sees("asks it to quit"));
@@ -964,6 +981,7 @@ CK_TEST(the_window_bars_context_menu_offers_a_rename_for_the_row_that_was_clicke
     CK_CHECK(reader.sees("Terminal 1"));
     reader.press("\x02" "c");
     CK_CHECK(reader.sees("Terminal 2"));
+    CK_CHECK(wait_for_two_terminal_bar(reader));
 
     const std::vector<std::string> lines = reader.rows();
     CK_CHECK(lines.size() >= 2U);

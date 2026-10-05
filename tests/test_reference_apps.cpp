@@ -766,6 +766,7 @@ CK_TEST(lazygit_renders_its_panels_and_the_reader_can_select_one) {
     forget(socket);
 }
 
+#if CKMUX_TEST_STRESS
 CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
     if (binary_path().empty()) return;
     std::printf("  [WP-21 §3] flood row: `yes` in a terminal\n");
@@ -820,6 +821,8 @@ CK_TEST(a_flooding_child_leaves_the_reader_able_to_work) {
     end_process(server);
     forget(socket);
 }
+
+#endif
 
 CK_TEST(a_child_resetting_modifyotherkeys_on_its_way_out_leaves_no_complaint_in_the_window) {
     // Claude Code's teardown — `ESC [ < u`, `ESC [ ? 1049 l`, `ESC [ > 4 m` —

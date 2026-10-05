@@ -68,6 +68,7 @@ jobs:
         run: >
           cmake -S ckmux -B build
           -DCMAKE_BUILD_TYPE=Debug
+          -DCKMUX_TEST_STRESS=OFF
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
           ${{ matrix.ckvision == 'head'
               && format('-DCKMUX_PREFER_CKVISION_SOURCE=OFF -DFETCHCONTENT_SOURCE_DIR_CKVISION={0}/ckvision', github.workspace)
@@ -79,7 +80,7 @@ jobs:
         run: cmake --build build -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --parallel 1
 
   windows-native:
     strategy:
@@ -131,6 +132,7 @@ jobs:
           cmake -S ckmux -B build -G "Visual Studio 18 2026"
           -A ${{ matrix.architecture }}
           -DCKMUX_PREFER_CKVISION_SOURCE=OFF
+          -DCKMUX_TEST_STRESS=OFF
           -DCKMUX_CONPTY_ARCHIVE="$env:CKMUX_NATIVE_CONPTY"
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
           -DCMAKE_TRY_COMPILE_CONFIGURATION=${{ matrix.configuration }}
@@ -187,7 +189,7 @@ jobs:
           ctest --test-dir build -C ${{ matrix.configuration }} --show-only=json-v1 > native-inventory.json
           if($LASTEXITCODE -ne 0) { throw 'Native inventory query failed' }
           $inventory=Get-Content native-inventory.json -Raw | ConvertFrom-Json
-          if($inventory.tests.Count -ne 53) { throw 'Unexpected native inventory; update its explicit coverage audit' }
+          if($inventory.tests.Count -ne 54) { throw 'Unexpected native inventory; update its explicit coverage audit' }
           foreach($required in @('windows_distribution_policy','windows_server_ancestry','windows_server_lifecycle','suite_test_config','suite_test_client_smoke','suite_test_rename_terminal','suite_test_server_wire_security','suite_test_reader_modes','suite_test_session_desktop','suite_test_windows_reader')) {
             if($required -notin $inventory.tests.name) { throw "Required native gate absent: $required" }
           }

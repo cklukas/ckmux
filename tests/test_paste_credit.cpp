@@ -13,13 +13,13 @@
 // The pacing is against the CHILD, not against the socket. That is the whole
 // design: a server that acked on receipt would pace against its own buffer and
 // let the entire paste through at once, which is what this exists to stop.
-#if !defined(_WIN32)
-
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <system_error>
 #include <vector>
+#include <thread>
 
 #include "client/server_session.hpp"
 #include "common/proto.hpp"
@@ -27,6 +27,7 @@
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "server/terminals.hpp"
+#include "server_fixture.hpp"
 
 namespace {
 
@@ -233,25 +234,16 @@ CK_TEST(pasting_nothing_says_nothing) {
 namespace {
 
 std::filesystem::path private_socket(std::string_view name) {
-    const char* const base = std::getenv("TMPDIR");
-    std::filesystem::path directory =
-        std::filesystem::path(base != nullptr && *base != '\0' ? base : "/tmp");
-    directory /= "ckmux-paste" + std::to_string(static_cast<unsigned long>(::getpid()));
-    std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
-    return directory / (std::string(name) + ".sock");
+    return ckmtest::server_endpoint(name);
 }
 
 void forget(const std::filesystem::path& socket) {
-    std::error_code ignored;
-    std::filesystem::remove(socket, ignored);
-    std::filesystem::remove(std::filesystem::path(socket.string() + ".lock"), ignored);
-    std::filesystem::remove(socket.parent_path(), ignored);
+    ckmtest::forget_server_endpoint(socket);
 }
 
 ckm::Settings test_settings() {
     ckm::Settings settings;
-    settings.shell = "/bin/sh";
+    settings.shell = ckmtest::server_fixture_shell();
     settings.login_shell = false;
     settings.scrollback = 100;
     settings.max_fps = 30;
@@ -265,7 +257,7 @@ struct WireClient {
     bool connect(const std::filesystem::path& socket) {
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
         if (result.status != ckm::platform::ConnectStatus::Connected) return false;
-        stream = ckm::platform::Stream(result.fd);
+        stream = result.take_stream();
         return true;
     }
     void say(const Message& message) { (void)stream.send(ckm::proto::encode(message)); }
@@ -279,12 +271,13 @@ struct WireClient {
 
 // Steps the server until something arrives for the client, or until it is
 // clear nothing will.
-bool pump_until(ckm::server::Server& server, WireClient& client, Message& message,
-                int passes = 12) {
-    for (int pass = 0; pass < passes; ++pass) {
+bool pump_until(ckm::server::Server& server, WireClient& client, Message& message) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    do {
         if (!server.step()) return false;
         if (client.take(message)) return true;
-    }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
     return false;
 }
 
@@ -347,12 +340,12 @@ namespace {
 ckm::server::TerminalSpec spec_running(std::string command) {
     ckm::server::TerminalSpec spec;
     spec.command = std::move(command);
-    spec.working_directory = "/";
+    spec.working_directory = ckmtest::server_working_directory();
     spec.columns = 80;
     spec.rows = 24;
     spec.pixel_width = 80 * 9;
     spec.pixel_height = 24 * 18;
-    spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"}, {"LC_ALL", "C"}};
+    spec.environment = {{"TERM", "xterm-256color"}, {"LC_ALL", "C"}};
     return spec;
 }
 
@@ -365,17 +358,20 @@ PasteChunk chunk_of(std::uint64_t term, std::uint32_t seq, bool last, std::strin
     return chunk;
 }
 
-// Steps the server a few times and reports whether this client has an ack
-// waiting. For the cases whose claim is that one has NOT arrived.
-bool acked(ckm::server::Server& server, WireClient& client, std::uint32_t seq, int passes = 8) {
-    for (int pass = 0; pass < passes; ++pass) {
+// Observe the actual stream until its bounded deadline. A negative observation
+// uses a shorter explicit interval and has a subsequent positive release partner.
+bool acked(ckm::server::Server& server, WireClient& client, std::uint32_t seq,
+           int budget_ms = 4000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(budget_ms);
+    do {
         if (!server.step()) return false;
         Message message;
         while (client.take(message)) {
             const auto* ack = std::get_if<PasteAck>(&message);
             if (ack != nullptr && ack->seq == seq) return true;
         }
-    }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
     return false;
 }
 
@@ -387,18 +383,22 @@ CK_TEST(a_second_clients_paste_waits_for_the_first_to_finish) {
     ckv::ManualClock clock;
     ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running(ckmtest::server_idle_command()));
+    CK_CHECK(terminal.process_id() > 0);
+    CK_CHECK(terminal.session().state() != ckv::core::TerminalSubsessionState::Failed);
 
     WireClient first;
     WireClient second;
     CK_CHECK(first.connect(socket));
-    CK_CHECK(second.connect(socket));
     ckm::proto::Hello hello;
     hello.build = std::string(ckm::proto::kBuildIdentity);
     first.say(hello);
-    second.say(hello);
     Message greeting;
     CK_CHECK(pump_until(server, first, greeting));
+    // Accept and greet the first peer before asking the single pending native
+    // listener for its next connection. Both peers stay live during the paste.
+    CK_CHECK(second.connect(socket));
+    second.say(hello);
     CK_CHECK(pump_until(server, second, greeting));
 
     // The first reader starts a paste and does not finish it.
@@ -409,7 +409,7 @@ CK_TEST(a_second_clients_paste_waits_for_the_first_to_finish) {
     second.say(chunk_of(terminal.id(), 1, /*last=*/true, "second client, all of it\n"));
     // It must not be written yet: a terminal takes one paste at a time, and
     // the first reader's is still open. No ack means not written.
-    CK_CHECK(!acked(server, second, 1));
+    CK_CHECK(!acked(server, second, 1, 200));
 
     // The first reader finishes.
     first.say(chunk_of(terminal.id(), 2, /*last=*/true, "first client, part two\n"));
@@ -432,7 +432,9 @@ CK_TEST(a_client_that_goes_away_mid_paste_does_not_wedge_the_terminal) {
     ckv::ManualClock clock;
     ckm::server::Server server(ckm::server::Server::Options{socket, test_settings()}, clock);
     CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
-    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running("sleep 3600"));
+    ckm::server::Terminal& terminal = server.open_terminal(0, spec_running(ckmtest::server_idle_command()));
+    CK_CHECK(terminal.process_id() > 0);
+    CK_CHECK(terminal.session().state() != ckv::core::TerminalSubsessionState::Failed);
 
     WireClient waiting;
     ckm::proto::Hello hello;
@@ -457,5 +459,3 @@ CK_TEST(a_client_that_goes_away_mid_paste_does_not_wedge_the_terminal) {
     server.terminals().close_all();
     forget(socket);
 }
-
-#endif  // !defined(_WIN32)

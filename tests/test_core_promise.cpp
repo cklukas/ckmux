@@ -460,6 +460,7 @@ CK_TEST(a_reader_sees_their_shells_prompt_in_the_window_ckmux_drew) {
     forget(socket);
 }
 
+#if CKMUX_TEST_STRESS
 CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     // The flood gate, at protocol level and against a real process: `yes` in one
     // terminal, and a `Ping` that must come back promptly WHILE it runs. A
@@ -622,3 +623,4 @@ CK_TEST(a_flooding_child_does_not_stop_the_server_answering) {
     end_process(server, SIGTERM);
     forget(socket);
 }
+#endif

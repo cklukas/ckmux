@@ -16,8 +16,10 @@ persistence after starter exit, explicit complete shutdown, repair and uninstall
 including PATH and user-data preservation. These are not published release
 packages. The matching downloaded CI ZIPs also pass actual contained graphics,
 text/ANSI print saving, Unicode clipboard copy and reattached history checks on
-Windows 11 ARM64; x64 runs there under emulation. Final release gates and the
-live Windows Terminal walkthrough remain required before release.
+Windows 11 ARM64; x64 runs there under emulation. Automated release gates must
+pass before publication. The owner will perform the live Windows Terminal and
+manual installer checks after the installer release is available on GitHub;
+these manual checks do not block publication and are not claimed complete.
 
 The intended release formats are a portable ZIP and a per-user MSI for x64 and
 ARM64. Select the package matching the operating system; use the ARM64 package
@@ -78,6 +80,13 @@ omit `CKMUX_CONPTY_ARCHIVE` to use the honest no-Sixel inbox fallback. Such a
 build is not the intended graphics-enabled Windows release package.
 
 ## Run native tests
+
+CI and release builds configure `CKMUX_TEST_STRESS=OFF`; the native host runs
+CTest serially. Two simultaneous starters check startup election and detached
+survival. Ten-instance and sustained-flood stress checks are not hosted-runner
+acceptance gates; the owner requested that load coverage run locally on the
+Mac Studio. Select that opt-in configuration with
+`cmake -S . -B build -DCKMUX_TEST_STRESS=ON` before rebuilding locally.
 
 Run the full registered inventory through the same-user, limited,
 noninteractive test host. Select an existing absolute build directory and a

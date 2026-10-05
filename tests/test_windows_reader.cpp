@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <array>
 #include "reader_harness.hpp"
+#include "client/server_connection.hpp"
+#include "client/server_session.hpp"
 #include "platform/paths.hpp"
 #include <fstream>
 #include <iterator>
@@ -240,10 +242,15 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     if (pipe == INVALID_HANDLE_VALUE) return;
     const auto witness_name = ckmtest::file_object_name(::GetCurrentProcess(), pipe);
     CK_CHECK(witness_name && ckmtest::printer_endpoint(*witness_name));
+    // An invalid process is an observer failure, never a vanished endpoint.
+    CK_CHECK(!ckmtest::file_object_name(nullptr, pipe));
     const auto before = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(before.has_value());
     CK_CHECK(before && std::any_of(before->begin(), before->end(), ckmtest::printer_endpoint));
     CK_CHECK(::CloseHandle(pipe) != FALSE);
+    // Reproduce a source handle closing after a census, before duplication.
+    const auto closed_name = ckmtest::file_object_name(::GetCurrentProcess(), pipe);
+    CK_CHECK(closed_name && closed_name->empty());
     const auto after = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(after.has_value());
     CK_CHECK(after && std::none_of(after->begin(), after->end(), ckmtest::printer_endpoint));
@@ -462,6 +469,122 @@ CK_TEST(native_reader_routes_prefix_commands_and_real_shell_output) {
     reader.press("set /a 919*13\r");
     CK_CHECK(reader.sees("11947"));
 }
+
+#if CKMUX_TEST_STRESS
+CK_TEST(native_flooding_child_keeps_attached_and_idle_wire_readers_and_real_menus_responsive) {
+    Fixture fixture("flood-readiness");
+    if (!ready(fixture)) return;
+    auto& reader = fixture.reader;
+    graphic_child(reader, "--flood-first");
+    CK_CHECK(reader.sees("first-child"));
+
+    // Both protocol readers use the actual server process and native named
+    // pipes. The attached one decodes real deltas into the production mirror;
+    // the idle one receives no screen traffic. The original UI remains joined.
+    struct WireReader {
+        ckm::client::ServerConnection connection;
+        ckm::proto::FrameReader frames;
+        ckm::client::ServerSession session;
+        std::uint64_t last_pong = 0;
+        std::size_t received = 0;
+        WireReader() : session([this](const ckm::proto::Message& message) {
+            CK_CHECK(connection.stream.send(ckm::proto::encode(message)));
+        }) {}
+        bool connect(const std::filesystem::path& endpoint, bool attached) {
+            connection = ckm::client::connect_to_server(endpoint, ckmtest::binary_path(),
+                attached ? ckm::proto::ClientKind::Ui : ckm::proto::ClientKind::Cli);
+            if (!connection.ok()) return false;
+            if (attached) {
+                session.set_attach_mode(ckm::proto::AttachMode::Join);
+                session.attach(0, {110, 32}, {9, 18});
+            }
+            return true;
+        }
+        void pump() {
+            CK_CHECK(connection.stream.flush());
+            std::string bytes;
+            CK_CHECK(connection.stream.receive(bytes));
+            received += bytes.size();
+            if (!bytes.empty()) CK_CHECK(frames.append(bytes));
+            for (;;) {
+                ckm::proto::Message message;
+                const auto decoded = frames.next(message);
+                if (decoded == ckm::proto::DecodeError::Incomplete) break;
+                CK_CHECK(decoded == ckm::proto::DecodeError::None);
+                if (decoded != ckm::proto::DecodeError::None) break;
+                (void)session.handle(message);
+                if (const auto* pong = std::get_if<ckm::proto::Pong>(&message))
+                    last_pong = pong->nonce;
+            }
+            session.heal_if_needed();
+        }
+        bool shows_flood() {
+            for (const auto id : session.terminal_ids()) {
+                const auto* mirror = session.terminal(id);
+                if (!mirror) continue;
+                std::string text;
+                for (const auto& cell : mirror->cells())
+                    if (!cell.is_continuation()) text += cell.grapheme();
+                if (text.find("first-child") != std::string::npos) return true;
+            }
+            return false;
+        }
+    };
+    WireReader attached, idle;
+    const bool attached_connected = attached.connect(fixture.endpoint, true);
+    const bool idle_connected = idle.connect(fixture.endpoint, false);
+    CK_CHECK(attached_connected);
+    CK_CHECK(idle_connected);
+    if (!attached_connected || !idle_connected) return;
+    const auto warmup_end = ckmtest::clock_type::now() + std::chrono::seconds(6);
+    while ((!attached.session.attached() || !attached.shows_flood()) &&
+           ckmtest::clock_type::now() < warmup_end) {
+        attached.pump();
+        idle.pump();
+        reader.settle(10);
+    }
+    CK_CHECK(attached.session.attached());
+    CK_CHECK(attached.shows_flood());
+    if (!attached.session.attached() || !attached.shows_flood()) return;
+    const auto bytes_before = attached.received;
+#if defined(__SANITIZE_ADDRESS__)
+    constexpr double budget_ms = 5000.0;
+#else
+    constexpr double budget_ms = 3000.0;
+#endif
+    double attached_worst = 0.0, idle_worst = 0.0;
+    for (std::uint64_t attempt = 1; attempt <= 10; ++attempt) {
+        for (auto* wire : {&attached, &idle}) {
+            const auto nonce = attempt + (wire == &idle ? 100 : 0);
+            const auto sent = ckmtest::clock_type::now();
+            wire->session.request(ckm::proto::Ping{nonce});
+            const auto deadline = sent + std::chrono::milliseconds(
+                static_cast<long long>(budget_ms * 2.0));
+            while (wire->last_pong != nonce && ckmtest::clock_type::now() < deadline) {
+                attached.pump();
+                idle.pump();
+                reader.settle(10);
+            }
+            const auto elapsed = std::chrono::duration<double, std::milli>(
+                ckmtest::clock_type::now() - sent).count();
+            CK_CHECK(wire->last_pong == nonce);
+            CK_CHECK(elapsed < budget_ms);
+            auto& worst = wire == &attached ? attached_worst : idle_worst;
+            worst = std::max(worst, elapsed);
+            if (wire->last_pong != nonce) return;
+        }
+    }
+    CK_CHECK(attached.received > bytes_before);
+    CK_CHECK(attached.shows_flood());
+    std::fprintf(stderr, "Native actual-server flood: attached-worst=%.1fms idle-worst=%.1fms received=%zu bytes\n",
+        attached_worst, idle_worst, attached.received - bytes_before);
+    reader.press("\x02" "w");
+    CK_CHECK(reader.sees("Window List"));
+    reader.press("\x1b");
+    CK_CHECK(reader.stops_seeing("w windows", 8000));
+}
+
+#endif
 
 CK_TEST(native_reader_reaches_the_real_menu_bar_and_terminal_report) {
     Fixture fixture("menus");

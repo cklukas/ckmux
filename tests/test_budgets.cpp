@@ -250,6 +250,7 @@ CK_TEST(one_character_changing_costs_one_character) {
     terminals.close_all();
 }
 
+#if CKMUX_TEST_STRESS
 CK_TEST(an_attach_snapshot_for_ten_terminals_with_deep_history_stays_inside_its_budget) {
     // The testing plan §7's "attach-snapshot size for 10 terminals x 10k scrollback".
     // The snapshot is ONE message and the decoder refuses a frame past its cap,
@@ -320,6 +321,8 @@ CK_TEST(an_attach_snapshot_for_ten_terminals_with_deep_history_stays_inside_its_
     CK_CHECK(snapshot_bytes <= ckm::proto::kMaxSnapshotPayloadBytes);
     terminals.close_all();
 }
+
+#endif
 
 CK_TEST(a_session_nobody_is_watching_builds_no_pictures_at_all) {
     // The picture half of the budget, and the one WP-16 freed. A child that

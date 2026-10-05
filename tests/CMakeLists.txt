@@ -88,6 +88,7 @@ if(WIN32)
         test_keymap.cpp
         test_minimize_chrome.cpp
         test_notifications.cpp
+        test_paste_credit.cpp
         test_prefix.cpp
         test_printer_button.cpp
         test_printer_output.cpp
@@ -124,7 +125,15 @@ if(WIN32)
     ckmux_strict(ckmux_windows_exit_child)
 endif()
 
+option(CKMUX_TEST_STRESS "Run local ten-instance and sustained-flood checks (not hosted CI)" OFF)
+if(CKMUX_TEST_STRESS)
+    set(CKMUX_STARTUP_TEST_COUNT 10)
+else()
+    set(CKMUX_STARTUP_TEST_COUNT 2)
+endif()
+
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
+target_compile_definitions(ckmux_tests PRIVATE CKMUX_TEST_STRESS=$<BOOL:${CKMUX_TEST_STRESS}>)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
 # Real subsession tests discover ConPTY beside their own executable. Qualify
 # the same selected runtime as the application, not an accidental inbox copy.
@@ -166,7 +175,7 @@ if(WIN32)
             COMMAND "${CKMUX_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_server_lifecycle.ps1"
                 -Binary "$<TARGET_FILE:ckmux>"
-                -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}")
+                -TemporaryRoot "${CKMUX_TEST_TEMP_ROOT}" -StarterCount "${CKMUX_STARTUP_TEST_COUNT}")
         set_tests_properties(windows_server_lifecycle PROPERTIES LABELS "native;process;ipc;e2e" TIMEOUT 120)
     endif()
 endif()
