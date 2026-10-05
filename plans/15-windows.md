@@ -5,6 +5,62 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Verified integration and packaging preparation — 2026-10-05
+
+The fragmented-dialog and child-retirement fixture corrections are landed at
+private f45c5a2e, public9f821819. Exact hosted CI37262790342 succeeds in all
+eight jobs: Windows x64/ARM64/x64ASan, both Mac lanes and all three Linux lanes.
+Clean committed gates are MacRelease64/64, MacASanUBSan64/64, GCC13.3
+Release64/64 and ARM64 MSVC51/51. Older red-run checkpoints below are historical.
+
+ckVision's generic optional deployment helper is landed at private40e522c5,
+publicc89d0d7b (version17). Its clean-commit gates pass MacRelease230/230,
+ASanUBSan+fuzz240/240, TSan229/229, GCC13.3 Release230/230 and native MSVC
+ARM64 Release223/223 plus actual October1.24 runtime34/34. Filtered public
+passes228/228 and strict docs. Exact hosted CI37265637549 succeeds in all seven
+jobs, and v0.1.17 is released at2026-10-05T05:16:31Z, publicc89d0d7b.
+
+Application packaging implementation pins released17 and adds an explicit archive call into that helper,
+the selected1.24.261001001 pin, static MSVC CRT selection, architecture-labelled
+ZIP and per-user MSI configuration, and installed/user documentation. A seven-case
+policy regression passes; omitting the actual library call fails its intended
+assertion, then restored code passes. The clean implementation a030c7c8,
+treee9959ef, passes Mac Release65/65 (187.25s), LLVM23 Debug ASan/UBSan65/65
+(300.23s), Debian13 ARM64 GCC13.3 strict Release/FORTIFY65/65 (143.49s), and
+Windows11 ARM64 MSVC17 strict Release staticCRT52/52 (79.28s). Full source and
+binary identities were checked before/after. These measurements precede this
+final planning-note delta; landing gates include the final documentation bytes.
+
+Actual ARM64 ZIP and per-user MSI prototypes were created with portable
+CMake4.4.4/WiX5.0.2, using the selected Microsoft runtime through the installed
+ckVision17 helper. ZIP SHA2562F0388A3AFD5F5A1B8DDC3445D2A40AFF7F9D9DA8452D8813BD29383BB5EFAAB;
+MSI SHA25685F58CCB91A27678CAE4CDA1EA25B81796BE08159F48E001D8537A7DCA4D4F58.
+Their executable94643C0B matches the verified static-CRT build. The published
+0.1.7 release is unchanged: these prototypes are not release assets.
+
+A real temporary standard-user profile passes installer-only CTest1/1 exit0,
+11.74s: non-admin/interactively logged-on token and denied protected-machine
+write witness; Unicode/spaced ZIP extraction, runtime/layout hashes, ZIP and
+installed version, default LocalAppData/ckmux-arm64 install, current-user
+unmanaged registration context2/same SID, byte-identical ZIP/MSI inventory,
+actual missing-executable repair, uninstall and persistent PATH/user-data
+preservation. The owned account/profile were removed and compact evidence
+retained. The separate reduced-same-user ZIP fixture passes eight concurrent
+starters, one real server/children, persistence and explicit shutdown. The
+standard-profile logon host retains a restrictive job, so its installer test
+explicitly does not exercise detached lifecycle. No production containment
+guard or library policy was weakened to make these test hosts pass.
+
+The upstream static-CRT installed-consumer fixture is fixed at private4975c258,
+public21f2f685, with all seven hosted CI37277400770 jobs passing. No runtime/API
+change or new SDK release is needed; it remains released17. ckmux does not
+carry a consumer-fixture or process-launch workaround.
+
+Remaining native equivalence, independent installed-server lifecycle, x64
+ZIP/MSI installation, live Windows Terminal, packaged graphics, release-matrix
+wiring, final source/package checksums and published-artifact verification
+remain open. WP53–57 are not done.
+
 ### Exact hosted result and fragmented-dialog regression — 2026-10-05
 
 Public d477a856 CI37257763884 has finished: native x64/ARM64/x64ASan,

@@ -2,6 +2,24 @@
 
 Plan 07 · Status: current · 2026-08-25 · [Index](README.md)
 
+Windows integration checkpoint (2026-10-05): application privatef45c5a2e /
+public9f821819 passes exact eight-job CI37262790342. Generic optional pinned
+ConPTY deployment belongs upstream: ckVision private40e522c5/publicc89d0d7b
+passes clean Mac/GCC/native/sanitizer and filtered-public gates, with all seven
+hosted CI37265637549 jobs green and released17 at2026-10-05T05:16:31Z.
+Application preparation pins17 and calls
+only `ckvision_deploy_conpty`; ckmux selects the approved archive pin and owns
+ZIP/MSI distribution, not a library loader/launcher workaround. Application
+adoption uses17. The SDK's installed-consumer static-CRT fixture correction is
+landed at private4975c258/public21f2f685; all seven hosted CI37277400770 jobs
+pass. It changes test configuration, not runtime code or APIs, so release17
+remains the current library release. The application packaging implementation
+passes clean Mac Release/ASan65/65, GCC13.3 Release65/65 and native ARM64 MSVC
+Release52/52. ARM64 prototypes pass a real non-admin per-user installer,
+registration, byte-layout, repair and uninstall test. That installer-only host
+does not establish independent installed-server persistence; x64 packages,
+complete native equivalence, live acceptance and release publication remain open.
+
 What ckVision (sibling repo, `/Volumes/PRO-BLADE/git/ckvision`, library
 target `ckvision::cvision`, C++20, zero mandatory dependencies, POSIX
 implemented / Windows adapters available, ckmux port in progress) actually provides for ckmux — initially
@@ -383,7 +401,7 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 | # | State | Item | For |
 |---|---|---|---|
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
-| U-WIN-CONPTY-DEPLOY | Prepared upstream; unreleased and not consumed | D-134 provides an opt-in generic CMake helper with an explicit archive/hash/architecture/target, PE checks, complete OS-compatible console hosts, build/install refresh, identity record and Microsoft MIT notice. No automatic network or mandatory runtime dependency. Twelve packaging cases pass on Mac, Debian ARM64 GCC14.2 and native ARM64 MSVC17. Actual helper-deployed runtime1.24 passes all34 library cases; runtime1.25 fails pixel-mouse and graphics/resize proof on two runs. Cause and full upstream gates remain open. ckmux owns its ZIP/installer/release policy, not a local runtime or process workaround. | WP-55/WP-56 |
+| U-WIN-CONPTY-DEPLOY | Released upstream as17; consumed by packaging | D-134 provides an opt-in generic CMake helper with an explicit archive/hash/architecture/target, PE checks, complete OS-compatible console hosts, build/install refresh, identity record and Microsoft MIT notice. No automatic network or mandatory runtime dependency. Release17 at publicc89d0d7b passes all seven CI37265637549 jobs and clean Mac/GCC/native/sanitizer gates; subsequent test-only static-CRT correction public21f2f685 passes all seven CI37277400770 jobs. Actual helper-deployed runtime1.24 passes all34 library cases; runtime1.25 still fails pixel-mouse and graphics/resize proof on the named host. ckmux calls only this helper and owns its archive/installer/release policy. Seven distribution-policy cases and their actual-call-omission negative pass; ARM64 prototype installer checks pass, but x64 and full installed/live acceptance remain required. | WP-55/WP-56 |
 | U-WIN-DETACHED-PROCESS | Released upstream and consumed here; live acceptance open | D-133 is a generic injected DetachedProcessLauncher with no server/session logic. Windows creates suspended, requests breakaway, verifies absence from ANY job before resume, and retains typed refusal plus separate bounded cleanup. Six native cases and a compiled guard-omission negative prove the boundary. Release v0.1.16 peels to public `a38928cf`, all seven CI37243144550 jobs green. ckmux supplies its executable, --server argument, endpoint and explicit cwd, then handles readiness itself. Controlled native ancestor closure and restrictive refusal pass in the 47/47 application candidate; live Windows Terminal close/reattach remains. Clean committed adopter verdicts are recorded with the landing. | WP-54/WP-55 |
 | U-WIN-FS | **Done** (upstream `d58d78bf`) | Native Unicode paths, revision-consistent reads and conditional atomic publication; configuration saves consume the injected contract. Native filesystem and configuration-only gates are recorded in [15](15-windows.md), not a complete Windows app gate. | WP-53 |
 | U-WIN-CLIP | **Done** | Scoped native ownership landed upstream in `987e0b68`; D-124 typed export outcomes and Application result observation landed in `1965f8fd`, released as v0.1.10 = public `c12732ce`, CI `37155541830` all seven jobs green. Native 210/210, Mac/Linux Release 222/222 and sanitizer gates pass. ckmux pins 0.1.10 and consumes that API for widget/selection copies and one warning per configured copy, with 58/58 Mac/Linux and Linux ASan/UBSan; no local clipboard workaround. The named Windows 11 host permits old null-owner writes, so original data loss was not reproduced there. | WP-53 |
