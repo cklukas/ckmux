@@ -14,8 +14,6 @@
 // `LayoutDelta` have always carried `desktop_columns`/`desktop_rows`, and the
 // server filled both from the client it was talking to — telling a client how
 // big its own terminal is, which it already knew.
-#if !defined(_WIN32)
-
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -27,31 +25,23 @@
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "server/terminals.hpp"
+#include "server_fixture.hpp"
 
 namespace {
 
 using ckm::proto::Message;
 
 std::filesystem::path private_socket(std::string_view name) {
-    const char* const base = std::getenv("TMPDIR");
-    std::filesystem::path directory =
-        std::filesystem::path(base != nullptr && *base != '\0' ? base : "/tmp");
-    directory /= "ckmux-desktop" + std::to_string(static_cast<unsigned long>(::getpid()));
-    std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
-    return directory / (std::string(name) + ".sock");
+    return ckmtest::server_endpoint(name);
 }
 
 void forget(const std::filesystem::path& socket) {
-    std::error_code ignored;
-    std::filesystem::remove(socket, ignored);
-    std::filesystem::remove(std::filesystem::path(socket.string() + ".lock"), ignored);
-    std::filesystem::remove(socket.parent_path(), ignored);
+    ckmtest::forget_server_endpoint(socket);
 }
 
 ckm::Settings test_settings(ckm::DesktopSizePolicy policy = ckm::DesktopSizePolicy::Fixed) {
     ckm::Settings settings;
-    settings.shell = "/bin/sh";
+    settings.shell = ckmtest::server_fixture_shell();
     settings.login_shell = false;
     settings.scrollback = 100;
     settings.max_fps = 30;
@@ -66,7 +56,7 @@ struct WireClient {
     bool connect(const std::filesystem::path& socket) {
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
         if (result.status != ckm::platform::ConnectStatus::Connected) return false;
-        stream = ckm::platform::Stream(result.fd);
+        stream = result.take_stream();
         return true;
     }
     void say(const Message& message) { (void)stream.send(ckm::proto::encode(message)); }
@@ -644,7 +634,7 @@ CK_TEST(both_readers_hear_about_a_terminal_that_opens) {
     CK_CHECK(attach_sharing(server, second, 120, 40));
 
     ckm::proto::NewTerminal ask;
-    ask.command = "/bin/sh";
+    ask.command = ckmtest::server_idle_command();
     first.say(ask);
 
     bool first_heard = false;
@@ -688,7 +678,7 @@ struct TwoReaders {
         if (!attach_sharing(server, second, 120, 40)) return false;
 
         ckm::proto::NewTerminal ask;
-        ask.command = "/bin/sh";
+        ask.command = ckmtest::server_idle_command();
         first.say(ask);
         for (int pass = 0; pass < 20 && term == 0; ++pass) {
             tick();
@@ -702,7 +692,13 @@ struct TwoReaders {
         // readers before a case states one of its own, so that what it then
         // observes is its own report coming back and never the opening.
         settle();
-        return term != 0;
+        const auto* child = server.terminals().find(term);
+        CK_CHECK(child != nullptr);
+        if (child == nullptr) return false;
+        CK_CHECK(child->process_id() > 0);
+        CK_CHECK(child->session().state() != ckv::core::TerminalSubsessionState::Failed);
+        CK_CHECK(child->session().state() != ckv::core::TerminalSubsessionState::Exited);
+        return child->process_id() > 0;
     }
 
     // One pass of the server, with the clock moved far enough that the flush
@@ -1081,5 +1077,3 @@ CK_TEST(a_session_list_is_never_published_from_the_middle_of_a_change) {
 
     forget(socket);
 }
-
-#endif  // !defined(_WIN32)

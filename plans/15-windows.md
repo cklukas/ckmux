@@ -5,6 +5,21 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Native shared-session test inventory — 2026-10-05
+
+The native gate now includes all nine `test_reader_modes` cases and all nineteen
+`test_session_desktop` cases, without hiding test bodies behind Windows guards.
+They drive the actual server over authenticated named pipes using full-width
+owned streams and real ConPTY children. The same cases remain on Unix sockets
+and PTYs. Fixtures use unique task-selected scratch namespaces, a real quiet
+child for layout operations, and a real native echo child with an observed
+startup marker for permission/input cases. Source declarations are an inventory,
+not a runtime pass claim; exact clean-commit gates are stated with the landing.
+Required native CTest inventory is50, with both new entries explicitly enforced
+by blocking CI. These tests do not replace the live Windows Terminal walkthrough,
+actual client-console close/reattach or install-tested release gates. WP53–57
+remain open.
+
 ### Hosted checkout and copy-fixture correction candidate — 2026-10-05
 
 VS2026 configure/build now succeeds in every native CI37250470689 lane at
