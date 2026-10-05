@@ -130,6 +130,9 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid) {
                 break;
             }
             names.emplace_back(entry.ObjectName, entry.ObjectNameLength / sizeof(wchar_t));
+            // PSS can include a terminating NUL for named user objects too,
+            // including WindowStation. Preserve the name, not its terminator.
+            if (!names.back().empty() && names.back().back() == L'\0') names.back().pop_back();
         } else if (type == L"File") {
             const auto name = file_object_name(process, entry.Handle);
             if (!name) { walked = ERROR_INVALID_DATA; break; }

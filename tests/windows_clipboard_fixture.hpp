@@ -3,7 +3,9 @@
 #pragma once
 
 #include "cvision/term/windows_clipboard.hpp"
+#include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cwchar>
 #include <optional>
 #include <string>
