@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -330,6 +331,9 @@ inline void end_process(ckv::core::ProcessId child) {
 struct Reader {
     // A fixture may force incremental VT parsing to exercise partial frames.
     std::size_t drain_bytes = 64u << 10u;
+    // Acceptance-only observation after actual output processing. No hook is
+    // installed by ordinary cases; it cannot alter production application code.
+    std::function<void()> after_drain;
     ScratchDirectory home{"reader-client"};
     std::unique_ptr<ckv::term::TerminalSubsession> client;
 
@@ -394,6 +398,7 @@ struct Reader {
         const clock_type::time_point until = clock_type::now() + std::chrono::milliseconds(ms);
         while (clock_type::now() < until) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
@@ -428,6 +433,7 @@ struct Reader {
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             if (screen().find(needle) != std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -445,6 +451,7 @@ struct Reader {
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             if (screen().find(needle) == std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));

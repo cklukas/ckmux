@@ -10,6 +10,7 @@
 #include "platform/paths.hpp"
 #include <fstream>
 #include <iterator>
+#include "windows_print_observer.hpp"
 
 namespace {
 using ckmtest::Reader;
@@ -170,6 +171,11 @@ void print_and_save(std::string_view format) {
     auto& reader = fixture.reader;
     graphic_child(reader, "--print-ui-controller");
     CK_CHECK(reader.sees("PRINT-UI-READY"));
+    // The legitimate shell/controller/ConPTY hosts are already running.
+    // Observe the real client and server throughout printing, UI and saving.
+    ckmtest::PrintObserver observer(reader, static_cast<DWORD>(fixture.server));
+    CK_CHECK(observer.healthy);
+    CK_CHECK(observer.baseline.size() > observer.roots.size());
     reader.press("1\r");
     CK_CHECK(reader.sees("PRINT-UI-DONE"));
     CK_CHECK(reader.sees("PRINT?"));
@@ -209,10 +215,59 @@ void print_and_save(std::string_view format) {
     for (const unsigned char byte : bytes) std::fprintf(stderr, " %02x", static_cast<unsigned int>(byte));
     std::fprintf(stderr, "\n");
     CK_CHECK(bytes == (format == "txt" ? "UI-SPOOLBOLD\n" : "UI-SPOOL\x1b[1mBOLD\x1b[0m\r\n"));
-    // This proves the actual child/wire/UI/save positive, not absence of a
-    // physical printer/spooler. That needs a separate native observer.
+    observer.sample();
+    std::fprintf(stderr, "Native print observation: samples=%zu handle-samples=%zu "
+        "healthy=%d new-children=%zu printer-endpoints=%zu\n", observer.samples,
+        observer.named_handle_samples, observer.healthy ? 1 : 0,
+        observer.unexpected_children.size(), observer.unexpected_endpoints.size());
+    CK_CHECK(observer.healthy);
+    CK_CHECK(observer.samples >= 10);
+    CK_CHECK(observer.named_handle_samples == observer.samples * observer.roots.size());
+    CK_CHECK(observer.unexpected_children.empty());
+    CK_CHECK(observer.unexpected_endpoints.empty());
+    // Sampled process/handle observation is not an exhaustive kernel trace or
+    // proof about unobserved printer RPC mechanisms. Its controls are below.
 }
 } // namespace
+
+CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
+    const std::wstring name = L"\\\\.\\pipe\\ckmux-observer-printer-" +
+        std::to_wstring(::GetCurrentProcessId());
+    const HANDLE pipe = ::CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX |
+        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE | PIPE_WAIT, 1, 64, 64, 0, nullptr);
+    CK_CHECK(pipe != INVALID_HANDLE_VALUE);
+    if (pipe == INVALID_HANDLE_VALUE) return;
+    const auto before = ckmtest::named_handles(::GetCurrentProcessId());
+    CK_CHECK(before.has_value());
+    CK_CHECK(before && std::any_of(before->begin(), before->end(), ckmtest::printer_endpoint));
+    CK_CHECK(::CloseHandle(pipe) != FALSE);
+    const auto after = ckmtest::named_handles(::GetCurrentProcessId());
+    CK_CHECK(after.has_value());
+    CK_CHECK(after && std::none_of(after->begin(), after->end(), ckmtest::printer_endpoint));
+    CK_CHECK(ckmtest::printer_endpoint(L"\\Device\\Parallel0"));
+    CK_CHECK(ckmtest::printer_endpoint(L"\\Device\\UsbPrint0"));
+    CK_CHECK(ckmtest::printer_endpoint(L"\\Device\\NamedPipe\\SPOOLSS"));
+    CK_CHECK(!ckmtest::printer_endpoint(L"\\Device\\NamedPipe\\ckmux-ipc"));
+
+    const auto baseline = ckmtest::process_parents();
+    CK_CHECK(baseline.has_value());
+    if (!baseline) return;
+    Reader child;
+    auto launch = ckv::term::TerminalLaunchSpec::program(CKMUX_TEST_CHILD_PATH, {"--echo"});
+    launch.working_directory = child.home.path().string();
+    child.client = ckv::term::launch_terminal_subsession(std::move(launch));
+    CK_CHECK(child.sees("CKMUX-ECHO-READY"));
+    const auto running = ckmtest::process_parents();
+    CK_CHECK(running.has_value());
+    if (!running) return;
+    const std::set<DWORD> roots{::GetCurrentProcessId()};
+    const auto old = ckmtest::descendants(*baseline, roots);
+    const auto current = ckmtest::descendants(*running, roots);
+    const auto pid = static_cast<DWORD>(child.client->process_id());
+    CK_CHECK(!old.contains(pid));
+    CK_CHECK(current.contains(pid));
+    child.quit();
+}
 
 CK_TEST(native_actual_client_print_capture_saves_plain_text_in_a_unicode_folder) {
     print_and_save("txt");

@@ -1252,6 +1252,16 @@ public routes; fixtures alone do not prove the user's running terminal.
 
 ## Current evidence and remaining work
 
+The isolated Windows print-acceptance candidate now samples actual client/server
+named handles with Process Snapshotting and actual descendant processes with
+Toolhelp while the real print/save UI runs. A harmless named pipe and a real
+owned child are positive controls. Observation errors fail the assertions;
+printing may create neither a new observed descendant nor an observed parallel,
+USB-printer or named spooler endpoint. This is sampled coverage, not a continuous
+kernel trace or an exhaustive claim about every Windows printer RPC mechanism.
+Native compilation, positive-control and actual print/save results for this
+increment remain pending; no production application/library behavior changed.
+
 The isolated shell-host candidate composes launches through the same common
 policy for client-local and server-owned terminals, with fresh native host
 observations and injected executable checks. It uses ckVision D-125's command
