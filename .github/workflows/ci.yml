@@ -204,7 +204,7 @@ jobs:
         # A green wrapper must mean a green worker, not merely a task start.
         # Keep both the positive inventory and the failure-propagation evidence.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}-evidence
           path: |
