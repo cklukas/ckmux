@@ -7,7 +7,12 @@
 // or children shorter-lived than a sample interval can escape observation.
 #include <processsnapshot.h>
 #include <tlhelp32.h>
+#include <winternl.h>
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <cwctype>
 #include <map>
 #include <optional>
@@ -17,6 +22,38 @@
 
 namespace ckmtest {
 
+inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remote) {
+    // PSS enumerates File handles but does not supply their object names on
+    // the native host. Duplicate only a File handle, never close its source,
+    // and query the name in this process. This is Microsoft's documented
+    // diagnostic pattern, not a production dependency on NT internals:
+    // https://devblogs.microsoft.com/scripting/weekend-scripter-determine-process-that-locks-a-file/
+    HANDLE duplicate = nullptr;
+    if (!::DuplicateHandle(process, remote, ::GetCurrentProcess(), &duplicate, 0,
+                           FALSE, DUPLICATE_SAME_ACCESS)) return std::nullopt;
+    using Query = NTSTATUS (NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, void*, ULONG, ULONG*);
+    const auto module = ::GetModuleHandleW(L"ntdll.dll");
+    const FARPROC address = module ? ::GetProcAddress(module, "NtQueryObject") : nullptr;
+    Query query = nullptr;
+    static_assert(sizeof(query) == sizeof(address));
+    std::memcpy(&query, &address, sizeof(query));
+    alignas(UNICODE_STRING) std::array<std::byte, 65536> buffer{};
+    ULONG length = 0;
+    // ObjectNameInformation is class 1 in the Microsoft diagnostic pattern.
+    const auto status = query ? query(duplicate, static_cast<OBJECT_INFORMATION_CLASS>(1),
+        buffer.data(), static_cast<ULONG>(buffer.size()), &length) : static_cast<NTSTATUS>(-1);
+    (void)::CloseHandle(duplicate);
+    if (status < 0 || length > buffer.size()) return std::nullopt;
+    const auto* name = reinterpret_cast<const UNICODE_STRING*>(buffer.data());
+    if (name->Length == 0) return std::wstring{};
+    const auto start = reinterpret_cast<std::uintptr_t>(buffer.data());
+    const auto text = reinterpret_cast<std::uintptr_t>(name->Buffer);
+    if (name->Length % sizeof(wchar_t) != 0 || text < start ||
+        text - start > buffer.size() || name->Length > buffer.size() - (text - start))
+        return std::nullopt;
+    return std::wstring(name->Buffer, name->Length / sizeof(wchar_t));
+}
+
 inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE inspect = nullptr) {
     const HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
                                         PROCESS_DUP_HANDLE, FALSE, pid);
@@ -25,11 +62,11 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE 
     const auto flags = static_cast<PSS_CAPTURE_FLAGS>(PSS_CAPTURE_HANDLES |
                                                      PSS_CAPTURE_HANDLE_NAME_INFORMATION);
     const DWORD captured = ::PssCaptureSnapshot(process, flags, 0, &snapshot);
-    (void)::CloseHandle(process);
-    if (captured != ERROR_SUCCESS) return std::nullopt;
+    if (captured != ERROR_SUCCESS) { (void)::CloseHandle(process); return std::nullopt; }
     HPSSWALK marker = nullptr;
     if (::PssWalkMarkerCreate(nullptr, &marker) != ERROR_SUCCESS) {
         (void)::PssFreeSnapshot(::GetCurrentProcess(), snapshot);
+        (void)::CloseHandle(process);
         return std::nullopt;
     }
     std::vector<std::wstring> names;
@@ -53,10 +90,16 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE 
                 break;
             }
             names.emplace_back(entry.ObjectName, entry.ObjectNameLength / sizeof(wchar_t));
+        } else if (entry.TypeName && entry.TypeNameLength == 4 * sizeof(wchar_t) &&
+                   std::wstring_view(entry.TypeName, 4) == L"File") {
+            const auto name = file_object_name(process, entry.Handle);
+            if (!name) { walked = ERROR_INVALID_DATA; break; }
+            if (!name->empty()) names.push_back(*name);
         }
     }
     const DWORD marker_freed = ::PssWalkMarkerFree(marker);
     const DWORD snapshot_freed = ::PssFreeSnapshot(::GetCurrentProcess(), snapshot);
+    (void)::CloseHandle(process);
     if (walked != ERROR_NO_MORE_ITEMS || marker_freed != ERROR_SUCCESS ||
         snapshot_freed != ERROR_SUCCESS) return std::nullopt;
     return names;
