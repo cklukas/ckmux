@@ -17,6 +17,17 @@ payload garbage, and a computed shell result must still work. These candidate
 cases are not yet execution evidence, packaged-binary proof or a live Windows
 Terminal visual walkthrough. Native suite inventory remains53.
 
+The first actual ARM64 execution fails only the positive graphics case.
+The outer host trace reports Sixel=yes but no emitted pictures; the same
+child directly through Terminals decodes red pixels, and a newly opened second
+terminal renders them. Both UI NewSession routes used spawn_first=1, causing
+the server to create the first child before Attach conveyed host capabilities
+and bypassing the existing client-side capability grace. The correction sends
+spawn_first=0 from those UI routes and lets the existing capability-aware
+NewTerminal path create the child. CLI headless session creation is unchanged.
+This is application protocol/session behavior, not a ckVision limitation.
+Native repeats, compiled negative and full integration remain pending.
+
 ### Native terminal acceptance candidate — 2026-10-05
 
 The Unix server-terminal suite is not native Windows coverage. A new native
