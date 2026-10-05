@@ -5,6 +5,34 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Local stress / hosted functional policy — 2026-10-05
+
+The owner requires ten-instance checks on the Mac Studio, not GitHub.
+`CKMUX_TEST_STRESS` defaults OFF; both hosted workflows explicitly select
+OFF, Unix CTest and the native host run serially, and startup election uses
+two contenders. ON selects ten starters plus existing ten-terminal and
+sustained-flood cases for local validation. This changes test placement,
+not application or ckVision behavior. No extra acceptance cases are added.
+
+The native fixture's earlier immediate process-count failure was reproduced
+with the exact unchanged executable: two candidate PIDs were visible at the
+first sample, then only the same winner remained 67 ms later. The fixture now
+uses the existing POSIX test's bounded three-second loser-teardown wait,
+retaining the exactly-one-server, actual-child, persistence and shutdown
+assertions. Final committed-byte gates remain required.
+
+### Existing release-fixture readiness — 2026-10-05
+
+The extra reader-polling/64KiB burst candidate is withdrawn: its Linux burst
+deadline failed, and forcing128-byte startup reads in real bar-click cases
+introduced Mac popup failures. No application/library behavior changed there.
+The narrower correction retains the original Reader and both existing actual
+bar-click cases, waiting for both captions on the bottom bar before calculating
+pointer coordinates. The close-dialog case still parses partial output, now in
+4KiB chunks rather than imposing128bytes/20ms on its six-second wait. Every
+dialog-body assertion, pointer action and deadline remains. Exact final-source
+gates remain required; earlier failures are retained, not explained wholesale.
+
 ### Owner-directed release ordering — 2026-10-05
 
 Publish the Windows installer release on GitHub after all automated CI,

@@ -1,7 +1,8 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 param([Parameter(Mandatory=$true)][string]$Binary,
-      [Parameter(Mandatory=$true)][string]$TemporaryRoot)
+      [Parameter(Mandatory=$true)][string]$TemporaryRoot,
+      [ValidateSet(2,10)][int]$StarterCount=2)
 $ErrorActionPreference='Stop'
 $Binary=[IO.Path]::GetFullPath($Binary)
 if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) { throw 'Missing exact application executable' }
@@ -38,8 +39,9 @@ try {
     if (-not $absent.Contains('no server is running') -or @(Owned-Servers).Count -ne 0) {
         throw 'Read-only discovery did not preserve server absence'
     }
-    # These are eight real application starter clients, not a mutex fixture.
-    for ($index=0; $index -lt 8; $index++) {
+    # Two starters exercise election; ten are selected only by the local
+    # stress configuration. Hosted CI never selects the ten-instance case.
+    for ($index=0; $index -lt $StarterCount; $index++) {
         # Own the process handle from creation through exit. Start-Process's
         # later Process lookup can lose ExitCode for these very short clients.
         $client=New-Object Diagnostics.Process
@@ -61,18 +63,26 @@ try {
         [IO.File]::WriteAllText("$scope/new-$index.err",$problem)
         if ($client.ExitCode -ne 0) { throw ('Starter failed: '+$client.Id+' exit '+$client.ExitCode+' '+$problem) }
     }
-    for ($index=0; $index -lt 8; $index++) {
+    for ($index=0; $index -lt $StarterCount; $index++) {
         if ((Get-Content "$scope/new-$index.out" -Raw).Trim() -cne ('win-native-'+$index)) {
             throw ('Wrong session returned to starter '+$index)
         }
     }
     $servers=@(Owned-Servers)
+    # A losing candidate exits, but process enumeration may still observe it
+    # during teardown. Match the POSIX fixture's bounded election settling
+    # check; do not count an exiting loser as another listener.
+    $settled=[DateTime]::UtcNow.AddSeconds(3)
+    while($servers.Count -gt 1 -and [DateTime]::UtcNow -lt $settled) {
+        Start-Sleep -Milliseconds 20
+        $servers=@(Owned-Servers)
+    }
     if ($servers.Count -ne 1) { throw 'Concurrent clients did not leave exactly one detached server' }
     $serverPid=$servers[0].ProcessId
     $children=@(Get-CimInstance Win32_Process | Where-Object {
         $_.ParentProcessId -eq $serverPid -and $_.Name -eq 'cmd.exe'
     })
-    if ($children.Count -ne 8) { throw 'Detached server did not own eight actual native shell children' }
+    if ($children.Count -ne $StarterCount) { throw 'Detached server did not own every actual native shell child' }
     foreach ($child in $children) {
         $process=Get-Process -Id $child.ProcessId -ErrorAction Stop
         # Acquire and retain a kernel handle while the known child is alive.
@@ -84,7 +94,7 @@ try {
     $children | Select-Object ProcessId,ParentProcessId,CreationDate,ExecutablePath |
         ConvertTo-Json | Out-File (Join-Path $scope 'children.json')
     $listed=Run-CLI 'list' @('ls')
-    for ($index=0; $index -lt 8; $index++) {
+    for ($index=0; $index -lt $StarterCount; $index++) {
         if (-not $listed.Contains('win-native-'+$index)) { throw 'Session disappeared after starter exit' }
     }
     if (@(Owned-Servers).Count -ne 1) { throw 'Read-only list lost detached server' }
@@ -109,7 +119,7 @@ try {
     }
     if (-not (Get-Content $log -Raw).Contains('ckmux server: stopped')) { throw 'Orderly shutdown diagnostic missing' }
     $passed=$true
-    Write-Output ('Native application: eight concurrent starters, one server '+$serverPid+', eight cmd children, CLI-exit persistence, Unicode logs and complete shutdown: PASS')
+    Write-Output ('Native application: '+$StarterCount+' concurrent starters, one server '+$serverPid+', '+$StarterCount+' cmd children, CLI-exit persistence, Unicode logs and complete shutdown: PASS')
 } finally {
     foreach ($client in $clients) { $client.Dispose() }
     foreach ($child in $childProcesses) { $child.Dispose() }

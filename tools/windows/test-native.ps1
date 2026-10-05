@@ -41,7 +41,9 @@ if($Worker) {
         # verify their created child's independence before installing controlled
         # jobs; host membership alone does not establish breakaway eligibility.
         Write-Output "Native CTest worker: ambient_job=$(In-Job) scope=$TemporaryRoot"
-        $arguments=@('--test-dir',$BuildDirectory,'-C',$Configuration,'--output-on-failure','-j2')
+        # Native application fixtures share a host. Run one suite at a time;
+        # hosted runners are functional gates, not parallel-load benchmarks.
+        $arguments=@('--test-dir',$BuildDirectory,'-C',$Configuration,'--output-on-failure','-j1')
         if($TestRegex) { $arguments+=@('-R',$TestRegex) }
         $ErrorActionPreference='Continue'
         & $CTestPath @arguments *> (Join-Path $TemporaryRoot 'ctest.log')

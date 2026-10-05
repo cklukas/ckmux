@@ -289,10 +289,14 @@ CK_TEST(two_starters_race_and_exactly_one_server_ends_up_listening) {
     forget(socket);
     if (binary_path().empty()) return;
 
-    // Eight of them at once, all told to listen on the same path. Seven have to
-    // work out that they have lost.
+    // Hosted CI uses the minimum two; the owner's Mac Studio exercises ten.
+#if CKMUX_TEST_STRESS
+    constexpr int kStarterCount = 10;
+#else
+    constexpr int kStarterCount = 2;
+#endif
     std::vector<::pid_t> starters;
-    for (int index = 0; index < 8; ++index) starters.push_back(start_foreground_server(socket));
+    for (int index = 0; index < kStarterCount; ++index) starters.push_back(start_foreground_server(socket));
     CK_CHECK(wait_for_socket(socket, 4000));
 
     // Whoever won is answering, and answering as one server: the id a server
@@ -308,7 +312,7 @@ CK_TEST(two_starters_race_and_exactly_one_server_ends_up_listening) {
         CK_CHECK(std::holds_alternative<ckm::proto::HelloAck>(answer));
     }
 
-    // Exactly one is still running. The seven that lost exited on their own,
+    // Exactly one is still running. The losers exited on their own,
     // which is what "not an error" means for this race: nothing was logged as a
     // failure, nothing needed retrying by hand.
     //

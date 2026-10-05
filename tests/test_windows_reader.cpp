@@ -465,6 +465,7 @@ CK_TEST(native_reader_routes_prefix_commands_and_real_shell_output) {
     CK_CHECK(reader.sees("11947"));
 }
 
+#if CKMUX_TEST_STRESS
 CK_TEST(native_flooding_child_keeps_attached_and_idle_wire_readers_and_real_menus_responsive) {
     Fixture fixture("flood-readiness");
     if (!ready(fixture)) return;
@@ -577,6 +578,8 @@ CK_TEST(native_flooding_child_keeps_attached_and_idle_wire_readers_and_real_menu
     reader.press("\x1b");
     CK_CHECK(reader.stops_seeing("w windows", 8000));
 }
+
+#endif
 
 CK_TEST(native_reader_reaches_the_real_menu_bar_and_terminal_report) {
     Fixture fixture("menus");

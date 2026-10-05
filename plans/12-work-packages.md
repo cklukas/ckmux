@@ -161,6 +161,11 @@ manual walkthrough. The owner will perform the live Windows Terminal and
 manual installer checks after the installer release is on GitHub. WP-55/WP-57
 retain those pending manual checks; no VNC access is required for publication.
 
+The owner also places ten-instance and sustained-flood stress checks on the
+local Mac Studio only. Hosted CI/release use `CKMUX_TEST_STRESS=OFF`, serial
+functional suites and two startup contenders. Local ON verification and the
+final serial native/package gates remain pending; this is not a new work item.
+
 | Order | Package | Where | State | Prerequisite |
 |---:|---|---|---|---|
 | W1 | WP-52 — Portable terminal ownership and upstream lifecycle | both | **Done** (2026-10-03, ckVision `84c96695`, released v0.1.9 = public `aea4754a`; CI `37126856749` all seven jobs green; ckmux consumes shared ownership and pins 0.1.9, native/cross-platform evidence in [15](15-windows.md)) | Latest ckVision Windows adapter ✓ |

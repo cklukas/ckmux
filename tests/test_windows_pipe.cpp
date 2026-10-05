@@ -286,15 +286,20 @@ CK_TEST(windows_pipe_failed_write_preserves_unread_completed_reply) {
     CK_CHECK(!client.open());
 }
 
-CK_TEST(windows_pipe_startup_race_uses_eight_real_processes) {
+CK_TEST(windows_pipe_startup_race_has_exactly_one_winner) {
     const auto instance = label();
     const auto event_base = L"Local\\" + std::wstring(instance.begin(), instance.end());
     const auto go_name = event_base + L"-go";
     const auto stop_name = event_base + L"-stop";
     const HANDLE go = ::CreateEventW(nullptr, TRUE, FALSE, go_name.c_str());
     const HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, stop_name.c_str());
-    std::array<HANDLE, 8> ready{};
-    std::array<HANDLE, 8> processes{};
+#if CKMUX_TEST_STRESS
+    constexpr std::size_t kStarterCount = 10;
+#else
+    constexpr std::size_t kStarterCount = 2;
+#endif
+    std::array<HANDLE, kStarterCount> ready{};
+    std::array<HANDLE, kStarterCount> processes{};
     std::wstring executable(32768, L'\0');
     executable.resize(::GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
     executable = (std::filesystem::path(executable).parent_path() / L"ckmux_ipc_race_probe.exe").wstring();
@@ -325,7 +330,7 @@ CK_TEST(windows_pipe_startup_race_uses_eight_real_processes) {
         ::CloseHandle(process);
     }
     CK_CHECK(winners == 1);
-    CK_CHECK(racers == 7);
+    CK_CHECK(racers == kStarterCount - 1U);
     for (const auto event : ready) ::CloseHandle(event);
     ::CloseHandle(go);
     ::CloseHandle(stop);

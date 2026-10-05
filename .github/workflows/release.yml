@@ -59,7 +59,7 @@ jobs:
 
       - name: Configure
         run: >
-          cmake -S ckmux -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S ckmux -B build -DCMAKE_BUILD_TYPE=Release -DCKMUX_TEST_STRESS=OFF
 
       - name: Build
         run: cmake --build build -j
@@ -68,7 +68,7 @@ jobs:
       # differed from Debug ones here before (dead-code check), so a release
       # is gated on its own build type, never on Debug's word.
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --parallel 1
 
       - name: Package
         run: cpack -G "${{ matrix.generators }}" --config build/CPackConfig.cmake -B "$GITHUB_WORKSPACE/packages"
@@ -174,6 +174,7 @@ jobs:
           "CKMUX_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
           cmake -S ckmux -B build -G 'Visual Studio 18 2026' -A ${{ matrix.architecture }} `
             -DCKMUX_PREFER_CKVISION_SOURCE=OFF '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded' `
+            -DCKMUX_TEST_STRESS=OFF `
             -DCMAKE_TRY_COMPILE_CONFIGURATION=Release -DCKMUX_WINDOWS_ARCHITECTURE=${{ matrix.architecture }} `
             "-DCKMUX_CONPTY_ARCHIVE=$env:CKMUX_RELEASE_CONPTY" "-DCKMUX_TEST_TEMP_ROOT=$env:CKMUX_RELEASE_SCRATCH/t"
           if($LASTEXITCODE -ne 0) { throw 'Windows release configure failed' }

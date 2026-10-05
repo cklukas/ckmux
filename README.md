@@ -111,6 +111,17 @@ Run the suite:
 ctest --test-dir build --output-on-failure
 ```
 
+GitHub runs functional suites serially with `CKMUX_TEST_STRESS=OFF`. The
+startup-election check uses two starters, not a load test. Ten-starter,
+ten-terminal and sustained-flood checks are opt-in and run locally on the
+owner's Mac Studio, not on hosted runners:
+
+```bash
+cmake -S . -B build -DCKMUX_TEST_STRESS=ON
+cmake --build build -j8
+ctest --test-dir build --output-on-failure --parallel 1
+```
+
 For Windows builds, use the noninteractive native test host described in the
 [Windows guide](docs/windows.md#run-native-tests). Its real clipboard cases
 fail closed when run directly in an interactive window station.

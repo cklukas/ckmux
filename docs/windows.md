@@ -81,6 +81,13 @@ build is not the intended graphics-enabled Windows release package.
 
 ## Run native tests
 
+CI and release builds configure `CKMUX_TEST_STRESS=OFF`; the native host runs
+CTest serially. Two simultaneous starters check startup election and detached
+survival. Ten-instance and sustained-flood stress checks are not hosted-runner
+acceptance gates; the owner requested that load coverage run locally on the
+Mac Studio. Select that opt-in configuration with
+`cmake -S . -B build -DCKMUX_TEST_STRESS=ON` before rebuilding locally.
+
 Run the full registered inventory through the same-user, limited,
 noninteractive test host. Select an existing absolute build directory and a
 new explicit temporary root. For example, after the ARM64 build above:

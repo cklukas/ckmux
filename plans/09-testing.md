@@ -31,6 +31,13 @@ those matrices.
 
 ## Layers (bottom-up)
 
+Owner-directed execution policy, 2026-10-05: `CKMUX_TEST_STRESS` defaults OFF.
+Hosted CI and release explicitly use OFF and serial CTest. Startup election
+requires two contenders for its functional race, not ten-instance load.
+Ten-starter, ten-terminal and sustained-flood cases are compiled only with ON
+and run locally on the owner's Mac Studio. Registered suite counts alone do
+not establish stress coverage: record the configuration and actual cases.
+
 ### 1. Unit & property (label `unit`)
 
 - **Protocol codec**: encode/decode round-trip for every message; property

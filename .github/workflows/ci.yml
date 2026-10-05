@@ -68,6 +68,7 @@ jobs:
         run: >
           cmake -S ckmux -B build
           -DCMAKE_BUILD_TYPE=Debug
+          -DCKMUX_TEST_STRESS=OFF
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
           ${{ matrix.ckvision == 'head'
               && format('-DCKMUX_PREFER_CKVISION_SOURCE=OFF -DFETCHCONTENT_SOURCE_DIR_CKVISION={0}/ckvision', github.workspace)
@@ -79,7 +80,7 @@ jobs:
         run: cmake --build build -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --parallel 1
 
   windows-native:
     strategy:
@@ -131,6 +132,7 @@ jobs:
           cmake -S ckmux -B build -G "Visual Studio 18 2026"
           -A ${{ matrix.architecture }}
           -DCKMUX_PREFER_CKVISION_SOURCE=OFF
+          -DCKMUX_TEST_STRESS=OFF
           -DCKMUX_CONPTY_ARCHIVE="$env:CKMUX_NATIVE_CONPTY"
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
           -DCMAKE_TRY_COMPILE_CONFIGURATION=${{ matrix.configuration }}
