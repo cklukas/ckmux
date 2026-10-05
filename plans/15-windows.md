@@ -30,9 +30,9 @@ the existing same-user limited noninteractive scheduled test host.
 See [Microsoft's process connection rules](https://learn.microsoft.com/en-us/windows/win32/winstation/process-connection-to-a-window-station)
 and [window-station clipboard ownership](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations).
 
-Initial candidate `7f26345` looked for a Unicode dash in the rendered copy
-caption and failed before yank. The corrected `0cad90d` uses the unambiguous
-COPY-plus-space caption, not the child's NATIVE-COPY text. It passes the
+Initial candidate `7f26345` assumed the complete caption including its dash
+was visible and failed before yank. The corrected `0cad90d` uses the actual
+COPY-plus-space status, not the child's NATIVE-COPY text. It passes the
 actual Unicode/refusal/internal-paste/recovery assertions; its remaining
 station-name check exposed PSS including a trailing NUL in named user-object
 lengths. The final test instrumentation strips that one terminator before
@@ -44,11 +44,17 @@ production mutation compiles, changes the application hash, restores exact
 source bytes, rebuilds and passes both cases again. The first internal mutation
 removed only one store and correctly still passed via the exporter callback;
 that redundant path is not a test failure or application defect.
-Final-source gates remain required. A new candidate extension fills more than
+Final-source gates remain required at this checkpoint. Candidate `b28cd333`
+fills more than
 one screen with computed cmd output, then searches the oldest retained answer
 through actual copy mode after detach/reattach. A missing-query partner must
 show not-found; the found answer must appear separately from its search prompt.
-It exits with q, without touching any clipboard. Execution remains pending.
+It exits with q, without touching any clipboard. Actual built and hosted ZIP
+runs pass this history case on both architectures in `native-copy.c1d7418e`
+(5.54–5.75s each); the context and both real copy cases also pass again.
+The final Mac sanitizer gate follows the serial order used by GitHub CI and
+the documented CTest command, retaining the unchanged latency assertion.
+The earlier parallel-two failure remains recorded, not called fixed.
 
 Earlier exact print-observer candidate `0aa464cd` passes65/65 GCC13.3 Release
 (148.01s),65/65 Apple Clang Release (193.18s), and53/53 each Windows target.
