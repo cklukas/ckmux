@@ -17,7 +17,7 @@
 
 namespace ckmtest {
 
-inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid) {
+inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE inspect = nullptr) {
     const HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ |
                                         PROCESS_DUP_HANDLE, FALSE, pid);
     if (!process) return std::nullopt;
@@ -38,6 +38,14 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid) {
         PSS_HANDLE_ENTRY entry{};
         walked = ::PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry));
         if (walked != ERROR_SUCCESS) break;
+        if (entry.Handle == inspect) {
+            std::fprintf(stderr, "Observer witness flags=%u type=%u type-name-bytes=%u name-bytes=%u\n",
+                static_cast<unsigned int>(entry.Flags), static_cast<unsigned int>(entry.ObjectType),
+                static_cast<unsigned int>(entry.TypeNameLength),
+                static_cast<unsigned int>(entry.ObjectNameLength));
+            if (entry.TypeName) std::fprintf(stderr, "Observer witness type=%.*ls\n",
+                static_cast<int>(entry.TypeNameLength / sizeof(wchar_t)), entry.TypeName);
+        }
         if ((entry.Flags & PSS_HANDLE_HAVE_NAME) && entry.ObjectName) {
             // PSS lengths are bytes, and these buffers need not be NUL terminated.
             if (entry.ObjectNameLength % sizeof(wchar_t) != 0) {
