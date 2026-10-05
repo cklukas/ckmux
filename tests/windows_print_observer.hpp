@@ -64,6 +64,31 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
             static_cast<unsigned long>(kind), console ? 1 : 0,
             static_cast<unsigned long>(status), static_cast<unsigned long>(length),
             static_cast<unsigned long>(final_length), static_cast<unsigned long>(::GetLastError()));
+        DWORD pipe_flags = 0;
+        if (kind == FILE_TYPE_PIPE && ::GetNamedPipeInfo(duplicate, &pipe_flags, nullptr, nullptr, nullptr)) {
+            using QueryFile = NTSTATUS (NTAPI*)(HANDLE, IO_STATUS_BLOCK*, void*, ULONG,
+                                                FILE_INFORMATION_CLASS);
+            const FARPROC file_address = module ? ::GetProcAddress(module, "NtQueryInformationFile") : nullptr;
+            QueryFile query_file = nullptr;
+            static_assert(sizeof(query_file) == sizeof(file_address));
+            std::memcpy(&query_file, &file_address, sizeof(query_file));
+            IO_STATUS_BLOCK io{};
+            // Microsoft's FILE_INFORMATION_CLASS FileNameInformation is 9;
+            // its layout is the byte count followed by WCHAR filename data.
+            const auto file_status = query_file ? query_file(duplicate, &io, buffer.data(),
+                static_cast<ULONG>(buffer.size()), static_cast<FILE_INFORMATION_CLASS>(9)) :
+                static_cast<NTSTATUS>(-1);
+            const auto* file_name = reinterpret_cast<const FILE_NAME_INFO*>(buffer.data());
+            std::fprintf(stderr, "Observer pipe filename status=%08lx bytes=%lu\n",
+                static_cast<unsigned long>(file_status), static_cast<unsigned long>(file_name->FileNameLength));
+            if (file_status >= 0 && file_name->FileNameLength % sizeof(wchar_t) == 0 &&
+                file_name->FileNameLength <= buffer.size() - offsetof(FILE_NAME_INFO, FileName)) {
+                (void)::CloseHandle(duplicate);
+                if (file_name->FileNameLength == 0) return std::wstring{};
+                return L"\\Device\\NamedPipe" + std::wstring(file_name->FileName,
+                    file_name->FileNameLength / sizeof(wchar_t));
+            }
+        }
         (void)::CloseHandle(duplicate);
         if (final_length > 0 && final_length < final_name.size())
             return std::wstring(final_name.data(), final_length);
