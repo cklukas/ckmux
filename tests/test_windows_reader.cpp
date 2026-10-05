@@ -154,10 +154,12 @@ void print_and_save(std::string_view format) {
     CK_CHECK(click_on_row(reader, "Keep capturing", "Keep"));
     CK_CHECK(click_on_row(reader, "Cancel", "OK"));
     CK_CHECK(reader.stops_seeing("Keep capturing"));
-    const auto kept = reader.find_cell("PRINT");
+    // The child readiness marker also contains PRINT. Require the actual
+    // framed button rather than clicking text inside the child's terminal.
+    const auto kept = reader.find_cell("[ PRINT");
     CK_CHECK(kept.has_value());
     if (!kept) return;
-    reader.click(kept->first, kept->second + 2);
+    reader.click(kept->first, kept->second + 4);
     CK_CHECK(reader.sees("1 capture"));
     CK_CHECK(reader.sees("Printed by the program"));
     CK_CHECK(!saved_capture(folder));

@@ -17,6 +17,13 @@ an explicit absolute CKMUX_TEST_BINARY for actual packaged-executable checks
 and refuses an invalid selection instead of silently testing the build copy.
 The candidate requires native execution and final integration before landing.
 
+The first strict native compile rejects a deprecated C++20 path helper;
+the candidate uses the standard UTF-8 constructor instead. The next native
+run reaches print capture and policy acceptance, but the job-list click finds
+PRINT in the child's readiness text rather than its frame button. The fixture
+now requires the bracketed frame label; no application/library change follows
+from that misdirected click. The saved-file assertions still require execution.
+
 ### Actual client graphics candidate — 2026-10-05
 
 Two additional native reader cases launch a real child through the actual
