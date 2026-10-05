@@ -111,6 +111,15 @@ CK_TEST(native_actual_client_renders_child_sixel_and_keeps_it_contained_during_r
     }
     CK_CHECK(red_picture(reader));
     check_picture_containment(reader);
+    if (!red_picture(reader)) {
+        reader.press("\x02" "c");
+        reader.press("set /a 929*59\r");
+        const bool responding = reader.sees("54811");
+        graphic_child(reader, "--graphics-generator");
+        reader.settle(1200);
+        std::fprintf(stderr, "Native second-terminal diagnostics: responding=%d red-picture=%d\n",
+            responding ? 1 : 0, red_picture(reader) ? 1 : 0);
+    }
     reader.client->resize({80, 24}, {9, 18});
     reader.settle(800);
     CK_CHECK(reader.client->snapshot().cells == (ckv::Size{80, 24}));
