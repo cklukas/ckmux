@@ -14,8 +14,10 @@ Current x64 and ARM64 candidates have passed full fresh-standard-user ZIP and
 per-user MSI checks: installed file verification, real detached-server and shell
 persistence after starter exit, explicit complete shutdown, repair and uninstall,
 including PATH and user-data preservation. These are not published release
-packages. Packaged graphics and the live Windows Terminal walkthrough remain
-required before release.
+packages. The matching downloaded CI ZIPs also pass actual contained graphics,
+text/ANSI print saving, Unicode clipboard copy and reattached history checks on
+Windows 11 ARM64; x64 runs there under emulation. Final release gates and the
+live Windows Terminal walkthrough remain required before release.
 
 The intended release formats are a portable ZIP and a per-user MSI for x64 and
 ARM64. Select the package matching the operating system; use the ARM64 package
@@ -45,8 +47,9 @@ The selected runtime passes the library's 34 native child/outer-host cases on
 the named Windows 11 ARM64 verification host. Newer runtime 1.25.260930003
 fails two graphics negotiation/resize cases on that host; its cause is still
 under investigation. This pin is a checked distribution policy, not a claim
-of compatibility with every Microsoft runtime. ckmux's own packaged graphics
-acceptance remains required before a Windows release can be published.
+of compatibility with every Microsoft runtime. Matching ckmux CI ZIPs pass
+contained graphics and text-only fallback checks on that same named host.
+This does not replace the remaining Windows Terminal visual walkthrough.
 
 Without an app-local runtime, ckVision uses Windows' inbox ConPTY and reports
 its effective child profile without Sixel. An incomplete app-local deployment
@@ -73,6 +76,33 @@ cpack --config build/CPackConfig.cmake -C Release -G WIX
 For x64 use `-A x64 -DCKMUX_WINDOWS_ARCHITECTURE=x64`. A source-only build may
 omit `CKMUX_CONPTY_ARCHIVE` to use the honest no-Sixel inbox fallback. Such a
 build is not the intended graphics-enabled Windows release package.
+
+## Run native tests
+
+Run the full registered inventory through the same-user, limited,
+noninteractive test host. Select an existing absolute build directory and a
+new explicit temporary root. For example, after the ARM64 build above:
+
+```powershell
+$scratch = Join-Path $env:LOCALAPPDATA ('ckmux-native-tests-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $scratch | Out-Null
+./tools/windows/test-native.ps1 -BuildDirectory (Resolve-Path build).Path `
+  -TemporaryRoot $scratch -Configuration Release -ForceScheduledHost
+```
+
+The host captures CTest output, propagates failure and removes its own scheduled
+task. Logs remain beneath the selected root. Scheduling uses your account at
+limited privilege; it does not elevate the application or weaken containment
+checks. A denied scheduling operation is reported as a test-host failure.
+
+Real clipboard tests require a non-visible default logon window station,
+verify the actual client/server logon identities before any write and inspect
+the actual client's station afterward. Windows stations have separate
+clipboards. These tests fail closed in an interactive context: do not run the
+complete clipboard suite directly from Windows Terminal or change the guard
+to bypass that protection. The context is test infrastructure, not an
+application runtime requirement; ordinary ckmux use accesses your native
+clipboard through ckVision. See [Microsoft's window-station description](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations).
 
 ## Release verification
 

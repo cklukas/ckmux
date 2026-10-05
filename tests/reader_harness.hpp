@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -53,6 +54,19 @@ namespace ckmtest {
 using clock_type = std::chrono::steady_clock;
 
 inline std::filesystem::path binary_path() {
+#if defined(_WIN32)
+    // Explicit packaged-binary acceptance. An invalid selection must fail,
+    // never silently run the locally built application instead.
+    if (const char* const selected = std::getenv("CKMUX_TEST_BINARY")) {
+        std::u8string utf8;
+        for (const char byte : std::string_view(selected)) utf8 += static_cast<char8_t>(byte);
+        const std::filesystem::path candidate(utf8);
+        std::error_code error;
+        if (!candidate.is_absolute() || !std::filesystem::is_regular_file(candidate, error) || error)
+            throw std::runtime_error("the selected acceptance executable is unavailable");
+        return candidate;
+    }
+#endif
 #if defined(CKMUX_BINARY_PATH)
     return std::filesystem::path(CKMUX_BINARY_PATH);
 #else
@@ -317,6 +331,9 @@ inline void end_process(ckv::core::ProcessId child) {
 struct Reader {
     // A fixture may force incremental VT parsing to exercise partial frames.
     std::size_t drain_bytes = 64u << 10u;
+    // Acceptance-only observation after actual output processing. No hook is
+    // installed by ordinary cases; it cannot alter production application code.
+    std::function<void()> after_drain;
     ScratchDirectory home{"reader-client"};
     std::unique_ptr<ckv::term::TerminalSubsession> client;
 
@@ -381,6 +398,7 @@ struct Reader {
         const clock_type::time_point until = clock_type::now() + std::chrono::milliseconds(ms);
         while (clock_type::now() < until) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
@@ -415,6 +433,7 @@ struct Reader {
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             if (screen().find(needle) != std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -432,6 +451,7 @@ struct Reader {
             clock_type::now() + std::chrono::milliseconds(budget_ms);
         for (;;) {
             (void)client->drain(drain_bytes);
+            if (after_drain) after_drain();
             if (screen().find(needle) == std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(20));

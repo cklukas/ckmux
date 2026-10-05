@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 #include <cstdio>
 #include <string>
+#include <fcntl.h>
+#include <io.h>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -80,6 +82,44 @@ int print_controller() {
     }
 }
 
+int print_ui_controller() {
+    // This fixture specifies exact wire bytes. The CRT's default text mode
+    // otherwise translates our explicit CR LF into CR CR LF.
+    if (::_setmode(::_fileno(stdout), _O_BINARY) == -1) return 34;
+    const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (!::GetConsoleMode(output, &mode) ||
+        !::SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) return 30;
+    if (std::puts("PRINT-UI-READY") == EOF || std::fflush(stdout) != 0) return 31;
+    for (;;) {
+        const int byte = std::getchar();
+        if (byte == EOF) return std::ferror(stdin) != 0 ? 32 : 0;
+        if (byte != '1') continue;
+        if (std::fputs("\x1b[5iUI-SPOOL\x1b[1mBOLD\x1b[0m\r\n\x1b[4iPRINT-UI-DONE\r\n", stdout) == EOF ||
+            std::fflush(stdout) != 0) return 33;
+    }
+}
+
+int copy_controller() {
+    const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (!::SetConsoleCP(CP_UTF8) || !::SetConsoleOutputCP(CP_UTF8) ||
+        !::GetConsoleMode(output, &mode) ||
+        !::SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) ||
+        ::_setmode(::_fileno(stdout), _O_BINARY) == -1) return 33;
+    constexpr const char* witness = "NATIVE-COPY-\xCE\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80";
+    if (std::printf("\x1b[2J\x1b[H%s\r\nCOPY-CONTROLLER-READY\r\n", witness) < 0 ||
+        std::fflush(stdout) != 0) return 34;
+    char input[512]{};
+    while (std::fgets(input, static_cast<int>(sizeof(input)), stdin)) {
+        std::string line(input);
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (line == witness && (std::puts("INTERNAL-PASTE-VERIFIED") == EOF ||
+                               std::fflush(stdout) != 0)) return 35;
+    }
+    return std::ferror(stdin) != 0 ? 36 : 0;
+}
+
 int graphics(bool plain) {
     if (plain) {
         if (std::puts("VISIBLE-PAYLOAD #0;2;100;0;0 !36~") == EOF ||
@@ -130,6 +170,8 @@ int wmain(int argc, wchar_t** argv) {
     if (mode == L"--flood-second") return flood("second-child");
     if (mode == L"--flood-third") return flood("third-child");
     if (mode == L"--print-controller") return print_controller();
+    if (mode == L"--print-ui-controller") return print_ui_controller();
+    if (mode == L"--copy-controller") return copy_controller();
     if (mode == L"--stubborn-root") {
         if (!::SetConsoleCtrlHandler(ignore_control, TRUE)) return 28;
         return job_root(true);

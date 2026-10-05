@@ -111,6 +111,10 @@ Run the suite:
 ctest --test-dir build --output-on-failure
 ```
 
+For Windows builds, use the noninteractive native test host described in the
+[Windows guide](docs/windows.md#run-native-tests). Its real clipboard cases
+fail closed when run directly in an interactive window station.
+
 The documentation site is built from `docs/` by
 [ckdocs](https://cklukas.github.io/ck-git-hosting/operations/07-docs-sites.html),
 configured in `ckdocs.yml`. To preview it, or to check its links as the Pages
@@ -180,10 +184,15 @@ Native Windows compatibility remains in active development, not a supported
 packaged release. Native ARM64 development builds run on tested Windows 11
 25H2: owned named-pipe IPC, detached server/startup coordination, native waits,
 Unicode paths and owned-job process resources are implemented. Shared child
-lifecycle and host/resource services are provided by ckVision 0.1.15, not
-application workarounds. Generic child-pipe helpers, console-close persistence,
-the complete interactive Windows Terminal walkthrough, x64/ARM64 CI and
-install-tested Windows release packages remain unfinished.
+lifecycle and host/resource services are provided by released ckVision 0.1.18,
+not application workarounds. Blocking x64/ARM64 CI and supported x64 ASan are
+present. Both architecture package candidates pass fresh-standard-user ZIP/MSI
+installation, detached lifecycle, repair and uninstall checks. Actual downloaded
+CI ZIPs additionally pass graphics, print saving, native clipboard/refusal and
+reattached-history acceptance on Windows 11 ARM64, with x64 emulated there.
+The live Windows Terminal walkthrough, final release gates and publication
+remain unfinished; v0.1.7 still has no Windows assets. See the
+[Windows guide](docs/windows.md) for the precise host/runtime and test policy.
 
 ## Provenance
 
