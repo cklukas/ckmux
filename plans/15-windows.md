@@ -30,6 +30,11 @@ default text mode, which inserts another CR. It now selects binary stdout
 before generating the promised wire bytes; the22-byte ANSI expectation is
 unchanged. This is a fixture correction, not a capture/library workaround.
 
+The binary-stdout candidate passes both actual ARM64 print/save cases with
+13-byte text and22-byte ANSI documents. The fixture also queries the actual
+server/client process image paths, so packaged acceptance cannot silently
+launch the build copy. x64 and actual packaged repetitions remain required.
+
 ### Actual client graphics candidate — 2026-10-05
 
 Two additional native reader cases launch a real child through the actual

@@ -2,12 +2,35 @@
 // SPDX-License-Identifier: MIT
 // Actual ckmux client/server executables and the real system cmd.exe under
 // ckVision's native ConPTY adapter. No echoed helper stands in for a shell.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <array>
 #include "reader_harness.hpp"
+#include "platform/paths.hpp"
 #include <fstream>
 #include <iterator>
 
 namespace {
 using ckmtest::Reader;
+
+bool actual_binary(ckv::core::ProcessId identity) {
+    const HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+        static_cast<DWORD>(identity));
+    if (!process) return false;
+    std::array<wchar_t, 32768> image{};
+    DWORD length = static_cast<DWORD>(image.size());
+    const bool queried = ::QueryFullProcessImageNameW(process, 0, image.data(), &length) != FALSE;
+    (void)::CloseHandle(process);
+    if (!queried) return false;
+    const std::filesystem::path actual(std::wstring(image.data(), length));
+    std::error_code error;
+    const bool matches = std::filesystem::equivalent(actual, ckmtest::binary_path(), error) && !error;
+    std::fprintf(stderr, "Native acceptance PID %lld executable=%s selected-match=%d\n",
+        static_cast<long long>(identity), ckm::platform::path_text(actual).c_str(), matches ? 1 : 0);
+    return matches;
+}
+
 struct Fixture {
     std::filesystem::path endpoint;
     ckv::core::ProcessId server = -1;
@@ -19,10 +42,14 @@ struct Fixture {
     bool start() {
         server = ckmtest::start_server(endpoint);
         if (server <= 0) return false;
+        startup_stage = "actual server executable";
+        if (!actual_binary(server)) return false;
         startup_stage = "endpoint readiness";
         if (!ckmtest::wait_for_socket(endpoint)) return false;
         startup_stage = "client launch";
         if (!reader.start(endpoint, {110, 32}, environment)) return false;
+        startup_stage = "actual client executable";
+        if (!actual_binary(reader.client->process_id())) return false;
         startup_stage = "client desktop";
         if (!reader.sees("Session")) return false;
         // A rendered desktop is not shell readiness. cmd may still be
