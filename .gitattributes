@@ -1,0 +1,5 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+# The registry-generated reference is compared byte-for-byte on every host.
+# Do not rewrite its LF bytes under a Windows core.autocrlf=true checkout.
+docs/keys.md text eol=lf

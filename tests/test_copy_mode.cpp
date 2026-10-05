@@ -70,6 +70,11 @@ struct Fixture {
     Application app{terminal, clock, clipboard};
     ClientApp client{app, test_options()};
 
+    Fixture() {
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
+    }
+
     bool press(ckv::KeyChord chord) { return app.dispatch(ckv::KeyEvent{std::move(chord)}); }
     bool press_char(const std::string& text) {
         return press(ckv::KeyChord{ckv::Key::Char, ckv::Modifier::None, text});
@@ -460,6 +465,8 @@ CK_TEST(a_copy_reaches_every_target_the_configuration_named_in_order) {
     ckv::MemoryClipboardWriter clipboard;
     Application app{terminal, clock, clipboard};
     ClientApp client{app, std::move(options)};
+    ckmtest::check_live_terminal_children(client.desktop());
+    ckmtest::settle_live_terminal_children(client.desktop());
     app.step(clock.now_nanos());
     auto* const view = dynamic_cast<ckv::widgets::TerminalView*>(app.focused());
     CK_CHECK(view != nullptr);
@@ -504,6 +511,8 @@ CK_TEST(one_configured_copy_aggregates_host_and_helper_refusals_and_keeps_the_te
     };
     options.clipboard_problem = [] { return "helper could not start"; };
     ClientApp client{app, std::move(options)};
+    ckmtest::check_live_terminal_children(client.desktop());
+    ckmtest::settle_live_terminal_children(client.desktop());
     if (!yank_first_line(app, "preserved text")) return;
     CK_CHECK(writer.attempts == 1 && helper_attempts == 1);
     CK_CHECK(client.copy_mode() == nullptr);
@@ -561,6 +570,8 @@ CK_TEST(a_configured_copy_uses_the_library_helper_bridge_and_preserves_failed_se
         };
         options.clipboard_problem = [&] { return problem; };
         ClientApp client{app, std::move(options)};
+        ckmtest::check_live_terminal_children(client.desktop());
+        ckmtest::settle_live_terminal_children(client.desktop());
         // Dispatch the real prefix, copy-mode and yank keys through Application.
         if (!yank_first_line(app, "helper selection")) return;
         CK_CHECK(helper.calls == 1);
@@ -589,6 +600,8 @@ CK_TEST(a_configured_helper_without_a_launch_bridge_is_not_silently_accepted) {
     options.settings.clipboard = {{ckm::ClipboardTarget::Kind::Pbcopy, {}}};
     options.clipboard_writer = {};
     ClientApp client{app, std::move(options)};
+    ckmtest::check_live_terminal_children(client.desktop());
+    ckmtest::settle_live_terminal_children(client.desktop());
     if (!yank_first_line(app, "no bridge")) return;
     CK_CHECK(client.internal_clipboard() == "no bridge");
     CK_CHECK(app.is_modal());

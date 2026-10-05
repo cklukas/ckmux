@@ -5,6 +5,29 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Hosted checkout and copy-fixture correction candidate — 2026-10-05
+
+VS2026 configure/build now succeeds in every native CI37250470689 lane at
+publice03b919. x64 Release and ARM64 Release run46/47, failing only the exact
+checked-in/generated key-reference comparison. x64ASan runs45/47, additionally
+failing32 copy-mode assertions. The complete clean0202d7 UI candidate on local
+ARM64 similarly runs47/48, failing only that documentation comparison; its
+68-case client-smoke entry passes. These are red gates, not native completion.
+
+The x64 hosted input manifest's docs/keys.md SHA256698ba7aecf36df218e30e49de8ccf5d03d585c543d2cd383b24afd6631b14408
+exactly matches the committed LF reference converted to CRLF. The committed
+LF bytes hash05d372259aa72871d70d3ce5e18b441ec267a5bc4ed15b2e49cbda50010d485f.
+An explicit Git attribute keeps this byte-compared artifact LF even with
+core.autocrlf=true; the assertion and generated UTF8/LF contract stay intact.
+
+Copy fixtures previously injected selection text before any actual native
+child readiness observation. They now require positive live identity and the
+existing transformed child response before injecting text, including every
+custom helper/refusal fixture. No production output or clipboard behavior is
+suppressed or changed. Whether this resolves hosted x64ASan remains to be
+verified; passing uninstrumented ARM64 is not x64ASan proof. No library
+workaround, Windows release, live acceptance or WP55–57 completion is claimed.
+
 ### Client UI native-equivalence candidate — 2026-10-05
 
 The full client-smoke suite now registers on Windows with actual build-owned
