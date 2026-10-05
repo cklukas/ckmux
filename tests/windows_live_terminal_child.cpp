@@ -79,11 +79,32 @@ int print_controller() {
             std::fflush(stdout) != 0) return 24;
     }
 }
+
+int graphics(bool plain) {
+    if (plain) {
+        if (std::puts("VISIBLE-PAYLOAD #0;2;100;0;0 !36~") == EOF ||
+            std::fflush(stdout) != 0) return 27;
+        return 0;
+    }
+    const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (!::GetConsoleMode(output, &mode) ||
+        !::SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) return 28;
+    // Force a raster without probing: the application's no-graphics policy
+    // must protect the reader even when a child ignores its advertisement.
+    // Clear the earlier printable partner and the shell's command echo first.
+    if (std::fputs("\x1b[2J\x1b[H\x1bPq\"1;1;36;18#0;2;100;0;0!36~-!36~-!36~\x1b\\"
+                   "\x1b[4;1HNATIVE-GRAPHIC-DONE\r\n", stdout) == EOF ||
+        std::fflush(stdout) != 0) return 29;
+    return 0;
+}
 }
 
 int wmain(int argc, wchar_t** argv) {
     const bool command = argc == 3 && std::wstring(argv[1]) == L"-c";
     const std::wstring mode = command ? argv[2] : (argc == 2 ? argv[1] : L"");
+    if (mode == L"--graphics-visible") return graphics(true);
+    if (mode == L"--graphics-generator") return graphics(false);
     if (mode == L"--exit-seven") return 7;
     if (mode == L"--ran-exit-three") {
         if (std::puts("ran") == EOF || std::fflush(stdout) != 0) return 25;

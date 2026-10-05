@@ -331,6 +331,9 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
         if (!ensure_connected()) return;
         proto::NewSession ask;
         ask.name = name;
+        // UI children are opened only after Attach and the capability grace
+        // below. CLI session creation still deliberately spawns headlessly.
+        ask.spawn_first = 0;
         waiting_for_a_new_session = true;
         session.request(ask);
     };
@@ -702,6 +705,7 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
                 waiting_for_a_new_session = true;
                 startup_decided = false;
                 proto::NewSession ask;
+                ask.spawn_first = 0;
                 session.request(ask);
                 return;
             }

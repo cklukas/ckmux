@@ -111,6 +111,25 @@ CK_TEST(native_terminal_exit_codes_and_silent_live_state_come_from_real_children
     CK_CHECK(quiet.exit_status() == 0);
 }
 
+CK_TEST(native_graphic_child_is_decoded_by_the_application_terminal_adapter) {
+    Terminals terminals(settings());
+    auto launch = spec("--graphics-generator");
+    launch.pixel_width = launch.columns * 9;
+    launch.pixel_height = launch.rows * 18;
+    auto& terminal = terminals.open(launch);
+    CK_CHECK(terminal.session().profile().sixel);
+    CK_CHECK(pump(terminals, [&] { return terminal.exit_status().has_value(); }));
+    CK_CHECK(terminal.exit_status() == 0);
+    CK_CHECK(text(terminal).find("NATIVE-GRAPHIC-DONE") != std::string::npos);
+    const auto snapshot = terminal.snapshot();
+    CK_CHECK(snapshot.rasters.size() == 1U);
+    if (snapshot.rasters.size() != 1U) return;
+    CK_CHECK(snapshot.rasters.front().image != nullptr);
+    if (!snapshot.rasters.front().image) return;
+    const auto pixel = snapshot.rasters.front().image->pixel(0, 0);
+    CK_CHECK(pixel.r == 255 && pixel.g == 0 && pixel.b == 0 && pixel.a == 255);
+}
+
 CK_TEST(native_respawn_keeps_identity_command_and_current_child_observed_geometry) {
     Terminals terminals(settings());
     auto& terminal = terminals.open(spec("--geometry-exit"));
