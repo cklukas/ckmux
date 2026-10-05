@@ -36,7 +36,9 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
         return std::nullopt;
     }
     DWORD console_mode = 0;
-    if (::GetFileType(duplicate) == FILE_TYPE_CHAR && ::GetConsoleMode(duplicate, &console_mode)) {
+    const DWORD kind = ::GetFileType(duplicate);
+    const BOOL console = ::GetConsoleMode(duplicate, &console_mode);
+    if (kind == FILE_TYPE_CHAR && console) {
         // A positively identified console handle is not a printer port. NT
         // object-name queries can reject ConDrv's console pseudo-handles.
         (void)::CloseHandle(duplicate);
@@ -53,12 +55,21 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     // ObjectNameInformation is class 1 in the Microsoft diagnostic pattern.
     const auto status = query ? query(duplicate, static_cast<OBJECT_INFORMATION_CLASS>(1),
         buffer.data(), static_cast<ULONG>(buffer.size()), &length) : static_cast<NTSTATUS>(-1);
-    (void)::CloseHandle(duplicate);
     if (status < 0 || length > buffer.size()) {
-        std::fprintf(stderr, "Observer File name status=%08lx length=%lu\n",
-                     static_cast<unsigned long>(status), static_cast<unsigned long>(length));
+        std::array<wchar_t, 32768> final_name{};
+        const DWORD final_length = ::GetFinalPathNameByHandleW(duplicate, final_name.data(),
+            static_cast<DWORD>(final_name.size()), FILE_NAME_OPENED | VOLUME_NAME_NT);
+        std::fprintf(stderr, "Observer File handle=%p kind=%lu console=%d name status=%08lx "
+            "length=%lu final-length=%lu final-error=%lu\n", remote,
+            static_cast<unsigned long>(kind), console ? 1 : 0,
+            static_cast<unsigned long>(status), static_cast<unsigned long>(length),
+            static_cast<unsigned long>(final_length), static_cast<unsigned long>(::GetLastError()));
+        (void)::CloseHandle(duplicate);
+        if (final_length > 0 && final_length < final_name.size())
+            return std::wstring(final_name.data(), final_length);
         return std::nullopt;
     }
+    (void)::CloseHandle(duplicate);
     const auto* name = reinterpret_cast<const UNICODE_STRING*>(buffer.data());
     if (name->Length == 0) return std::wstring{};
     const auto start = reinterpret_cast<std::uintptr_t>(buffer.data());
