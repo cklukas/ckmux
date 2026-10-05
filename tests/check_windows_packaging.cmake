@@ -9,7 +9,8 @@ if(NOT DEFINED CKMUX_PACKAGE_CASE)
     # This contract check complements, and does not replace, installed execution.
     file(READ "${CKMUX_SOURCE_DIR}/.github/workflows/release.yml" workflow)
     foreach(required IN ITEMS "windows-2025-vs2026" "windows-11-vs2026-arm"
-            "needs: [package, windows-package, homebrew]" "pattern: packages-*"
+            "needs: [package, windows-package, windows-x64-install, homebrew]" "pattern: packages-*"
+            "windows-x64-install:" "windows-install-inputs-x64"
             "test-package.ps1" "CKMUX_CONPTY_ARCHIVE=" "foreach($generator in @('ZIP','WIX'))")
         string(FIND "${workflow}" "${required}" found)
         if(found EQUAL -1)

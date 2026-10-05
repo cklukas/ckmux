@@ -28,6 +28,24 @@ destruction fixture's immediate handle sample also failed; like the retained
 Unix counterpart, it now waits within a bounded deadline for asynchronous job
 termination. Production close and containment behavior are unchanged.
 
+The qualified1a0d95b candidate passes all nine new cases on ARM64 and
+x64-on-ARM64. A compiled respawn-geometry mutation fails the independently
+child-observed size assertion; exact source restore and rebuild pass full53/53
+on both targets. The earlier malformed-patch attempt stopped before mutation
+or compilation and is not credited as a regression verdict. Full final-source
+cross-platform gates and live/graphics acceptance remain required.
+
+The first actual release-matrix run37347991790 atpublic9a5a26c3 passes the
+ARM64 full installed gate and the x64 native52 gate/packaging, but x64 MSI
+installation fails1625. Its retained MSI log reports DisableMsi=1 and rejects
+non-assigned applications for standard users on the Windows Server image.
+The candidate keeps this policy intact: native x64 build/runtime stays on x64,
+while an additional Windows11 ARM64 job consumes the exact x64 packages and
+independently compiled inputs for full installation under x64 emulation.
+Publication depends on this job too. No native AMD64 desktop installation or
+live visual completion is inferred from emulation; the candidate needs actual
+hosted execution before its new release verdict can be credited.
+
 ### Current adoption and release-matrix preparation — 2026-10-05
 
 App120606b4/publice7914d51 consumes released ckVision0.1.18. Clean committed

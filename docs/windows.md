@@ -90,3 +90,13 @@ remain enabled. It requires exact absolute package/build/lifecycle inputs and
 an explicitly selected temporary root. Logs and records are preserved before
 the fixture removes its own account, profile and disposable package copies.
 This automated gate does not replace visible interaction in Windows Terminal.
+
+Native x64 build/runtime gates use the Windows Server x64 runner. That runner's
+default installer policy rejects unmanaged per-user MSI installation; the
+workflow does not weaken it. Full x64 ZIP/MSI installation therefore runs on
+Windows 11 ARM64 under supported x64 emulation, consuming those exact x64
+packages and separately fingerprinted compiled runtime inputs. Publication
+depends on that additional desktop installation job. This is not a claim of
+native AMD64 desktop installer or visual walkthrough coverage.
+Microsoft documents the non-elevated per-user restriction for
+[DisableMSI=1](https://learn.microsoft.com/en-us/windows/win32/msi/disablemsi).
