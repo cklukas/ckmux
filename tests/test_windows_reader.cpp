@@ -239,6 +239,8 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     if (pipe == INVALID_HANDLE_VALUE) return;
     const auto before = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(before.has_value());
+    if (before) for (const auto& object : *before)
+        std::fprintf(stderr, "Observer positive handle: %ls\n", object.c_str());
     CK_CHECK(before && std::any_of(before->begin(), before->end(), ckmtest::printer_endpoint));
     CK_CHECK(::CloseHandle(pipe) != FALSE);
     const auto after = ckmtest::named_handles(::GetCurrentProcessId());
