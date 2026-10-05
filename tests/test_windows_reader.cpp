@@ -255,6 +255,7 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     Reader child;
     auto launch = ckv::term::TerminalLaunchSpec::program(CKMUX_TEST_CHILD_PATH, {"--echo"});
     launch.working_directory = child.home.path().string();
+    launch.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
     child.client = ckv::term::launch_terminal_subsession(std::move(launch));
     CK_CHECK(child.sees("CKMUX-ECHO-READY"));
     const auto running = ckmtest::process_parents();
