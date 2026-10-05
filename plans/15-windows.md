@@ -5,6 +5,20 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Native terminal acceptance candidate — 2026-10-05
+
+The Unix server-terminal suite is not native Windows coverage. A new native
+suite exercises actual ConPTY children through the application's Terminals
+collection: non-recycled ids, exit status, silent live state, respawn identity
+and current geometry independently queried by the child, live resizing,
+actual child print capture/runtime denial, bounded multi-child draining and
+whole-tree termination/destruction observed through retained kernel handles.
+The helper's uppercase response distinguishes child progress from input echo.
+Native inventory becomes53; Windows CI/release require that exact inventory.
+These new cases are unverified candidates until native execution, compiled
+negative partners and full clean cross-platform gates pass. They do not replace
+wire/UI printing, packaged graphics or the live Windows Terminal walkthrough.
+
 ### Current adoption and release-matrix preparation — 2026-10-05
 
 App120606b4/publice7914d51 consumes released ckVision0.1.18. Clean committed
