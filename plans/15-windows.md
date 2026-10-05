@@ -5,6 +5,38 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Current adoption and release-matrix preparation — 2026-10-05
+
+App120606b4/publice7914d51 consumes released ckVision0.1.18. Clean committed
+gates pass Mac Release65/65 (189.69s), LLVM23 Debug ASanUBSan65/65 (299.08s),
+Debian13 ARM64 GCC13.3 strict Release65/65 (135.54s), Windows11 ARM64 MSVC
+Release52/52 (85.91s) and x64-on-ARM64 Release52/52 (91.34s). The filtered
+public gate passes65/65 (189.77s), strict docs, and all eight hosted37339799318
+jobs. Compiled old-pipe, old-CLI-consumer,64-source-cap and queue-limit negatives
+retain their earlier attributed scope. The reproduced final-reply defect is
+corrected and landed; the original intermittent picker cause is not proved by
+that separate reproduction. SDK contains generic process services only.
+
+Both current matching120606b4 x64 and ARM64 ZIP/MSI pairs pass full fresh
+standard-user installation: Unicode/spaced extraction, complete input/inventory
+hashes, real eight-client startup/one-server/eight-cmd lifecycle, client-exit
+persistence, explicit server/descendant shutdown, per-user context2/same SID,
+default LocalAppData installation, repair/uninstall and PATH/data preservation.
+The new public full-only fixture repeats those checks on both architectures.
+An invocation-omission negative fails at the immediate required lifecycle witness
+and verifies worker/host/dispatcher failure plus account/profile/workspace/task
+cleanup. The earlier omission attempt failed at a repair file-access error, not
+the intended assertion; it remains retained and is not credited as that negative.
+
+The release-matrix candidate adds separate VS2026 x64/ARM64 jobs, CMake4.4.4,
+WiX5.0.2, qualified runtime/static CRT/released SDK, full native inventory,
+matching ZIP/MSI/sidecars and full public installed acceptance. Publication
+depends on both Windows architectures; evidence artifacts are not release assets.
+Its seven policy cases and YAML/matrix contract checks pass, but final committed
+cross-platform/hosted workflow gates are still required. No Windows release,
+live desktop or packaged graphics completion is claimed. Historical checkpoints
+below retain their original bytes and verdicts, not current pending status.
+
 ### Final-reply transport correction candidate — 2026-10-05
 
 A native x64 full adoption run failed the last-session picker case while the
