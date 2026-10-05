@@ -504,13 +504,33 @@ CK_TEST(native_reader_detaches_and_reattaches_to_the_same_live_shell) {
     if (!ready(fixture)) return;
     auto& reader = fixture.reader;
     reader.press("set CKMUX_NATIVE_SURVIVOR=927\r");
+    // More output than fits on screen. Computed answers are absent from the
+    // input echo, so searching them after reattach proves retained history,
+    // not the command string or the search prompt itself.
+    reader.press("for /L %n in (1,1,75) do @(set /a 700000+%n*13& echo.)\r");
+    CK_CHECK(reader.sees("700975"));
+    CK_CHECK(reader.screen().find("700013") == std::string::npos);
     reader.press("\x02" "d");
     CK_CHECK(reader.gone());
     Reader replacement;
     const bool launched = replacement.start(fixture.endpoint);
     CK_CHECK(launched);
     if (!launched) return;
-    CK_CHECK(replacement.sees("13889"));
+    CK_CHECK(replacement.sees("700975"));
+    replacement.press("\x02" "[");
+    CK_CHECK(replacement.sees("COPY "));
+    replacement.press("/NATIVE-NO-SUCH-HISTORY-ITEM\r");
+    CK_CHECK(replacement.sees("not found"));
+    replacement.press("/700013\r");
+    CK_CHECK(replacement.stops_seeing("not found"));
+    // Search text is also present on the status row. Require a separate
+    // payload row containing the computed oldest answer too.
+    const auto rows = replacement.rows();
+    CK_CHECK(std::count_if(rows.begin(), rows.end(), [](const std::string& row) {
+        return row.find("700013") != std::string::npos;
+    }) >= 2);
+    replacement.press("q");
+    CK_CHECK(replacement.stops_seeing("COPY "));
     replacement.press("set /a CKMUX_NATIVE_SURVIVOR*23\r");
     CK_CHECK(replacement.sees("21321"));
     replacement.press("\x02" "d");

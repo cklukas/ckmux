@@ -5,6 +5,70 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Native clipboard and current integration checkpoint — 2026-10-05
+
+Isolated test candidate `caeb3394` drives actual ckmux executable copy-mode
+entry, search and yank with a child-generated Unicode line. It reads real
+CF_UNICODETEXT, then holds the clipboard open while the actual client tries
+another copy: the warning must be visible, prior external content preserved,
+internal paste must reach the real child, and a new copy after unlock must
+publish the exact Unicode text. No clipboard adapter is injected into ckmux.
+Both MSVC ARM64 and x64 strict Release builds pass the context control and
+both actual copy cases, as do the matching downloaded hosted `d0c9a920` ZIPs
+in `native-copy.ce82cbae`. Two-case times are11.21–11.65s. This native host is
+Windows11 ARM64; x64 is emulated, not a native AMD64 desktop walkthrough.
+
+These tests never use the interactive clipboard. Before any clipboard write,
+the caller must have a non-visible system-created service station whose name
+matches its token's AuthenticationId. Both actual client/server tokens must
+match that noninteractive logon identity. The non-inheriting ckVision launch
+sets no explicit desktop, so Windows selects that logon's default station.
+After real copy, native handle inventories independently identify the actual
+client's matching service station. Failure of any guard fails the case;
+there is no interactive fallback or skip. CI and release explicitly select
+the existing same-user limited noninteractive scheduled test host.
+See [Microsoft's process connection rules](https://learn.microsoft.com/en-us/windows/win32/winstation/process-connection-to-a-window-station)
+and [window-station clipboard ownership](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations).
+
+Initial candidate `7f26345` looked for a Unicode dash in the rendered copy
+caption and failed before yank. The corrected `0cad90d` uses the unambiguous
+COPY-plus-space caption, not the child's NATIVE-COPY text. It passes the
+actual Unicode/refusal/internal-paste/recovery assertions; its remaining
+station-name check exposed PSS including a trailing NUL in named user-object
+lengths. The final test instrumentation strips that one terminator before
+exact comparison. These were fixture defects; no application/library behavior
+changed. Compiled copy-omission negatives `native-copy-negative.81b12779`
+pass: external publication omission fails the exact Unicode assertion; both
+internal storage paths omitted fail the real child paste witness. Each actual
+production mutation compiles, changes the application hash, restores exact
+source bytes, rebuilds and passes both cases again. The first internal mutation
+removed only one store and correctly still passed via the exporter callback;
+that redundant path is not a test failure or application defect.
+Final-source gates remain required. A new candidate extension fills more than
+one screen with computed cmd output, then searches the oldest retained answer
+through actual copy mode after detach/reattach. A missing-query partner must
+show not-found; the found answer must appear separately from its search prompt.
+It exits with q, without touching any clipboard. Execution remains pending.
+
+Earlier exact print-observer candidate `0aa464cd` passes65/65 GCC13.3 Release
+(148.01s),65/65 Apple Clang Release (193.18s), and53/53 each Windows target.
+Its filtered public `5f3d6d88` passes65/65 and strict docs (190.90s). Native
+print-save/observation and compiled detector controls also pass against both
+built and actual hosted ZIP executables. The macOS LLVM23 Debug ASan/UBSan
+full gate is64/65: flood worst latency6766.3ms exceeds its unchanged5000ms
+budget. Three sequential unchanged core-promise suite repeats pass, with
+worst attached latency1727.0–1759.1ms; this does not explain or cancel the
+failed full gate. The earlier Mac close-title/flood-footer failures likewise
+remain retained. No sanitizer diagnostic occurred in this latency failure.
+
+Hosted `d0c9a920` CI37356424942 passes all eight jobs. Release37357093153
+passes both Windows package/install jobs, Linux and Homebrew, but Mac fails
+the close-dialog title assertion and publication is skipped. Latest published
+ckmux is still0.1.7 without Windows assets; latest released library is0.1.18.
+Native clipboard and print tests add no new ckVision gap or app workaround.
+Remaining: final source integration, full native behavior audit, the Windows
+Terminal GUI walkthrough, release publication and downloaded released assets.
+
 ### Native print/save and packaged launch acceptance candidate — 2026-10-05
 
 Two native reader cases drive an actual child through the client/server print
