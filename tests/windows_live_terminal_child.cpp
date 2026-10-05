@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 #include <cstdio>
 #include <string>
+#include <fcntl.h>
+#include <io.h>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -81,6 +83,9 @@ int print_controller() {
 }
 
 int print_ui_controller() {
+    // This fixture specifies exact wire bytes. The CRT's default text mode
+    // otherwise translates our explicit CR LF into CR CR LF.
+    if (::_setmode(::_fileno(stdout), _O_BINARY) == -1) return 34;
     const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
     if (!::GetConsoleMode(output, &mode) ||

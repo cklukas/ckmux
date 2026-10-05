@@ -24,6 +24,12 @@ PRINT in the child's readiness text rather than its frame button. The fixture
 now requires the bracketed frame label; no application/library change follows
 from that misdirected click. The saved-file assertions still require execution.
 
+The corrected native click reaches Save: text passes and ANSI preserves23
+bytes ending CR CR LF. The generator wrote an explicit CR LF through the CRT's
+default text mode, which inserts another CR. It now selects binary stdout
+before generating the promised wire bytes; the22-byte ANSI expectation is
+unchanged. This is a fixture correction, not a capture/library workaround.
+
 ### Actual client graphics candidate — 2026-10-05
 
 Two additional native reader cases launch a real child through the actual
