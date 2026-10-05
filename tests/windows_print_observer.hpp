@@ -35,6 +35,13 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
                      static_cast<unsigned long>(::GetLastError()));
         return std::nullopt;
     }
+    DWORD console_mode = 0;
+    if (::GetFileType(duplicate) == FILE_TYPE_CHAR && ::GetConsoleMode(duplicate, &console_mode)) {
+        // A positively identified console handle is not a printer port. NT
+        // object-name queries can reject ConDrv's console pseudo-handles.
+        (void)::CloseHandle(duplicate);
+        return std::wstring{};
+    }
     using Query = NTSTATUS (NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, void*, ULONG, ULONG*);
     const auto module = ::GetModuleHandleW(L"ntdll.dll");
     const FARPROC address = module ? ::GetProcAddress(module, "NtQueryObject") : nullptr;
