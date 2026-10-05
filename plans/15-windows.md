@@ -5,6 +5,45 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Exact hosted result and fragmented-dialog regression — 2026-10-05
+
+Public d477a856 CI37257763884 has finished: native x64/ARM64/x64ASan,
+macOS Release and all three Linux lanes pass. macOS ASan/UBSan runs63/64:
+the close-dialog case observes its title, then immediately samples four body
+strings without waiting for their delivery. The overall hosted run is red.
+An isolated fixture reproduces exactly those four failures by draining only
+128 bytes after initial readiness and sending the close key without a fixed
+settle delay. Waiting for each required body string instead passes three
+focused repeats and full local AppleClang21 Debug ASan/UBSan64/64, CTest0,
+254.49s. Production behavior and deadlines are unchanged. This test-only
+correction still requires all-platform integration, landing and hosted proof.
+
+The same two-file candidate also passes Mac Release64/64 (187.32s) and
+Debian13 ARM64 GCC13.3 Release/FORTIFY64/64 (132.89s). Native ARM64 MSVC
+rebuild is zero-warning6.82s; full native runs50/51 (80.36s), with all eight
+actual-client cases passing52.70s. The red entry is lifecycle's immediate
+child-PID lookup after server exit. An additional fixture correction retains
+actual child kernel handles, records identities, and waits for their exit
+within the original10s shutdown deadline; persistence past that deadline
+still fails. Its native repeat is pending. No production change, fully-green
+current candidate, new landing or publication is claimed from these results.
+
+The revised three-test-file frozen candidate's native full repeat now passes
+51/51, CTest0,79.37s, with source hashes unchanged afterward. This completes
+the native candidate repeat, not the remaining clean-commit/publication gate,
+live GUI acceptance, full equivalence or release-package work.
+
+Optional runtime deployment is being implemented generically upstream under
+ckVision D-134, not as application launch/installer behavior. Twelve packaging
+cases pass on Mac, Debian ARM64 GCC14.2 and Windows ARM64 MSVC17. A real
+helper-deployed Microsoft ConPTY1.24.260710001 passes all34 native library
+child/outer-host cases. ConPTY1.25.260930003 fails the same pixel-mouse and
+graphics/resize cases on two runs. The cause is not established; neither
+runtime shipping nor complete compatibility with1.25 is claimed. The library
+helper is uncommitted and unreleased; ckmux remains pinned to released16.
+Live Windows Terminal acceptance, remaining native equivalence and
+install-tested/published ZIP and installer artifacts remain open.
+
 ### Actual native client acceptance candidate — 2026-10-05
 
 The reader harness now uses ckVision's portable terminal factory. Windows
