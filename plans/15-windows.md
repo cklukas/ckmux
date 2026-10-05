@@ -5,6 +5,30 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Final-reply transport correction candidate — 2026-10-05
+
+A native x64 full adoption run failed the last-session picker case while the
+client remained alive. Separately, a deterministic pipe regression establishes
+that a late write after peer close discarded all eleven already-arrived bytes
+on three runs. Ordinary close without the late write retained them. The defect
+is in ckmux's IPC wrapper, not ckVision's process services.
+
+The candidate retires only outbound work after a write error, refuses further
+sends without growing queues, and preserves incoming bytes until read EOF or
+explicit close. Unix sockets use the same contract, including both move paths.
+The UI flush loop and CLI reply waiter consume final replies instead of closing
+or aborting at the write error. Explicit close and the outbound hard-limit policy
+remain whole-connection operations.
+
+Strict native x64-on-ARM64 and ARM64 regressions fail against the old pipe
+implementation (three native and four portable assertions), then pass three
+repeats on each target after the transport/UI correction. All eight actual
+reader cases pass on both targets. Mac Release's portable regression also
+passes. With the CLI fix omitted, the extended regression fails at the actual
+reply waiter; restoring it passes on x64. Full final-byte integration gates
+are pending; these focused results neither establish the cause of the
+original intermittent picker failure nor complete Windows acceptance.
+
 ### Released SDK18 adoption and current package candidate
 
 ckVision0.1.18/publicfbc83742 is released at2026-10-05T14:20:15Z after all

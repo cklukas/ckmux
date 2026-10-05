@@ -345,6 +345,12 @@ left them; payloads remain pull-only ([04](04-terminal-emulation.md) WP-PRINT).
 
 ## Flow control
 
+- **Write failure is not read EOF.** Once a native write fails, subsequent
+  sends/flushes fail without growing the queue or requesting write readiness.
+  Incoming bytes remain readable in budgeted passes, including final complete
+  frames sent before the peer closed. Only read EOF/failure, explicit close or
+  the outbound hard-limit policy ends the whole transport.
+
 - **Two marks, not one.** The 4 MiB high-water below is where a stream is in
   trouble; **256 KiB** is where sending more *screen* stops being worth doing.
   A delta describes a moment, and one still queued when the next tick comes

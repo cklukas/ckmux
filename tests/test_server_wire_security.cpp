@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "common/proto.hpp"
+#include "client/server_connection.hpp"
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "scratch_directory.hpp"
@@ -12,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -119,6 +121,76 @@ struct Fixture {
     }
 };
 } // namespace
+
+CK_TEST(stream_write_failure_preserves_final_reply_and_moves_preserve_write_failure) {
+    // Exercise the application-facing transport, not a protocol callback.
+    // Both an untouched reply and a partially consumed reply must survive.
+    for (const std::size_t prefix : {std::size_t{0}, std::size_t{5}, std::size_t{4093}}) {
+        ckmtest::ScratchDirectory scratch{"tail"};
+        const auto endpoint =
+#if defined(_WIN32)
+            scratch.path().filename();
+#else
+            scratch.path() / "s";
+#endif
+        ckm::platform::Listener listener;
+        CK_CHECK(listener.listen(endpoint) == ckm::platform::Listener::Status::Listening);
+        auto connection = ckm::platform::connect_to_server(endpoint);
+        CK_CHECK(connection.status == ckm::platform::ConnectStatus::Connected);
+        auto client = connection.take_stream();
+        ckm::platform::Listener::AcceptResult accepted;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do {
+            accepted = listener.accept_one();
+        } while (accepted.status == ckm::platform::Listener::AcceptStatus::Idle &&
+                 std::chrono::steady_clock::now() < deadline);
+        CK_CHECK(accepted.status == ckm::platform::Listener::AcceptStatus::Accepted);
+        auto server = accepted.take_stream();
+        if (!server.open() || !client.open()) return;
+        std::string reply(4093, '\0');
+        for (std::size_t i = 0; i != reply.size(); ++i) reply[i] = static_cast<char>(i % 251);
+        const bool cli_reply = prefix == reply.size();
+        const ckm::proto::Pong final_reply{123456789};
+        CK_CHECK(server.send(cli_reply ? reply + ckm::proto::encode(final_reply) : reply));
+        while (server.wants_write() && std::chrono::steady_clock::now() < deadline)
+            CK_CHECK(server.flush());
+        CK_CHECK(server.queued() == 0);
+        std::string received;
+        if (prefix != 0) {
+            while (received.size() != prefix && std::chrono::steady_clock::now() < deadline)
+                CK_CHECK(client.receive(received, prefix - received.size()));
+            CK_CHECK(received.size() == prefix);
+        }
+        server.close();
+        CK_CHECK(!client.send("late request"));
+        CK_CHECK(client.open());
+        CK_CHECK(client.queued() == 0);
+        CK_CHECK(!client.wants_write());
+        // Both move paths must retain the failed write state and buffered read.
+        ckm::platform::Stream moved(std::move(client));
+        client = std::move(moved);
+        CK_CHECK(!client.flush());
+        CK_CHECK(!client.send("a second late request"));
+        CK_CHECK(client.queued() == 0);
+        if (cli_reply) {
+            ckm::proto::FrameReader frames;
+            Message message;
+            CK_CHECK(ckm::client::await_message(client, frames, message));
+            const auto* pong = std::get_if<ckm::proto::Pong>(&message);
+            CK_CHECK(pong != nullptr);
+            if (pong != nullptr) CK_CHECK(pong->nonce == final_reply.nonce);
+            continue;
+        }
+        bool alive = true;
+        while (alive && std::chrono::steady_clock::now() < deadline) {
+            const auto before = received.size();
+            alive = client.receive(received, 3);
+            CK_CHECK(received.size() - before <= 3);
+        }
+        CK_CHECK(!alive);
+        CK_CHECK(received == reply);
+    }
+}
 
 CK_TEST(server_wire_oversized_advertised_payload_drops_only_the_offender) {
     Fixture fixture;

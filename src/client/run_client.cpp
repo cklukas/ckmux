@@ -963,18 +963,10 @@ int run_attached_client(ckv::term::Terminal& host, ckv::Clock& clock, RunOptions
             static_cast<int>(std::min<std::int64_t>(until > 0 ? until / 1'000'000 : 50, 50));
         wait_for_work(app, connection.stream, std::max(1, timeout_ms));
 
-        if (connection.stream.wants_write() && !connection.stream.flush()) {
-            // A flush that fails is the server going away mid-write, and the
-            // promise is the same as reading EOF three lines down: this client
-            // keeps running (WP-8). Quitting here was the pre-WP-8 answer, and
-            // it is why a reader who ended their last session could sometimes
-            // watch their whole ckmux vanish instead of getting the picker —
-            // whether the doomed request's flush beat the server's close was a
-            // coin toss. The bytes were for nobody; the reconnect throttle
-            // below decides what happens next.
-            connection.stream.close();
-            stop_showing_this_server();
-        }
+        // A doomed write must not discard the server's final incoming frames.
+        // The transport retires failed outgoing work; read EOF below ends the
+        // connection only after its remaining bytes have reached the decoder.
+        if (connection.stream.wants_write()) (void)connection.stream.flush();
         std::string arrived;
         const bool alive = !connection.stream.open() || connection.stream.receive(arrived);
         if (!arrived.empty() && !reader.append(arrived)) {
