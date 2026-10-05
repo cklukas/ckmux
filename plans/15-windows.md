@@ -5,6 +5,41 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Native CI infrastructure candidate — 2026-10-05
+
+Prepared three blocking lanes: Windows2025 x64 strict Release, Windows11
+ARM64 strict Release, and Windows2025 x64 MSVCASan RelWithDebInfo. All use
+the released pin in CMake, an explicit scratch root, audited47-entry native
+inventory and the complete native suite. MSVCASan currently supports x86/x64;
+native ARM64 does not claim ASan, UBSan or TSan coverage. Unsupported requests
+remain configuration errors rather than silently uninstrumented builds.
+Runner labels and sanitizer support checked against GitHub runner reference
+and Microsoft's AddressSanitizer documentation on2026-10-05.
+
+The test-only host uses an explicitly named, same-user limited scheduled task
+when the runner has uncontrolled job ancestry. The existing positive cases
+still verify actual created-child independence; restrictive ancestry is built
+and asserted inside the native contract. Host membership alone is not proof
+breakaway is impossible. No TaskScheduler path or library workaround enters
+production ckmux. Host registration, start, timeout and worker errors remain
+red, true CTest exits propagate, and the exact task is removed in finally.
+
+Native Windows11 ARM64 local host verification passes all47 unchanged entries
+under the forced scheduled path, CTest0,51.34s at parallel2, using the clean
+dc91d744 installed16 executable. An actual generated failing test returns
+CTest8, the parent fails and the exact temporary scheduled task is absent
+afterward. The initial wrapper stopped before CTest on its overly strict
+host-membership condition; that extra assumption was removed, not a child
+containment assertion. The final wrapper including task identity, handle-finally
+and explicit parent scratch passes47/47 again, CTest0,42.14s j2. All eight
+expanded workflow scripts parse on Windows PowerShell5.1 and YAML parses with
+all three native jobs non-advisory. Hosted x64/ARM64/ASan results are not yet
+available. This is preparation
+for WP56, not completion of WP53–57, live acceptance or Windows packaging.
+
+Sources: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+and https://learn.microsoft.com/en-us/cpp/sanitizers/asan?view=msvc-170 .
+
 ### Latest checkpoint — 2026-10-04, 23:39 UTC
 
 ckVision v0.1.16 is released at public `a38928cf` (private `b8aca7e5`),
