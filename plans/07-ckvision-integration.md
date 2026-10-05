@@ -2,6 +2,22 @@
 
 Plan 07 · Status: current · 2026-08-25 · [Index](README.md)
 
+Released cross-architecture executable inspection (2026-10-05): x64 Windows
+GetBinaryTypeW rejects the actual ARM64 system cmd.exe with193, while launching
+that identical absolute image succeeds and exits37. The native ARM64 caller
+accepts it. Generic read-only executable-header/host-architecture inspection
+belongs in ckVision, not an ARM shell exception here. Released ckVision0.1.18
+adds inspect_windows_process_image with malformed-file, Unicode-path,
+architecture and actual system-image execution tests. ckmux consumes it only
+for native image preflight; shell preferences and recursive ckmux launch refusal
+remain application policy. Upstream private42e20367/publicfbc83742 passes
+Mac/GCC Release230/230, Mac ASanUBSan+fuzz240/240, TSan229/229,
+Windows ARM64 and x64-on-ARM64224/224, benchmarks and filtered-public228/228
+with strict docs. Exact hosted37320737354 passes all seven jobs; v0.1.18
+is published at2026-10-05T14:20:15Z. This application candidate pins18;
+its final clean adoption gates remain required, and Windows completion is not
+claimed. Historical checkpoints below describe their own earlier snapshots.
+
 Windows integration checkpoint (2026-10-05): application privatef45c5a2e /
 public9f821819 passes exact eight-job CI37262790342. Generic optional pinned
 ConPTY deployment belongs upstream: ckVision private40e522c5/publicc89d0d7b
@@ -400,6 +416,7 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 
 | # | State | Item | For |
 |---|---|---|---|
+| U-WIN-PROCESS-IMAGE | Released upstream; current adoption gates pending | Generic read-only PE/COFF and host user-mode architecture inspection is released in ckVision0.1.18/publicfbc83742 after all seven hosted37320737354 jobs pass. ckmux replaces only the image-preflight call; shell preferences, recursive application launch refusal, server arguments/readiness and session policy remain here. No ARM-specific shell exception, loader implementation or server semantics enter the library. | WP-53/WP-56 |
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
 | U-WIN-CONPTY-DEPLOY | Released upstream as17; consumed by packaging | D-134 provides an opt-in generic CMake helper with an explicit archive/hash/architecture/target, PE checks, complete OS-compatible console hosts, build/install refresh, identity record and Microsoft MIT notice. No automatic network or mandatory runtime dependency. Release17 at publicc89d0d7b passes all seven CI37265637549 jobs and clean Mac/GCC/native/sanitizer gates; subsequent test-only static-CRT correction public21f2f685 passes all seven CI37277400770 jobs. Actual helper-deployed runtime1.24 passes all34 library cases; runtime1.25 still fails pixel-mouse and graphics/resize proof on the named host. ckmux calls only this helper and owns its archive/installer/release policy. Seven distribution-policy cases and their actual-call-omission negative pass; ARM64 prototype installer checks pass, but x64 and full installed/live acceptance remain required. | WP-55/WP-56 |
 | U-WIN-DETACHED-PROCESS | Released upstream and consumed here; live acceptance open | D-133 is a generic injected DetachedProcessLauncher with no server/session logic. Windows creates suspended, requests breakaway, verifies absence from ANY job before resume, and retains typed refusal plus separate bounded cleanup. Six native cases and a compiled guard-omission negative prove the boundary. Release v0.1.16 peels to public `a38928cf`, all seven CI37243144550 jobs green. ckmux supplies its executable, --server argument, endpoint and explicit cwd, then handles readiness itself. Controlled native ancestor closure and restrictive refusal pass in the 47/47 application candidate; live Windows Terminal close/reattach remains. Clean committed adopter verdicts are recorded with the landing. | WP-54/WP-55 |

@@ -5,6 +5,71 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Released SDK18 adoption and current package candidate
+
+ckVision0.1.18/publicfbc83742 is released at2026-10-05T14:20:15Z after all
+seven hosted37320737354 jobs pass. Private42e20367 is the frozen library gate:
+Mac/GCC Release230/230, Mac ASanUBSan+fuzz240/240, TSan229/229,
+Windows ARM64 and x64-on-ARM64224/224, benchmark gates and actual selected
+1.24 runtime34-case qualification on both targets; filtered-public228/228 and
+strict docs pass. New image inspection is generic; it knows no application role.
+This candidate prepares application version0.1.8 and pins that released SDK18.
+Full clean application adoption, current matching x64/ARM64 ZIP/MSI packages,
+fresh-profile installed-server lifecycle, live Windows Terminal, release matrix
+and published Windows artifacts remain required. Published application0.1.7
+still has no Windows assets. Historical checkpoints below retain their own pins.
+
+### Application queue-saturation candidate
+
+A sixth portable wire-security case creates100 empty sessions through the
+authenticated protocol, then repeatedly asks for their lists without reading
+one client's replies. It observes real production queue growth beyond the
+high-water mark, bounds retained bytes, requires only that offender's removal,
+and checks a concurrent healthy reader plus a subsequently accepted connection.
+No queue limit is lowered and no internal queue state is injected. Frozen
+application6a2f2ee passes all six wire cases: Mac Release19.32s, Debian13
+ARM64 GCC13.3 Release18.30s and native ARM64 MSVC17 Release58.97s, using
+installed17 on Unix and explicit co-development SDK42 on Windows. Mac compiled
+hard-limit omission fails the intended queue-bound and offender-removal checks;
+exact restoration/rebuild passes19.36s. The first native constant-false mutation
+fails compilation under MSVC's warning gate, so is not a regression verdict.
+Native server-only guard removal compiles but still passes because the pipe
+transport independently protects the same limit. Removing both guards changes
+both source files and the test executable, compiles zero-warning15.43s, fails
+the intended saturation case/CTest8 in61.12s; exact source restoration and
+rebuild14.65s pass all six cases63.61s. These are focused candidate verdicts,
+not final released18 application integration. Native CTest inventory stays52.
+
+### Application readiness beyond64 clients — candidate
+
+The existing130-source pipe test calls the library WindowsWaitSet directly;
+it does not establish ckmux Server/Poller dispatch. A new portable wire case
+creates67 authenticated application clients, sends all requests before stepping
+the server, requires the exact session reply for every client, retires the tail
+connection and accepts/serves a replacement while66 others remain. It drives
+the real Server::step/readiness/transport path on both platforms, not a handler
+or library-only wait probe. Five wire-security cases remain one CTest entry,
+so native inventory stays52. Frozen751b6611 native ARM64 execution passes all
+five cases51.34s; a compiled64-source cap changes source and executable, fails
+the intended67-client case/CTest8, then exact restoration/rebuild passes51.92s.
+Unix focused execution passes, and the later six-case saturation gate above
+retains this readiness case. This is application dispatch proof, not complete
+native/live acceptance or an independently installed released18 adopter gate.
+
+### Cross-architecture executable preflight correction candidate — 2026-10-05
+
+The clean x64-on-ARM64 application gate runs49/52: lifecycle lacks actual shell
+children, the native shell-host suite times out and actual readers observe
+terminal exit rather than a shell prompt. An independent strict native API
+diagnostic proves x64 GetBinaryTypeW returns193 for system cmd.exe while
+CreateProcessW of the same file succeeds and exits37. Native ARM64 accepts it.
+ckVision now prepares generic read-only PE-header/host-architecture inspection;
+the application replaces only its executable-validation call. No ARM-specific
+shell exception or process-launch implementation enters ckmux. Whether this
+fixes every failed scenario remains a native runtime gate, not an inference.
+Complete SDK gates/new release, adoption pin and clean application gates are
+still required before landing; release17 remains the published dependency.
+
 ### Verified integration and packaging preparation — 2026-10-05
 
 The fragmented-dialog and child-retirement fixture corrections are landed at

@@ -87,6 +87,13 @@ latest ckVision's shared lifecycle interface. The native implementation and
 blocking Windows CI are present; complete acceptance and a Windows release
 are still pending.
 
+The current Windows package candidate prepares application0.1.8 and pins
+released ckVision0.1.18 (2026-10-05). Application-level67-client readiness and
+queue-saturation cases have focused Mac, GCC and native ARM64 evidence, with
+compiled negative partners. Clean adoption and actual current ZIP/MSI lifecycle,
+the Windows release matrix and the live user-facing walkthrough remain required;
+the published0.1.7 release has no Windows assets.
+
 M0–M2 and the architecture-review remediation queue are complete. **WP-15**
 (M3's menu-driven acceptance walkthrough) and **WP-21** (M4's reference-app,
 vttest and changing-environment matrix) are in progress. **WP-24** is done:

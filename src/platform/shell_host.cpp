@@ -4,6 +4,7 @@
 #include "cvision/core/utf8.hpp"
 
 #if defined(_WIN32)
+#include "cvision/term/windows_process_image.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -35,9 +36,7 @@ bool usable_executable(std::string_view text) {
         std::wstring name = path.filename().native();
         for (wchar_t& c : name) if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + (L'a' - L'A'));
         if (name == L"ckmux.exe" || name == L"ckmux") return false;
-        DWORD kind = 0;
-        return ::GetBinaryTypeW(path.c_str(), &kind) != 0 &&
-               (kind == SCS_32BIT_BINARY || kind == SCS_64BIT_BINARY);
+        return ckv::term::inspect_windows_process_image(text).compatible();
     } catch (const std::system_error&) { return false; }
 }
 
