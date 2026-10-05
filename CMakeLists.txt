@@ -12,7 +12,7 @@ include(GNUInstallDirs)
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 0.1.15)
+set(CKMUX_CKVISION_VERSION 0.1.16)
 
 # Windows selects the actual native IPC/process/wait implementations below;
 # it is not a Unix compatibility environment. Acceptance and release status

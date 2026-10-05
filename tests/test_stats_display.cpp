@@ -7,8 +7,9 @@
 // today's frame. Driven through `execute_command` — the registry the menu
 // items themselves dispatch through — against a real ClientApp whose children
 // are real processes, because the numbers on the frame are real too.
-#include <stdlib.h>
-#include <unistd.h>
+#include "scratch_directory.hpp"
+#include "scoped_environment.hpp"
+#include "live_terminal_child.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -33,28 +34,18 @@ using ckm::client::ClientOptions;
 
 // A private config directory, told to the client through CKMUX_CONFIG so the
 // toggles' write-back lands here and never in the machine's real file. The
-// env var is process state: set in the constructor, cleared in the destructor,
+// env var is process state: set in the constructor, restored in the destructor,
 // so a case that fails cannot leak it into its neighbours.
 class ScratchConfigEnv {
 public:
     explicit ScratchConfigEnv(const std::string& name)
-        : directory_(std::filesystem::temp_directory_path() /
-                     ("ckmux-stats-" + name + "-" +
-                      std::to_string(static_cast<long long>(::getpid())))) {
-        std::error_code ignored;
-        std::filesystem::remove_all(directory_, ignored);
-        std::filesystem::create_directories(directory_, ignored);
-        ::setenv("CKMUX_CONFIG", path().c_str(), 1);
-    }
-    ~ScratchConfigEnv() {
-        ::unsetenv("CKMUX_CONFIG");
-        std::error_code ignored;
-        std::filesystem::remove_all(directory_, ignored);
+        : directory_("ckmux-stats-" + name), config_("CKMUX_CONFIG") {
+        config_.set_path(path());
     }
     ScratchConfigEnv(const ScratchConfigEnv&) = delete;
     ScratchConfigEnv& operator=(const ScratchConfigEnv&) = delete;
 
-    std::filesystem::path path() const { return directory_ / "ckmux.conf"; }
+    std::filesystem::path path() const { return directory_.path() / "ckmux.conf"; }
     std::string contents() const {
         std::ifstream in(path());
         std::ostringstream text;
@@ -63,14 +54,15 @@ public:
     }
 
 private:
-    std::filesystem::path directory_;
+    ckmtest::ScratchDirectory directory_;
+    ckmtest::ScopedEnvironment config_;
 };
 
 ClientOptions test_options() {
     ClientOptions options;
     // A program that simply stays alive, so a window has a live child without
     // the run depending on whose shell is installed.
-    options.settings.shell = "/bin/cat";
+    options.settings.shell = ckmtest::live_terminal_child();
     return options;
 }
 
@@ -90,6 +82,7 @@ CK_TEST(toggling_cpu_marks_every_window_at_once_and_writes_the_config) {
     CK_CHECK(app.execute_command(id_of(app, ckm::client::commands::kNewTerminal)));
     app.step(0);
     CK_CHECK(client.desktop().windows().size() == 2U);
+    ckmtest::check_live_terminal_children(client.desktop(), 2);
     for (const auto* window : client.desktop().windows()) CK_CHECK(window->footer().empty());
 
     // On: every window carries the readout at once — a live child's CPU may
@@ -139,6 +132,7 @@ CK_TEST(a_client_started_with_a_readout_on_shows_it_from_the_first_frame) {
     ClientApp client{app, std::move(options)};
     app.step(0);
     CK_CHECK(client.desktop().windows().size() == 1U);
+    ckmtest::check_live_terminal_children(client.desktop());
     const std::string footer{client.desktop().windows()[0]->footer()};
     CK_CHECK(footer.rfind("RSS ", 0) == 0);
     // A real unit on a real number: the child was measured, not invented.

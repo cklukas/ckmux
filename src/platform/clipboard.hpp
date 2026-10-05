@@ -4,7 +4,7 @@
 // Handing copied text to a helper program — `pbcopy`, `xclip`, or whatever a
 // reader named in `[terminal] clipboard` (the configuration spec).
 //
-// It is here rather than in the client because it forks: the client is
+// It is here rather than in the client because it launches helpers: the client is
 // deterministic and testable precisely because it does not, and a test that
 // exercised copy mode would otherwise depend on which clipboard helpers the
 // machine running it happens to have. `ClientOptions::clipboard_writer` is
@@ -13,6 +13,7 @@
 
 #include <string>
 #include <string_view>
+#include "cvision/core/process_runner.hpp"
 
 namespace ckm::platform {
 
@@ -28,8 +29,11 @@ namespace ckm::platform {
 // frozen multiplexer is a worse answer than a failed copy.
 inline constexpr int kClipboardIdleBudgetMs = 2000;
 
-// Runs `command` through `/bin/sh -c` and writes `text` to its standard
-// input. Returns whether the helper both started and exited successfully.
+// Runs the host's explicit command invocation through ckVision's injected
+// runner and writes text on private stdin. Success requires all input and a
+// known normal zero root exit. No native process or pipe implementation lives
+// here. Successful clipboard-holder descendants are explicitly released;
+// failure/timeout still cleans the library-owned group/job.
 //
 // The text goes on stdin and never into the command line: an argument is
 // visible to every process on the machine through `ps`, and what is being
@@ -42,15 +46,14 @@ inline constexpr int kClipboardIdleBudgetMs = 2000;
 // lands on and survives until something else redraws them. `diagnostics`, when
 // given, receives what the helper said (bounded — enough to name the problem,
 // not enough for a runaway helper to be a memory leak) so the failure can be
-// shown where a reader will actually read it. Nothing is written to it on
-// success worth showing unprompted.
+// shown where a reader will actually read it. Captured output remains available
+// even on success; the client shows it only when the copy failed.
 //
 // `idle_budget_ms` is the deadline above, as a parameter so a test does not
 // have to wait out the real one.
-#if !defined(_WIN32)
-bool write_to_command(const std::string& command, std::string_view text,
+bool write_to_command(ckv::core::ProcessRunner& runner, const ckv::core::ProcessLaunchSpec& launch,
+                      std::string_view text,
                       std::string* diagnostics = nullptr,
                       int idle_budget_ms = kClipboardIdleBudgetMs);
-#endif
 
 }  // namespace ckm::platform

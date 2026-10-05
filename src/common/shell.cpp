@@ -71,11 +71,17 @@ ShellLaunch shell_launch(const std::string& shell, bool login, std::string_view 
     return shell_launch(platform::shell_host(), shell, login, command);
 }
 
-ckv::core::TerminalLaunchSpec terminal_launch_spec(const ShellLaunch& launch) {
-    ckv::core::TerminalLaunchSpec spec = launch.windows_command
-        ? ckv::core::TerminalLaunchSpec::windows_command_processor(launch.executable, launch.windows_command->command)
-        : ckv::core::TerminalLaunchSpec::program(launch.executable, launch.arguments);
+ckv::core::ProcessLaunchSpec process_launch_spec(const ShellLaunch& launch) {
+    ckv::core::ProcessLaunchSpec spec = launch.windows_command
+        ? ckv::core::ProcessLaunchSpec::windows_command_processor(launch.executable, launch.windows_command->command)
+        : ckv::core::ProcessLaunchSpec::program(launch.executable, launch.arguments);
     spec.argv0 = launch.argv0;
+    return spec;
+}
+
+ckv::core::TerminalLaunchSpec terminal_launch_spec(const ShellLaunch& launch) {
+    ckv::core::TerminalLaunchSpec spec;
+    static_cast<ckv::core::ProcessLaunchSpec&>(spec) = process_launch_spec(launch);
     return spec;
 }
 

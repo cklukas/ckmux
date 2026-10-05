@@ -16,13 +16,14 @@
 // has, renaming to an empty string, and using two names that differ only in
 // case. Each is a way a "reject duplicates" rule can quietly take something
 // away from a reader that nobody meant to take.
-#if !defined(_WIN32)
-
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <system_error>
 #include <vector>
+#include <thread>
+#include "scratch_directory.hpp"
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
@@ -35,26 +36,10 @@ namespace {
 
 using ckm::proto::Message;
 
-std::filesystem::path private_socket(std::string_view name) {
-    const char* const base = std::getenv("TMPDIR");
-    std::filesystem::path directory =
-        std::filesystem::path(base != nullptr && *base != '\0' ? base : "/tmp");
-    directory /= "ckmux-names" + std::to_string(static_cast<unsigned long>(::getpid()));
-    std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
-    return directory / (std::string(name) + ".sock");
-}
-
-void forget(const std::filesystem::path& socket) {
-    std::error_code ignored;
-    std::filesystem::remove(socket, ignored);
-    std::filesystem::remove(std::filesystem::path(socket.string() + ".lock"), ignored);
-    std::filesystem::remove(socket.parent_path(), ignored);
-}
-
 ckm::Settings test_settings() {
     ckm::Settings settings;
-    settings.shell = "/bin/sh";
+    // All requests below explicitly decline the first child: session naming
+    // must not depend on a shell being installed on the host.
     settings.login_shell = false;
     settings.scrollback = 100;
     settings.max_fps = 30;
@@ -64,6 +49,7 @@ ckm::Settings test_settings() {
 // A server, a connected client, and the two answers a naming request can get:
 // the session list (it happened) or an `Error` (it did not).
 struct Fixture {
+    ckmtest::ScratchDirectory scratch;
     std::filesystem::path socket;
     ckv::ManualClock clock;
     ckm::server::Server server;
@@ -71,31 +57,34 @@ struct Fixture {
     ckm::proto::FrameReader reader;
 
     explicit Fixture(std::string_view name)
-        : socket(private_socket(name)),
-          server(ckm::server::Server::Options{(forget(private_socket(name)), private_socket(name)),
-                                              test_settings()},
-                 clock) {
+        : scratch("names-" + std::string(name)), socket(
+#if defined(_WIN32)
+              scratch.path().filename()
+#else
+              scratch.path() / "s"
+#endif
+          ), server(ckm::server::Server::Options{socket, test_settings()}, clock) {
         CK_CHECK(server.start() == ckm::server::Server::StartStatus::Listening);
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
         CK_CHECK(result.status == ckm::platform::ConnectStatus::Connected);
-        stream = ckm::platform::Stream(result.fd);
+        stream = result.take_stream();
         ckm::proto::Hello hello;
         hello.build = std::string(ckm::proto::kBuildIdentity);
         say(hello);
-        (void)settle();
+        CK_CHECK(settle().welcomed);
     }
 
     ~Fixture() {
         server.terminals().close_all();
-        forget(socket);
     }
 
-    void say(const Message& message) { (void)stream.send(ckm::proto::encode(message)); }
+    void say(const Message& message) { CK_CHECK(stream.send(ckm::proto::encode(message))); }
 
     // Steps the server and drains everything that came back, keeping the last
     // session list and the last error seen. Both are cleared first, so each
     // call answers about THIS request rather than about any before it.
     struct Answer {
+        bool welcomed = false;
         bool listed = false;
         bool refused = false;
         std::uint16_t code = 0;
@@ -104,16 +93,21 @@ struct Fixture {
         std::vector<ckm::proto::SessionInfo> sessions;
     };
 
-    Answer settle(int passes = 12) {
+    Answer settle() {
         Answer answer;
-        for (int pass = 0; pass < passes; ++pass) {
-            (void)server.step();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            CK_CHECK(stream.flush());
+            clock.advance(1'000'000);
+            CK_CHECK(server.step());
             std::string arrived;
-            (void)stream.receive(arrived);
-            if (!arrived.empty() && !reader.append(arrived)) break;
+            CK_CHECK(stream.receive(arrived));
+            if (!arrived.empty()) CK_CHECK(reader.append(arrived));
             Message message;
             while (reader.next(message) == ckm::proto::DecodeError::None) {
-                if (const auto* list = std::get_if<ckm::proto::SessionList>(&message)) {
+                if (std::holds_alternative<ckm::proto::HelloAck>(message)) {
+                    answer.welcomed = true;
+                } else if (const auto* list = std::get_if<ckm::proto::SessionList>(&message)) {
                     answer.listed = true;
                     answer.sessions = list->sessions;
                 } else if (const auto* error = std::get_if<ckm::proto::Error>(&message)) {
@@ -123,7 +117,10 @@ struct Fixture {
                     answer.context = error->context;
                 }
             }
-        }
+            if (answer.welcomed || answer.listed || answer.refused) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < deadline);
+        CK_CHECK(answer.welcomed || answer.listed || answer.refused);
         return answer;
     }
 
@@ -257,5 +254,3 @@ CK_TEST(the_name_the_server_invents_never_collides_with_one_a_reader_chose) {
     CK_CHECK(f.id_of(invented.sessions, "session-8") != 0);
     CK_CHECK(f.session_count() == 2);
 }
-
-#endif  // !defined(_WIN32)

@@ -36,5 +36,6 @@ ShellLaunch shell_launch(const ShellHost& host, const std::string& shell, bool l
                          std::string_view command = {});
 ShellLaunch shell_launch(const std::string& shell, bool login, std::string_view command = {});
 ckv::core::TerminalLaunchSpec terminal_launch_spec(const ShellLaunch& launch);
+ckv::core::ProcessLaunchSpec process_launch_spec(const ShellLaunch& launch);
 
 }  // namespace ckm

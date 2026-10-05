@@ -22,9 +22,11 @@
 #include <initializer_list>
 #include <memory>
 #include <fstream>
+#include <filesystem>
 #include <exception>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "client/cli.hpp"
@@ -33,12 +35,14 @@
 #include "client/run_client.hpp"
 #include "client/server_connection.hpp"
 #include "common/config.hpp"
+#include "common/shell.hpp"
 #include "platform/clipboard.hpp"
 #include "platform/paths.hpp"
 #include "platform/process.hpp"
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "cvision/term/file_trace_sink.hpp"
+#include "cvision/term/process_runner.hpp"
 #if defined(_WIN32)
 #include "cvision/term/windows_clock.hpp"
 #include "cvision/term/windows_terminal.hpp"
@@ -338,28 +342,33 @@ static int run_entry(int argc, char** argv) {
     options.settings = std::move(stored.settings);
     options.config_warnings = std::move(stored.warnings);
 
-    // Copying to a helper program forks, which the client deliberately does
-    // not do itself — the host supplies the one function that does.
+    // The host supplies the reusable library runner, never a UI-side native
+    // launch implementation. The monotonic clock and runner outlive this call.
     //
     // The helper's own output is captured and kept beside the call rather than
     // inherited: ckmux is drawing a screen on this process's stdout and stderr,
     // and a helper that prints "command not found" would print it into the
     // frame. The client asks for it when a copy fails, which is the only time
     // it means anything to a reader.
-#if !defined(_WIN32)
+    ckv::term::NativeProcessRunner clipboard_runner(clock);
     auto clipboard_problem = std::make_shared<std::string>();
-    options.clipboard_writer = [clipboard_problem](const std::string& command,
+    options.clipboard_writer = [clipboard_problem, &clipboard_runner](const std::string& command,
                                                    std::string_view text) {
         clipboard_problem->clear();
-        return ckm::platform::write_to_command(command, text, clipboard_problem.get());
+        if (command.empty()) { *clipboard_problem = "empty helper command"; return false; }
+        const auto host = ckm::platform::shell_host();
+        if (host.system_shell.empty() || !host.usable_executable || !host.usable_executable(host.system_shell)) {
+            *clipboard_problem = "system command processor is unavailable";
+            return false;
+        }
+        auto launch = ckm::process_launch_spec(ckm::shell_launch(host, host.system_shell, false, command));
+        std::error_code error;
+        const auto directory = std::filesystem::current_path(error);
+        if (error) { *clipboard_problem = "cannot determine helper working directory: " + error.message(); return false; }
+        launch.working_directory = ckm::platform::path_text(directory);
+        return ckm::platform::write_to_command(clipboard_runner, launch, text, clipboard_problem.get());
     };
     options.clipboard_problem = [clipboard_problem] { return *clipboard_problem; };
-#else
-    // Native publication is supplied by WindowsTerminal. The configured
-    // command-helper bridge remains a WP-53 gap (the ckVision integration spec and the specification).
-    // An absent hook preserves the internal copy and reports the existing
-    // typed refusal; it must not pretend a named command was executed.
-#endif
 
     // The menu-bar clock's time, and the calendar's today. This is the only
     // wall-clock reading ckmux takes, and it is taken here for the same reason

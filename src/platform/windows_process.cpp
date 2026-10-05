@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 #include "platform/process.hpp"
 #include "platform/paths.hpp"
-#include "cvision/term/windows_argv.hpp"
+#include "cvision/term/windows_detached_process.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -17,7 +17,8 @@ namespace ckm::platform {
 
 bool daemonize(const std::filesystem::path& log) {
     // start_server already creates a detached process with no inherited
-    // handles/job. A manually invoked --server leaves its console here too.
+    // handles/job after ckVision verifies independence before resume. A manually
+    // invoked --server leaves its console here too, but is not job-independent.
     (void)::FreeConsole();
     std::error_code error;
     std::filesystem::create_directories(log.parent_path(), error);
@@ -52,28 +53,27 @@ bool daemonize(const std::filesystem::path& log) {
 bool start_server(const std::filesystem::path& executable, const std::filesystem::path& socket,
                   std::string& problem) {
     problem.clear();
-    const auto& image = executable.native();
-    const auto& endpoint = socket.native();
-    const std::array<std::wstring_view, 3> arguments{image, L"--server", endpoint};
-    auto command = ckv::term::windows_argv_command_line(arguments);
-    if (!command || !executable.is_absolute()) {
+    const auto image = path_text(executable);
+    const auto endpoint = path_text(socket);
+    if (image.empty() || endpoint.empty() || !executable.is_absolute()) {
         problem = "cannot encode an absolute native server executable and endpoint";
         return false;
     }
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION child{};
-    const DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP |
-                        CREATE_UNICODE_ENVIRONMENT | CREATE_BREAKAWAY_FROM_JOB;
-    // Never fall back to inheriting the caller's job: a successful start that
-    // dies with the client would violate persistence rather than recover it.
-    if (!::CreateProcessW(image.c_str(), command->data(), nullptr, nullptr, FALSE,
-                         flags, nullptr, nullptr, &startup, &child)) {
-        problem = "cannot start a detached server (Windows error " + std::to_string(::GetLastError()) + ")";
+    auto launch = ckv::core::ProcessLaunchSpec::program(image, {"--server", endpoint});
+    // No inherited cwd: the already-resolved executable directory is explicit
+    // and usable independently of the client's current shell directory.
+    launch.working_directory = path_text(executable.parent_path());
+    ckv::term::WindowsDetachedProcessLauncher launcher;
+    const auto result = launcher.launch(launch);
+    if (!result.successful()) {
+        problem = "cannot start a detached server: " + result.diagnostic;
+        if (result.error.domain != ckv::core::ProcessErrorDomain::None)
+            problem += " (Windows error " + std::to_string(result.error.code) + ")";
+        if (result.cleanup == ckv::core::DetachedProcessCleanup::Failed)
+            problem += "; child " + std::to_string(result.process_id) + " cleanup failed (Windows error " +
+                       std::to_string(result.cleanup_error.code) + ")";
         return false;
     }
-    ::CloseHandle(child.hThread);
-    ::CloseHandle(child.hProcess);
     return true;
 }
 
