@@ -80,3 +80,142 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  windows-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            architecture: x64
+            configuration: Release
+            sanitize: ""
+            name: windows-x64
+          - os: windows-11-arm
+            architecture: ARM64
+            configuration: Release
+            sanitize: ""
+            name: windows-arm64
+          # MSVC ASan supports x86/x64, not native ARM64 or UBSan/TSan.
+          - os: windows-2025
+            architecture: x64
+            configuration: RelWithDebInfo
+            sanitize: address
+            name: windows-x64-asan
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ckmux
+      - name: Select explicit native scratch
+        run: |
+          $scope=Join-Path $env:RUNNER_TEMP ('ckmux-'+[Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $scope | Out-Null
+          "CKMUX_NATIVE_SCRATCH=$scope" >> $env:GITHUB_ENV
+          "TMPDIR=$scope" >> $env:GITHUB_ENV
+          "TMP=$scope" >> $env:GITHUB_ENV
+          "TEMP=$scope" >> $env:GITHUB_ENV
+      - name: Configure released dependency and strict native build
+        run: >
+          cmake -S ckmux -B build -G "Visual Studio 17 2022"
+          -A ${{ matrix.architecture }}
+          -DCKMUX_PREFER_CKVISION_SOURCE=OFF
+          -DCKMUX_SANITIZE=${{ matrix.sanitize }}
+          -DCMAKE_TRY_COMPILE_CONFIGURATION=${{ matrix.configuration }}
+          -DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/INCREMENTAL:NO
+          -DCKMUX_TEST_TEMP_ROOT="$env:CKMUX_NATIVE_SCRATCH"
+      - name: Fingerprint inputs and build
+        run: |
+          $library=Join-Path $env:GITHUB_WORKSPACE 'build/_deps/ckvision-src'
+          if(!(Test-Path "$library/.git")) { throw 'Pinned release source checkout absent' }
+          $pin=[regex]::Match((Get-Content ckmux/CMakeLists.txt -Raw),'set\(CKMUX_CKVISION_VERSION ([0-9.]+)\)').Groups[1].Value
+          $tag=& git -C $library rev-parse "v$pin`^{commit}"
+          if($LASTEXITCODE -ne 0) { throw 'Cannot peel pinned release tag' }
+          $librarySha=& git -C $library rev-parse HEAD
+          if($LASTEXITCODE -ne 0 -or $librarySha -ne $tag) { throw 'Build dependency is not the released pin' }
+          $inputs=@(foreach($source in @('ckmux','build/_deps/ckvision-src')) {
+            $root=Join-Path $env:GITHUB_WORKSPACE $source
+            $files=& git -C $root ls-files
+            if($LASTEXITCODE -ne 0) { throw 'Cannot inventory committed inputs' }
+            foreach($file in $files) {
+              $absolute=Join-Path $root $file
+              @{path=$absolute; sha256=(Get-FileHash -LiteralPath $absolute).Hash}
+            }
+          })
+          $inputs | ConvertTo-Json -Depth 3 > native-inputs.json
+          $record=@{source='${{ github.sha }}'; library=$librarySha; pin=$pin;
+            configuration='${{ matrix.configuration }}'; architecture='${{ matrix.architecture }}';
+            sanitizer='${{ matrix.sanitize }}'; input_manifest=(Get-FileHash native-inputs.json).Hash;
+            start=[DateTime]::UtcNow.ToString('o'); baseline='fresh hosted build; no same-project comparable baseline recorded'}
+          $watch=[Diagnostics.Stopwatch]::StartNew()
+          cmake --build build --config ${{ matrix.configuration }} --parallel 4
+          $record.exit=$LASTEXITCODE; $record.end=[DateTime]::UtcNow.ToString('o'); $record.elapsed=$watch.Elapsed.TotalSeconds
+          $record | ConvertTo-Json > native-build-record.json
+          if($record.exit -ne 0) { throw 'Native strict build failed' }
+          $binary=Join-Path $env:GITHUB_WORKSPACE 'build/${{ matrix.configuration }}/ckmux.exe'
+          $record.output=$binary; $record.output_sha256=(Get-FileHash $binary).Hash
+          $record.output_timestamp=(Get-Item $binary).LastWriteTimeUtc.ToString('o')
+          if((Get-Item $binary).LastWriteTimeUtc -lt [DateTime]::Parse($record.start).AddSeconds(-2)) { throw 'Executable predates this clean build' }
+          $record | ConvertTo-Json > native-build-record.json
+      - name: Make the selected MSVC ASan runtime available
+        if: matrix.sanitize == 'address'
+        run: |
+          $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if(!$vs) { throw 'Cannot resolve selected Visual Studio installation' }
+          $runtime=Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC') -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'bin/Hostx64/x64' } |
+            Where-Object { Test-Path (Join-Path $_ 'clang_rt.asan_dynamic-x86_64.dll') } |
+            Select-Object -First 1
+          if(!$runtime) { throw 'Required x64 ASan runtime absent' }
+          $runtime >> $env:GITHUB_PATH
+      - name: Check complete registered native inventory
+        run: |
+          ctest --test-dir build -C ${{ matrix.configuration }} --show-only=json-v1 > native-inventory.json
+          if($LASTEXITCODE -ne 0) { throw 'Native inventory query failed' }
+          $inventory=Get-Content native-inventory.json -Raw | ConvertFrom-Json
+          if($inventory.tests.Count -ne 47) { throw 'Unexpected native inventory; update its explicit coverage audit' }
+          foreach($required in @('windows_server_ancestry','windows_server_lifecycle','suite_test_config','suite_test_rename_terminal','suite_test_server_wire_security')) {
+            if($required -notin $inventory.tests.name) { throw "Required native gate absent: $required" }
+          }
+      - name: Run all native tests with controlled ancestry
+        run: >
+          ./ckmux/tools/windows/test-native.ps1
+          -BuildDirectory "$env:GITHUB_WORKSPACE/build"
+          -TemporaryRoot "$env:CKMUX_NATIVE_SCRATCH"
+          -Configuration ${{ matrix.configuration }}
+      - name: Prove failed native tests fail the host and remove its task
+        run: >
+          ./ckmux/tests/windows_native_test_host.ps1
+          -TestHostPath "$env:GITHUB_WORKSPACE/ckmux/tools/windows/test-native.ps1"
+          -TemporaryRoot "$env:CKMUX_NATIVE_SCRATCH"
+      - name: Verify immutable build inputs after native tests
+        run: |
+          foreach($taskInput in (Get-Content native-inputs.json -Raw | ConvertFrom-Json)) {
+            if((Get-FileHash -LiteralPath $taskInput.path).Hash -ne $taskInput.sha256) { throw "Build input changed: $($taskInput.path)" }
+          }
+      - name: Preserve native failure and gate evidence
+        # A green wrapper must mean a green worker, not merely a task start.
+        # Keep both the positive inventory and the failure-propagation evidence.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-evidence
+          path: |
+            native-inventory.json
+            native-inputs.json
+            native-build-record.json
+            build/CMakeCache.txt
+            build/Testing/Temporary/*.log
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/native-test-*/ctest.log
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/native-test-*/host-error.log
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/native-test-*/record.json
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/test-host-negative-*/driver.log
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/test-host-negative-*/expected-error.log
+            ${{ env.CKMUX_NATIVE_SCRATCH }}/test-host-negative-*/tmp/native-test-*/record.json
