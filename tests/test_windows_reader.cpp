@@ -295,10 +295,15 @@ CK_TEST(native_clipboard_context_requires_the_actual_noninteractive_logon) {
 namespace {
 bool native_yank(Reader& reader) {
     reader.press("\x02" "[");
-    if (!reader.sees("— COPY ")) return false;
+    if (!reader.sees("COPY ")) {
+        std::fprintf(stderr, "Actual copy-mode entry screen:\n%s\n", reader.screen().c_str());
+        return false;
+    }
     reader.press("/NATIVE-COPY-\r");
     reader.press("y");
-    return reader.stops_seeing("— COPY ", 3000);
+    const bool left = reader.stops_seeing("COPY ", 3000);
+    if (!left) std::fprintf(stderr, "Actual copy-mode exit screen:\n%s\n", reader.screen().c_str());
+    return left;
 }
 
 void actual_clipboard_copy(bool locked) {
@@ -342,16 +347,23 @@ void actual_clipboard_copy(bool locked) {
         CK_CHECK(reader.sees("INTERNAL-PASTE-VERIFIED"));
     }
     CK_CHECK(native_yank(reader));
-    CK_CHECK(ckmtest::native_clipboard_text() == L"NATIVE-COPY-\u03A9\u4E2D\U0001F600");
+    const auto copied = ckmtest::native_clipboard_text();
+    const bool unicode_copied = copied == L"NATIVE-COPY-\u03A9\u4E2D\U0001F600";
+    CK_CHECK(unicode_copied);
+    if (!unicode_copied) std::fprintf(stderr, "Actual clipboard text: %ls\n",
+                                     copied ? copied->c_str() : L"<unavailable>");
     CK_CHECK(reader.screen().find("The copy did not reach") == std::string::npos);
     const auto handles = ckmtest::named_handles(static_cast<DWORD>(reader.client->process_id()));
     CK_CHECK(handles.has_value());
     bool actual_station_seen = false;
-    if (handles) for (const auto& name : *handles)
+    if (handles) for (const auto& name : *handles) {
         if (name.ends_with(L"\\" + isolation.station_name)) actual_station_seen = true;
+        if (name.find(L"WindowStations") != std::wstring::npos)
+            std::fprintf(stderr, "Actual client window station handle: %ls\n", name.c_str());
+    }
     CK_CHECK(actual_station_seen);
-    std::fprintf(stderr, "Actual native copy: unicode=1 locked-refusal=%d station-handle-match=%d\n",
-                 locked ? 1 : 0, actual_station_seen ? 1 : 0);
+    std::fprintf(stderr, "Actual native copy: unicode=%d locked-case=%d station-handle-match=%d\n",
+                 unicode_copied ? 1 : 0, locked ? 1 : 0, actual_station_seen ? 1 : 0);
 }
 } // namespace
 
