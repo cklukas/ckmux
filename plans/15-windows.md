@@ -5,6 +5,21 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Hosted generator correction — 2026-10-05
+
+Exact public37a9d57 CI37249181000 stopped all three native lanes at configure:
+the actual runner images are windows-2025-vs2026 and windows-11-vs2026-arm64,
+but the workflow requested Visual Studio17 2022. No C++ compiled and no native
+test ran. The corrected workflow names the explicit VS2026 runner labels and
+uses CMake's Visual Studio18 2026 generator; both image inventories include
+CMake4.4, which supports this generator. The application's source, dependency
+pin, sanitizer selection and all assertions are unchanged. A successful local
+VS2022 gate does not establish hosted VS2026 success; the corrected hosted
+run remains required before WP56 can be complete.
+
+Runner evidence: CI37249181000 jobs111573097147,111573097151,111573097185.
+Generator: https://cmake.org/cmake/help/latest/generator/Visual%20Studio%2018%202026.html .
+
 ### Native CI infrastructure candidate — 2026-10-05
 
 Prepared three blocking lanes: Windows2025 x64 strict Release, Windows11

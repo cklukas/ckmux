@@ -86,18 +86,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2025
+          - os: windows-2025-vs2026
             architecture: x64
             configuration: Release
             sanitize: ""
             name: windows-x64
-          - os: windows-11-arm
+          - os: windows-11-vs2026-arm
             architecture: ARM64
             configuration: Release
             sanitize: ""
             name: windows-arm64
           # MSVC ASan supports x86/x64, not native ARM64 or UBSan/TSan.
-          - os: windows-2025
+          - os: windows-2025-vs2026
             architecture: x64
             configuration: RelWithDebInfo
             sanitize: address
@@ -122,7 +122,7 @@ jobs:
           "TEMP=$scope" >> $env:GITHUB_ENV
       - name: Configure released dependency and strict native build
         run: >
-          cmake -S ckmux -B build -G "Visual Studio 17 2022"
+          cmake -S ckmux -B build -G "Visual Studio 18 2026"
           -A ${{ matrix.architecture }}
           -DCKMUX_PREFER_CKVISION_SOURCE=OFF
           -DCKMUX_SANITIZE=${{ matrix.sanitize }}
