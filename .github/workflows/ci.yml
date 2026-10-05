@@ -180,8 +180,8 @@ jobs:
           ctest --test-dir build -C ${{ matrix.configuration }} --show-only=json-v1 > native-inventory.json
           if($LASTEXITCODE -ne 0) { throw 'Native inventory query failed' }
           $inventory=Get-Content native-inventory.json -Raw | ConvertFrom-Json
-          if($inventory.tests.Count -ne 48) { throw 'Unexpected native inventory; update its explicit coverage audit' }
-          foreach($required in @('windows_server_ancestry','windows_server_lifecycle','suite_test_config','suite_test_client_smoke','suite_test_rename_terminal','suite_test_server_wire_security')) {
+          if($inventory.tests.Count -ne 50) { throw 'Unexpected native inventory; update its explicit coverage audit' }
+          foreach($required in @('windows_server_ancestry','windows_server_lifecycle','suite_test_config','suite_test_client_smoke','suite_test_rename_terminal','suite_test_server_wire_security','suite_test_reader_modes','suite_test_session_desktop')) {
             if($required -notin $inventory.tests.name) { throw "Required native gate absent: $required" }
           }
       - name: Run all native tests with controlled ancestry

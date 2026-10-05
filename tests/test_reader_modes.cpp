@@ -13,16 +13,14 @@
 // The other half of the mode is what a watcher KEEPS. Read-only means read-only
 // to the session, not a crippled interface, and a fix that refused everything
 // would pass a suite that only tested the refusals.
-#if !defined(_WIN32)
-
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
 #include <system_error>
 #include <vector>
-
-#include <unistd.h>
+#include <thread>
 
 #include "common/config.hpp"
 #include "common/proto.hpp"
@@ -30,6 +28,7 @@
 #include "platform/socket.hpp"
 #include "server/server.hpp"
 #include "server/terminals.hpp"
+#include "server_fixture.hpp"
 
 namespace {
 
@@ -38,25 +37,16 @@ using ckm::proto::Message;
 using ckm::proto::ReaderScope;
 
 std::filesystem::path private_socket(std::string_view name) {
-    const char* const base = std::getenv("TMPDIR");
-    std::filesystem::path directory =
-        std::filesystem::path(base != nullptr && *base != '\0' ? base : "/tmp");
-    directory /= "ckmux-modes" + std::to_string(static_cast<unsigned long>(::getpid()));
-    std::error_code ignored;
-    std::filesystem::create_directories(directory, ignored);
-    return directory / (std::string(name) + ".sock");
+    return ckmtest::server_endpoint(name);
 }
 
 void forget(const std::filesystem::path& socket) {
-    std::error_code ignored;
-    std::filesystem::remove(socket, ignored);
-    std::filesystem::remove(std::filesystem::path(socket.string() + ".lock"), ignored);
-    std::filesystem::remove(socket.parent_path(), ignored);
+    ckmtest::forget_server_endpoint(socket);
 }
 
 ckm::Settings test_settings() {
     ckm::Settings settings;
-    settings.shell = "/bin/sh";
+    settings.shell = ckmtest::server_fixture_shell();
     settings.login_shell = false;
     settings.scrollback = 100;
     settings.max_fps = 30;
@@ -71,7 +61,7 @@ struct WireClient {
     bool connect(const std::filesystem::path& socket) {
         ckm::platform::ConnectResult result = ckm::platform::connect_to_server(socket);
         if (result.status != ckm::platform::ConnectStatus::Connected) return false;
-        stream = ckm::platform::Stream(result.fd);
+        stream = result.take_stream();
         return true;
     }
     void say(const Message& message) { (void)stream.send(ckm::proto::encode(message)); }
@@ -125,21 +115,31 @@ struct Session {
     bool open(const std::filesystem::path& socket) {
         if (server.start() != ckm::server::Server::StartStatus::Listening) return false;
         if (!join(writer, socket, AttachMode::Join)) return false;
-        term = server.open_terminal(0, cat_spec()).id();
+        auto& child = server.open_terminal(0, cat_spec());
+        CK_CHECK(child.process_id() > 0);
+        CK_CHECK(child.session().state() != ckv::core::TerminalSubsessionState::Failed);
+        term = child.id();
         if (!join(watcher, socket, AttachMode::Watch)) return false;
         settle();
+#if defined(_WIN32)
+        // This marker is emitted by the helper, not by console input echo.
+        if (!child_saw("CKMUX-ECHO-READY")) return false;
+#endif
         return term != 0;
     }
 
     static ckm::server::TerminalSpec cat_spec() {
         ckm::server::TerminalSpec spec;
-        spec.command = "/bin/cat";
-        spec.working_directory = "/";
+        spec.command = ckmtest::server_echo_command();
+        spec.working_directory = ckmtest::server_working_directory();
         spec.columns = 80;
         spec.rows = 24;
         spec.pixel_width = 80 * 9;
         spec.pixel_height = 24 * 18;
-        spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"}, {"LC_ALL", "C"}};
+        spec.environment = {{"TERM", "xterm-256color"}, {"LC_ALL", "C"}};
+#if !defined(_WIN32)
+        spec.environment.emplace_back("PATH", "/usr/bin:/bin");
+#endif
         return spec;
     }
 
@@ -193,11 +193,11 @@ struct Session {
         for (int pass = 0; pass < passes; ++pass) {
             settle(4);
             if (screen().find(needle) != std::string::npos) return true;
-            ::usleep(kChildPauseMicroseconds);
+            std::this_thread::sleep_for(kChildPause);
         }
         return false;
     }
-    static constexpr useconds_t kChildPauseMicroseconds = 30'000;
+    static constexpr auto kChildPause = std::chrono::milliseconds(30);
 
     // The first `Error` this reader is given, or code 0 for none.
     std::uint16_t error_for(WireClient& who, int passes = 16) {
@@ -265,7 +265,7 @@ CK_TEST(a_watchers_keystroke_is_dropped_in_silence_and_nothing_else_is) {
     // A discrete act, on the other hand, IS answered — one refusal for one
     // thing the reader did, which is what makes it worth sending.
     ckm::proto::NewTerminal ask;
-    ask.command = "/bin/sh";
+    ask.command = ckmtest::server_idle_command();
     session.watcher.say(ask);
     CK_CHECK(session.error_for(session.watcher) == kReadOnly);
 
@@ -331,7 +331,7 @@ CK_TEST(a_watcher_may_not_change_the_session_and_is_told_which_request_failed) {
     };
 
     ckm::proto::NewTerminal make;
-    make.command = "/bin/sh";
+    make.command = ckmtest::server_idle_command();
     CK_CHECK(refused(make, "NewTerminal"));
 
     ckm::proto::CloseTerminal close;
@@ -459,7 +459,7 @@ CK_TEST(a_reader_may_stop_watching_but_may_not_take_a_session_from_themselves) {
     CK_CHECK(session.error_for(session.watcher) == kInvalid);
     // And it changed nothing — still watching, still refused.
     ckm::proto::NewTerminal still;
-    still.command = "/bin/sh";
+    still.command = ckmtest::server_idle_command();
     session.watcher.say(still);
     CK_CHECK(session.error_for(session.watcher) == kReadOnly);
 
@@ -615,5 +615,3 @@ CK_TEST(an_attach_mode_this_build_cannot_read_takes_over_rather_than_sharing) {
     session.stop();
     forget(socket);
 }
-
-#endif  // !defined(_WIN32)

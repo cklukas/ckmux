@@ -49,6 +49,14 @@ int job_root() {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    const bool command = argc == 3 && std::wstring(argv[1]) == L"-c";
+    const std::wstring mode = command ? argv[2] : (argc == 2 ? argv[1] : L"");
+    if (mode == L"--idle") {
+        ::Sleep(3600000);
+        return 0;
+    }
+    const bool echo = mode == L"--echo";
+    if (echo && (std::puts("CKMUX-ECHO-READY") == EOF || std::fflush(stdout) != 0)) return 17;
     if ((argc == 2 && std::wstring(argv[1]) == L"--exit-zero") ||
         (argc == 3 && std::wstring(argv[1]) == L"-c" && std::wstring(argv[2]) == L"--exit-zero"))
         return 0;
@@ -61,7 +69,7 @@ int wmain(int argc, wchar_t** argv) {
         if (byte == EOF) return std::ferror(stdin) != 0 ? 1 : 0;
         // An ASCII transformation makes the response distinguishable from
         // the pseudoconsole's own input echo in the native fixture contract.
-        const int response = byte >= 'a' && byte <= 'z' ? byte - 'a' + 'A' : byte;
+        const int response = !echo && byte >= 'a' && byte <= 'z' ? byte - 'a' + 'A' : byte;
         if (std::putchar(response) == EOF || std::fflush(stdout) != 0) return 2;
     }
 }

@@ -97,9 +97,11 @@ if(WIN32)
         test_remote_terminal.cpp
         test_rename_terminal.cpp
         test_reader_modes_client.cpp
+        test_reader_modes.cpp
         test_scratch_directory.cpp
         test_shell_policy.cpp
         test_session_desktop_client.cpp
+        test_session_desktop.cpp
         test_session_names.cpp
         test_stats_format.cpp
         test_stats_display.cpp
@@ -302,6 +304,13 @@ set(CKMUX_LABELS_test_stats_display "pty")
 set(CKMUX_LABELS_test_windows_resource_stats "native;pty;e2e")
 set(CKMUX_LABELS_test_session_desktop_client "pty")
 set(CKMUX_LABELS_test_reader_modes_client "pty")
+# Both suites observe actual child identities and drive real local IPC.
+set(CKMUX_LABELS_test_reader_modes "ipc;pty")
+set(CKMUX_LABELS_test_session_desktop "ipc;pty")
+if(WIN32)
+    set(CKMUX_LABELS_test_reader_modes "native;ipc;pty")
+    set(CKMUX_LABELS_test_session_desktop "native;ipc;pty")
+endif()
 set(CKMUX_LABELS_test_attach_flags "unit")
 set(CKMUX_LABELS_test_session_names "unit")
 # test_process_stats forks bare children of its own (fork, no exec, no PTY) —
