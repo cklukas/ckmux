@@ -5,6 +5,20 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Paste-credit native coverage candidate — 2026-10-05
+
+The final coverage audit found that all twelve existing paste-credit cases
+were excluded on Windows, including the platform-independent client credit
+rules. The candidate removes that whole-suite guard, uses the existing portable
+server scratch/stream helpers and a real native idle ConPTY child, and retains
+long-paste ordering, independent per-terminal credit, takeover/disconnect
+cleanup, unknown-terminal acknowledgement, competing-client serialization
+and mid-paste disconnect recovery assertions. Readiness waits observe actual
+messages within bounded deadlines rather than counting tight asynchronous
+polls. Native inventory becomes54, explicitly required by CI and release.
+Strict native execution, a compiled credit-omission negative and final
+cross-platform integration remain required; this is not completion evidence.
+
 ### Native clipboard and current integration checkpoint — 2026-10-05
 
 Isolated test candidate `caeb3394` drives actual ckmux executable copy-mode

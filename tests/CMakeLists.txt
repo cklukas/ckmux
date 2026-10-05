@@ -88,6 +88,7 @@ if(WIN32)
         test_keymap.cpp
         test_minimize_chrome.cpp
         test_notifications.cpp
+        test_paste_credit.cpp
         test_prefix.cpp
         test_printer_button.cpp
         test_printer_output.cpp
