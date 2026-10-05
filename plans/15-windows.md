@@ -21,6 +21,14 @@ uses the existing POSIX test's bounded three-second loser-teardown wait,
 retaining the exactly-one-server, actual-child, persistence and shutdown
 assertions. Final committed-byte gates remain required.
 
+The first serial x64 run passes53/54; print observation rejects one already
+invalid File handle among299 healthy handle samples. The observer now treats
+ERROR_INVALID_HANDLE in a still-live, valid source process as no live endpoint,
+while invalid-process and other API errors remain failures. Its existing real
+printer-pipe control also checks the just-closed handle and invalid-process
+paths. This preserves sampled (not exhaustive) observation and changes no
+application/library behavior. Native final-byte verification remains required.
+
 ### Existing release-fixture readiness — 2026-10-05
 
 The extra reader-polling/64KiB burst candidate is withdrawn: its Linux burst

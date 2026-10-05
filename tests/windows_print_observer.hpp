@@ -31,8 +31,17 @@ inline std::optional<std::wstring> file_object_name(HANDLE process, HANDLE remot
     HANDLE duplicate = nullptr;
     if (!::DuplicateHandle(process, remote, ::GetCurrentProcess(), &duplicate, 0,
                            FALSE, DUPLICATE_SAME_ACCESS)) {
+        const DWORD error = ::GetLastError();
+        DWORD exit_code = 0;
+        if (error == ERROR_INVALID_HANDLE && ::GetProcessId(process) != 0 &&
+            ::GetExitCodeProcess(process, &exit_code) && exit_code == STILL_ACTIVE) {
+            // PSS recorded this handle before we queried the live table.
+            // A closed handle has no live endpoint to inspect. This observer
+            // is sampled, not a kernel trace; other errors remain fatal.
+            return std::wstring{};
+        }
         std::fprintf(stderr, "Observer duplicate File handle %p failed: %lu\n", remote,
-                     static_cast<unsigned long>(::GetLastError()));
+                     static_cast<unsigned long>(error));
         return std::nullopt;
     }
     DWORD console_mode = 0;

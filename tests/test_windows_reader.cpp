@@ -242,10 +242,15 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     if (pipe == INVALID_HANDLE_VALUE) return;
     const auto witness_name = ckmtest::file_object_name(::GetCurrentProcess(), pipe);
     CK_CHECK(witness_name && ckmtest::printer_endpoint(*witness_name));
+    // An invalid process is an observer failure, never a vanished endpoint.
+    CK_CHECK(!ckmtest::file_object_name(nullptr, pipe));
     const auto before = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(before.has_value());
     CK_CHECK(before && std::any_of(before->begin(), before->end(), ckmtest::printer_endpoint));
     CK_CHECK(::CloseHandle(pipe) != FALSE);
+    // Reproduce a source handle closing after a census, before duplication.
+    const auto closed_name = ckmtest::file_object_name(::GetCurrentProcess(), pipe);
+    CK_CHECK(closed_name && closed_name->empty());
     const auto after = ckmtest::named_handles(::GetCurrentProcessId());
     CK_CHECK(after.has_value());
     CK_CHECK(after && std::none_of(after->begin(), after->end(), ckmtest::printer_endpoint));
