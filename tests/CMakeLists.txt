@@ -126,6 +126,9 @@ endif()
 
 add_executable(ckmux_tests ${CKMUX_TEST_SOURCES} main.cpp)
 target_link_libraries(ckmux_tests PRIVATE ckmux_client ckmux_server)
+# Real subsession tests discover ConPTY beside their own executable. Qualify
+# the same selected runtime as the application, not an accidental inbox copy.
+ckmux_deploy_windows_runtime(ckmux_tests "${CMAKE_INSTALL_BINDIR}")
 if(WIN32)
     add_dependencies(ckmux_tests ckmux_ipc_race_probe ckmux_windows_process_child ckmux_windows_live_child ckmux_windows_exit_child)
     target_compile_definitions(ckmux_tests PRIVATE

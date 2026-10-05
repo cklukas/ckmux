@@ -19,6 +19,15 @@ These new cases are unverified candidates until native execution, compiled
 negative partners and full clean cross-platform gates pass. They do not replace
 wire/UI printing, packaged graphics or the live Windows Terminal walkthrough.
 
+The first ARM64 candidate compiles strictly and executes all nine cases.
+Actual print capture fails; the test executable had no app-local ConPTY beside
+it despite the application using the selected runtime. The test target now uses
+the same upstream deployment helper and CI selects that qualified archive.
+This does not yet prove that runtime selection fixes the print failure. The
+destruction fixture's immediate handle sample also failed; like the retained
+Unix counterpart, it now waits within a bounded deadline for asynchronous job
+termination. Production close and containment behavior are unchanged.
+
 ### Current adoption and release-matrix preparation — 2026-10-05
 
 App120606b4/publice7914d51 consumes released ckVision0.1.18. Clean committed

@@ -254,5 +254,11 @@ CK_TEST(native_terminal_collection_destruction_reaps_observed_root_and_descendan
     ObservedProcess descendant(descendant_pid(terminal));
     CK_CHECK(root.live() && descendant.live());
     terminals.reset();
+    // Job termination is asynchronous. Observe the retained handles within
+    // the same bounded deadline as explicit termination, not by PID lookup
+    // or an immediate scheduler-race assertion.
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while ((!root.exited() || !descendant.exited()) && std::chrono::steady_clock::now() < end)
+        ::Sleep(2);
     CK_CHECK(root.exited() && descendant.exited());
 }
