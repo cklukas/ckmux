@@ -83,21 +83,20 @@ confirmed, and menu-visible.
 
 The owner activated native Windows compatibility on 2026-10-03. WP-52–WP-57
 in [12](12-work-packages.md) implement [15](15-windows.md), starting with the
-latest ckVision's shared lifecycle interface. The native implementation and
-blocking Windows CI are present; complete acceptance and a Windows release
-are still pending.
+latest ckVision's shared lifecycle interface. The native implementation,
+blocking Windows CI and published Windows ZIP/MSI release are present;
+the owner's live Windows Terminal and manual installer acceptance remain pending.
 
-Current application0.1.8 source pins released ckVision0.1.18 (2026-10-05).
-Clean committed adoption, application-level67-client readiness, queue saturation
-and final-reply draining pass Mac/GCC/native integration; publice7914d51 has
-all eight hosted37339799318 jobs green. Both matching x64/ARM64 ZIP/MSI pairs
-pass full fresh-standard-user installation and actual detached-server lifecycle.
-The release-matrix candidate adds public full-only acceptance fixtures and both
-architecture jobs, but its clean integration/hosted release jobs, packaged
-graphics and publication remain required. Per the owner's 2026-10-05 direction,
-the live Windows Terminal and manual installer checks follow publication of
-the GitHub installer release and do not block it. Published0.1.7
-still has no Windows assets.
+Published ckmux v0.1.8 pins released ckVision v0.1.18 (2026-10-05).
+Public `218ee734` has all eight CI `37379312706` jobs and all seven release
+`37382460321` jobs green. Both x64/ARM64 ZIP/MSI pairs pass full
+fresh-standard-user installation and detached-server lifecycle. The 17
+downloaded release assets and eight package/archive checksums are verified.
+Local Mac Studio ten-instance/stress checks passed; hosted workflows run
+serial functional suites with stress OFF and two startup contenders.
+Per the owner's direction, manual installation and live Windows Terminal
+checks now follow this published release. They and the final acceptance audit
+remain open; see [15](15-windows.md) for the precise evidence scope.
 
 M0–M2 and the architecture-review remediation queue are complete. **WP-15**
 (M3's menu-driven acceptance walkthrough) and **WP-21** (M4's reference-app,

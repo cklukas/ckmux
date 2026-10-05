@@ -5,6 +5,33 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Published installer and remaining acceptance — 2026-10-05
+
+ckmux v0.1.8 is published at public `218ee734f6b68a37f9aea3a3854c62c07fa61a41`,
+consuming released ckVision v0.1.18. CI `37379312706` passes all eight jobs;
+release `37382460321` passes all seven jobs, including both strict native
+Release54/54 inventories, Unix65/65 inventories, Homebrew and complete
+fresh-standard-user ZIP/MSI installation, persistence, repair/uninstall and
+PATH/data preservation. x64 installation is checked on Windows 11 ARM64
+under emulation, not certified on a native AMD64 desktop.
+
+The release contains17 uploaded assets. All downloaded assets match GitHub's
+API digests; all eight package/archive SHA256 pairs match. Windows sidecars
+use CRLF; verification on the Mac normalizes only the checksum input, never
+the downloaded package bytes. Local Mac Studio stress ON checks passed in
+strict Release65/65 and LLVM23 Debug ASan/UBSan65/65; local Windows VM ten
+starters passed on both architectures. Hosted stress remains OFF, CTest
+serial and startup election two contenders. Earlier failed candidates below
+remain historical evidence, not the current release verdict.
+
+WP-56 is complete. WP-53–WP-55 and WP-57 retain the owner's manual installed
+release and live Windows Terminal walkthrough: visible keyboard/menu/mouse,
+resize/window behavior, clipboard and graphics, console close with surviving
+programs and reattachment. The installer links have been handed to the owner.
+These checks are not claimed passed and must not be replaced with more
+automated load tests, hidden GUI checks or VNC prerequisites. Full Windows
+compatibility remains unproven until that named-host acceptance is recorded.
+
 ### Local stress / hosted functional policy — 2026-10-05
 
 The owner requires ten-instance checks on the Mac Studio, not GitHub.

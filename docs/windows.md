@@ -6,22 +6,23 @@ title: Native Windows
 
 # Native Windows builds and packages
 
-The native Windows port is in progress. The published v0.1.7 release does not
-contain Windows packages. Passing automated native tests is not certification
-of the remaining live Windows Terminal walkthrough or complete installed-app acceptance.
+The [v0.1.8 release](https://github.com/cklukas/ckmux/releases/tag/v0.1.8)
+contains Windows x64 and ARM64 portable ZIPs and per-user MSI installers.
+All eight CI jobs and all seven release jobs passed at public commit
+`218ee734`; all 17 downloaded assets and eight package/archive checksum
+pairs were verified. Full native acceptance is still in progress: passing
+automated tests does not certify the owner's live Windows Terminal walkthrough.
 
-Current x64 and ARM64 candidates have passed full fresh-standard-user ZIP and
+The released x64 and ARM64 packages passed full fresh-standard-user ZIP and
 per-user MSI checks: installed file verification, real detached-server and shell
 persistence after starter exit, explicit complete shutdown, repair and uninstall,
-including PATH and user-data preservation. These are not published release
-packages. The matching downloaded CI ZIPs also pass actual contained graphics,
+including PATH and user-data preservation. Matching downloaded CI ZIPs also pass actual contained graphics,
 text/ANSI print saving, Unicode clipboard copy and reattached history checks on
-Windows 11 ARM64; x64 runs there under emulation. Automated release gates must
-pass before publication. The owner will perform the live Windows Terminal and
-manual installer checks after the installer release is available on GitHub;
-these manual checks do not block publication and are not claimed complete.
+Windows 11 ARM64; x64 runs there under emulation. The owner will now perform
+the live Windows Terminal and manual installer checks using the published
+release. These manual checks remain pending and are not claimed complete.
 
-The intended release formats are a portable ZIP and a per-user MSI for x64 and
+The release formats are a portable ZIP and a per-user MSI for x64 and
 ARM64. Select the package matching the operating system; use the ARM64 package
 on Windows on ARM. The MSI uses LocalAppData, requires no administrator account,
 and does not add a global PATH entry. Configuration and durable logs
