@@ -19,6 +19,19 @@ polls. Native inventory becomes54, explicitly required by CI and release.
 Strict native execution, a compiled credit-omission negative and final
 cross-platform integration remain required; this is not completion evidence.
 
+The corrected twelve-case paste candidate passes strict MSVC ARM64 and
+x64-on-ARM64 execution. A compiled production credit-limit omission fails
+the intended long-paste assertion; exact restoration/rebuild passes all twelve
+again. The first native fixture requested its second connection before the
+first was accepted/rearmed; greeting the first then connecting the second
+retains two live competing readers without changing production transport.
+
+A separate native reader case fills the actual server-owned child with
+sustained output while two real named-pipe peers request paired Pongs. One
+decodes actual attached deltas into the production mirror, the other remains
+unattached, and the original client must still open and dismiss its window
+menu. Native execution and a compiled missing-reply negative remain required.
+
 ### Native clipboard and current integration checkpoint — 2026-10-05
 
 Isolated test candidate `caeb3394` drives actual ckmux executable copy-mode
