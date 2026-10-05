@@ -5,6 +5,18 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Actual client graphics candidate — 2026-10-05
+
+Two additional native reader cases launch a real child through the actual
+ckmux client/server and system cmd. One requires decoded red pixels in the
+client's emitted host frame, containment outside menu/footer and usable menus
+and shell after a running host resize. Its text-only partner first displays
+the literal raster payload as ordinary text, then has the child clear it and
+draw unconditionally: the completion marker must arrive without images or
+payload garbage, and a computed shell result must still work. These candidate
+cases are not yet execution evidence, packaged-binary proof or a live Windows
+Terminal visual walkthrough. Native suite inventory remains53.
+
 ### Native terminal acceptance candidate — 2026-10-05
 
 The Unix server-terminal suite is not native Windows coverage. A new native

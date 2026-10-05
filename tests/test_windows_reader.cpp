@@ -62,7 +62,76 @@ bool frame_has_caption(Reader& reader, std::string_view title) {
             return true;
     return false;
 }
+
+void graphic_child(Reader& reader, std::string_view mode) {
+    reader.press("\"" + std::string(CKMUX_TEST_CHILD_PATH) + "\" " + std::string(mode) + "\r");
+}
+
+bool red_picture(Reader& reader) {
+    const auto snapshot = reader.client->snapshot();
+    for (const auto& raster : snapshot.rasters) {
+        if (!raster.image) continue;
+        const auto pixel = raster.image->pixel(0, 0);
+        if (pixel.r == 255 && pixel.g == 0 && pixel.b == 0 && pixel.a == 255) return true;
+    }
+    return false;
+}
+
+void check_picture_containment(Reader& reader) {
+    const auto snapshot = reader.client->snapshot();
+    CK_CHECK(!snapshot.rasters.empty());
+    for (const auto& raster : snapshot.rasters) {
+        // The actual client's emitted frame is decoded here. Its menu/footer
+        // must remain outside every picture, before and after host resizing.
+        CK_CHECK(raster.anchor.x >= 0 && raster.anchor.y > 0);
+        CK_CHECK(raster.anchor.x + raster.cell_extent.width <= snapshot.cells.width);
+        CK_CHECK(raster.anchor.y + raster.cell_extent.height < snapshot.cells.height);
+    }
+}
 } // namespace
+
+CK_TEST(native_actual_client_renders_child_sixel_and_keeps_it_contained_during_resize) {
+    Fixture fixture("graphics");
+    if (!ready(fixture)) return;
+    auto& reader = fixture.reader;
+    CK_CHECK(reader.client->profile().sixel);
+    graphic_child(reader, "--graphics-generator");
+    CK_CHECK(reader.sees("NATIVE-GRAPHIC-DONE"));
+    const auto deadline = ckmtest::clock_type::now() + std::chrono::seconds(6);
+    while (!red_picture(reader) && ckmtest::clock_type::now() < deadline) reader.settle(20);
+    CK_CHECK(red_picture(reader));
+    check_picture_containment(reader);
+    reader.client->resize({80, 24}, {9, 18});
+    reader.settle(800);
+    CK_CHECK(reader.client->snapshot().cells == (ckv::Size{80, 24}));
+    CK_CHECK(red_picture(reader));
+    check_picture_containment(reader);
+    CK_CHECK(open_menu(reader, "Terminal Report"));
+    reader.press("t");
+    CK_CHECK(reader.sees("Terminal report"));
+    reader.press("\x1b");
+    reader.press("set /a 947*43\r");
+    CK_CHECK(reader.sees("40721"));
+}
+
+CK_TEST(native_actual_client_protects_a_text_only_host_from_unconditional_child_sixel) {
+    Fixture fixture("no-graphics");
+    fixture.reader.host_profile.sixel = false;
+    if (!ready(fixture)) return;
+    auto& reader = fixture.reader;
+    CK_CHECK(!reader.client->profile().sixel);
+    graphic_child(reader, "--graphics-visible");
+    // A positive partner proves the reader can show the payload characters.
+    CK_CHECK(reader.sees("VISIBLE-PAYLOAD #0;2;100;0;0 !36~"));
+    graphic_child(reader, "--graphics-generator");
+    CK_CHECK(reader.sees("NATIVE-GRAPHIC-DONE"));
+    CK_CHECK(reader.client->snapshot().rasters.empty());
+    CK_CHECK(reader.stops_seeing("#0;2;100;0;0"));
+    CK_CHECK(reader.stops_seeing("!36~"));
+    CK_CHECK(reader.stops_seeing("\"1;1;36;18"));
+    reader.press("set /a 941*47\r");
+    CK_CHECK(reader.sees("44227"));
+}
 
 CK_TEST(native_reader_routes_prefix_commands_and_real_shell_output) {
     Fixture fixture("commands");
