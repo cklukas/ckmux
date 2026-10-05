@@ -390,13 +390,15 @@ CK_TEST(a_second_clients_paste_waits_for_the_first_to_finish) {
     WireClient first;
     WireClient second;
     CK_CHECK(first.connect(socket));
-    CK_CHECK(second.connect(socket));
     ckm::proto::Hello hello;
     hello.build = std::string(ckm::proto::kBuildIdentity);
     first.say(hello);
-    second.say(hello);
     Message greeting;
     CK_CHECK(pump_until(server, first, greeting));
+    // Accept and greet the first peer before asking the single pending native
+    // listener for its next connection. Both peers stay live during the paste.
+    CK_CHECK(second.connect(socket));
+    second.say(hello);
     CK_CHECK(pump_until(server, second, greeting));
 
     // The first reader starts a paste and does not finish it.
