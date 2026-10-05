@@ -4,6 +4,7 @@
 // ckVision's native ConPTY adapter. No echoed helper stands in for a shell.
 #include "reader_harness.hpp"
 #include <fstream>
+#include <iterator>
 
 namespace {
 using ckmtest::Reader;
@@ -90,7 +91,103 @@ void check_picture_containment(Reader& reader) {
         CK_CHECK(raster.anchor.y + raster.cell_extent.height < snapshot.cells.height);
     }
 }
+
+bool click_on_row(Reader& reader, std::string_view anchor, std::string_view label) {
+    const auto location = reader.find_cell(anchor);
+    if (!location) return false;
+    const auto snapshot = reader.client->snapshot();
+    std::string text;
+    std::vector<int> columns;
+    for (int x = 0; x < snapshot.cells.width; ++x) {
+        const auto& cell = snapshot.cell_buffer[static_cast<std::size_t>(location->first) *
+            static_cast<std::size_t>(snapshot.cells.width) + static_cast<std::size_t>(x)];
+        if (cell.is_continuation()) continue;
+        const auto grapheme = cell.grapheme();
+        text += grapheme;
+        for (std::size_t i = 0; i < grapheme.size(); ++i) columns.push_back(x);
+    }
+    const auto found = text.find(label);
+    if (found == std::string::npos) return false;
+    reader.click(location->first, columns[found] + 1);
+    return true;
+}
+
+std::optional<std::filesystem::path> saved_capture(const std::filesystem::path& folder) {
+    std::error_code error;
+    std::optional<std::filesystem::path> result;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
+        if (entry.path().filename() == ".ckvision-write.lock") continue;
+        // An unexpected second file or leaked intermediate is not a save.
+        if (!entry.is_regular_file(error) || error || result) return std::nullopt;
+        result = entry.path();
+    }
+    return error ? std::nullopt : result;
+}
+
+void print_and_save(std::string_view format) {
+    Fixture fixture(format == "txt" ? "print-text" : "print-ansi");
+    const auto folder = fixture.reader.home.path() / std::filesystem::path(u8"Print Grüße 日本");
+    const auto config = fixture.reader.home.path() / "print.ini";
+    CK_CHECK(std::filesystem::create_directory(folder));
+    const auto folder_utf8 = folder.u8string();
+    {
+        std::ofstream file(config, std::ios::binary);
+        file << "[printer]\nmode=ask\nsave-format=" << format << "\nsave-folder=";
+        file.write(reinterpret_cast<const char*>(folder_utf8.data()),
+                   static_cast<std::streamsize>(folder_utf8.size()));
+        file << "\nsave-ask-name=false\n";
+        CK_CHECK(file.good());
+    }
+    fixture.environment = {{"CKMUX_CONFIG", config.string()}};
+    if (!ready(fixture)) return;
+    auto& reader = fixture.reader;
+    graphic_child(reader, "--print-ui-controller");
+    CK_CHECK(reader.sees("PRINT-UI-READY"));
+    reader.press("1\r");
+    CK_CHECK(reader.sees("PRINT-UI-DONE"));
+    CK_CHECK(reader.sees("PRINT?"));
+    const auto frame = reader.find_cell("PRINT?");
+    CK_CHECK(frame.has_value());
+    if (!frame) return;
+    reader.click(frame->first, frame->second + 2);
+    CK_CHECK(reader.sees("Keep capturing"));
+    CK_CHECK(click_on_row(reader, "Keep capturing", "Keep"));
+    CK_CHECK(click_on_row(reader, "Cancel", "OK"));
+    CK_CHECK(reader.stops_seeing("Keep capturing"));
+    const auto kept = reader.find_cell("PRINT");
+    CK_CHECK(kept.has_value());
+    if (!kept) return;
+    reader.click(kept->first, kept->second + 2);
+    CK_CHECK(reader.sees("1 capture"));
+    CK_CHECK(reader.sees("Printed by the program"));
+    CK_CHECK(!saved_capture(folder));
+    CK_CHECK(click_on_row(reader, "Discard all", "Save"));
+    const auto deadline = ckmtest::clock_type::now() + std::chrono::seconds(6);
+    auto saved = saved_capture(folder);
+    while (!saved && ckmtest::clock_type::now() < deadline) {
+        reader.settle(20);
+        saved = saved_capture(folder);
+    }
+    if (!saved) std::fprintf(stderr, "Native print save screen: %s\n", reader.screen().c_str());
+    CK_CHECK(saved.has_value());
+    if (!saved) return;
+    CK_CHECK(saved->parent_path() == folder);
+    CK_CHECK(saved->extension() == (format == "txt" ? ".txt" : ".ansi"));
+    std::ifstream file(*saved, std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    CK_CHECK(bytes == (format == "txt" ? "UI-SPOOLBOLD\n" : "UI-SPOOL\x1b[1mBOLD\x1b[0m\r\n"));
+    // This proves the actual child/wire/UI/save positive, not absence of a
+    // physical printer/spooler. That needs a separate native observer.
+}
 } // namespace
+
+CK_TEST(native_actual_client_print_capture_saves_plain_text_in_a_unicode_folder) {
+    print_and_save("txt");
+}
+
+CK_TEST(native_actual_client_print_capture_saves_ansi_bytes_in_a_unicode_folder) {
+    print_and_save("ansi");
+}
 
 CK_TEST(native_actual_client_renders_child_sixel_and_keeps_it_contained_during_resize) {
     Fixture fixture("graphics");

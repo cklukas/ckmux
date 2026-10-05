@@ -80,6 +80,21 @@ int print_controller() {
     }
 }
 
+int print_ui_controller() {
+    const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (!::GetConsoleMode(output, &mode) ||
+        !::SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) return 30;
+    if (std::puts("PRINT-UI-READY") == EOF || std::fflush(stdout) != 0) return 31;
+    for (;;) {
+        const int byte = std::getchar();
+        if (byte == EOF) return std::ferror(stdin) != 0 ? 32 : 0;
+        if (byte != '1') continue;
+        if (std::fputs("\x1b[5iUI-SPOOL\x1b[1mBOLD\x1b[0m\r\n\x1b[4iPRINT-UI-DONE\r\n", stdout) == EOF ||
+            std::fflush(stdout) != 0) return 33;
+    }
+}
+
 int graphics(bool plain) {
     if (plain) {
         if (std::puts("VISIBLE-PAYLOAD #0;2;100;0;0 !36~") == EOF ||
@@ -130,6 +145,7 @@ int wmain(int argc, wchar_t** argv) {
     if (mode == L"--flood-second") return flood("second-child");
     if (mode == L"--flood-third") return flood("third-child");
     if (mode == L"--print-controller") return print_controller();
+    if (mode == L"--print-ui-controller") return print_ui_controller();
     if (mode == L"--stubborn-root") {
         if (!::SetConsoleCtrlHandler(ignore_control, TRUE)) return 28;
         return job_root(true);

@@ -53,6 +53,17 @@ namespace ckmtest {
 using clock_type = std::chrono::steady_clock;
 
 inline std::filesystem::path binary_path() {
+#if defined(_WIN32)
+    // Explicit packaged-binary acceptance. An invalid selection must fail,
+    // never silently run the locally built application instead.
+    if (const char* const selected = std::getenv("CKMUX_TEST_BINARY")) {
+        const auto candidate = std::filesystem::u8path(selected);
+        std::error_code error;
+        if (!candidate.is_absolute() || !std::filesystem::is_regular_file(candidate, error) || error)
+            throw std::runtime_error("the selected acceptance executable is unavailable");
+        return candidate;
+    }
+#endif
 #if defined(CKMUX_BINARY_PATH)
     return std::filesystem::path(CKMUX_BINARY_PATH);
 #else

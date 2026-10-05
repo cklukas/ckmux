@@ -5,6 +5,18 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Native print/save and packaged launch acceptance candidate — 2026-10-05
+
+Two native reader cases drive an actual child through the client/server print
+wire route, frame button, capture-policy dialog, job list and Save button.
+They require exactly one saved document in the configured Unicode/spaced
+folder, plain-text escape removal and exact ANSI bytes, with no file before
+the explicit save. These cases do not infer absence of native printer/spooler
+activity; that needs its own observation. The Windows reader harness accepts
+an explicit absolute CKMUX_TEST_BINARY for actual packaged-executable checks
+and refuses an invalid selection instead of silently testing the build copy.
+The candidate requires native execution and final integration before landing.
+
 ### Actual client graphics candidate — 2026-10-05
 
 Two additional native reader cases launch a real child through the actual
