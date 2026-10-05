@@ -5,6 +5,16 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Owner-directed release ordering — 2026-10-05
+
+Publish the Windows installer release on GitHub after all automated CI,
+native package and fresh-user installation gates pass. The owner will perform
+the live Windows Terminal walkthrough and manual installer checks afterward,
+using that published release. Those manual checks remain pending; they do not
+block publication. No VNC access, password or pre-release GUI walkthrough is
+required. This supersedes earlier pre-publication manual acceptance ordering,
+not the automated gates or the scope of their evidence.
+
 ### Paste-credit native coverage candidate — 2026-10-05
 
 The final coverage audit found that all twelve existing paste-credit cases

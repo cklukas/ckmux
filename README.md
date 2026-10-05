@@ -176,8 +176,8 @@ rough edges, and expect the interface to move.
 | `tests/` | The suite; behavior here lands with a test that fails without it |
 | `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
 
-macOS and Linux are both gating platforms. The v0.1.7 release matrix runs all
-54 suites in its native package jobs before the release can publish. The local
+macOS and Linux are both gating platforms. The current release matrix runs all
+65 Unix suites and 54 native Windows suites in its package jobs before publication. The local
 Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
 Native Windows compatibility remains in active development, not a supported
@@ -190,8 +190,10 @@ present. Both architecture package candidates pass fresh-standard-user ZIP/MSI
 installation, detached lifecycle, repair and uninstall checks. Actual downloaded
 CI ZIPs additionally pass graphics, print saving, native clipboard/refusal and
 reattached-history acceptance on Windows 11 ARM64, with x64 emulated there.
-The live Windows Terminal walkthrough, final release gates and publication
-remain unfinished; v0.1.7 still has no Windows assets. See the
+Automated final release gates and publication remain unfinished; v0.1.7 still
+has no Windows assets. The owner will perform the live Windows Terminal and
+manual installer checks after the installer release is published on GitHub.
+Those manual checks are pending, not a prerequisite for publication. See the
 [Windows guide](docs/windows.md) for the precise host/runtime and test policy.
 
 ## Provenance

@@ -155,6 +155,12 @@ The owner promoted this work from the parking lot. [15-windows.md](15-windows.md
 is its specification and acceptance bar; existing M3/M4 claims remain held
 by their recorded sessions. This queue owns the Windows port only.
 
+Owner update, 2026-10-05: WP-56 publication depends on the automated portion
+of WP-55 and all automated CI/package/install gates, not on a pre-release
+manual walkthrough. The owner will perform the live Windows Terminal and
+manual installer checks after the installer release is on GitHub. WP-55/WP-57
+retain those pending manual checks; no VNC access is required for publication.
+
 | Order | Package | Where | State | Prerequisite |
 |---:|---|---|---|---|
 | W1 | WP-52 — Portable terminal ownership and upstream lifecycle | both | **Done** (2026-10-03, ckVision `84c96695`, released v0.1.9 = public `aea4754a`; CI `37126856749` all seven jobs green; ckmux consumes shared ownership and pins 0.1.9, native/cross-platform evidence in [15](15-windows.md)) | Latest ckVision Windows adapter ✓ |

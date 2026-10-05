@@ -16,8 +16,10 @@ persistence after starter exit, explicit complete shutdown, repair and uninstall
 including PATH and user-data preservation. These are not published release
 packages. The matching downloaded CI ZIPs also pass actual contained graphics,
 text/ANSI print saving, Unicode clipboard copy and reattached history checks on
-Windows 11 ARM64; x64 runs there under emulation. Final release gates and the
-live Windows Terminal walkthrough remain required before release.
+Windows 11 ARM64; x64 runs there under emulation. Automated release gates must
+pass before publication. The owner will perform the live Windows Terminal and
+manual installer checks after the installer release is available on GitHub;
+these manual checks do not block publication and are not claimed complete.
 
 The intended release formats are a portable ZIP and a per-user MSI for x64 and
 ARM64. Select the package matching the operating system; use the ARM64 package

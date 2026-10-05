@@ -94,7 +94,9 @@ all eight hosted37339799318 jobs green. Both matching x64/ARM64 ZIP/MSI pairs
 pass full fresh-standard-user installation and actual detached-server lifecycle.
 The release-matrix candidate adds public full-only acceptance fixtures and both
 architecture jobs, but its clean integration/hosted release jobs, packaged
-graphics, live walkthrough and publication remain required. Published0.1.7
+graphics and publication remain required. Per the owner's 2026-10-05 direction,
+the live Windows Terminal and manual installer checks follow publication of
+the GitHub installer release and do not block it. Published0.1.7
 still has no Windows assets.
 
 M0–M2 and the architecture-review remediation queue are complete. **WP-15**
