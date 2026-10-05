@@ -3,6 +3,7 @@
 // Actual ckmux client/server executables and the real system cmd.exe under
 // ckVision's native ConPTY adapter. No echoed helper stands in for a shell.
 #include "reader_harness.hpp"
+#include <fstream>
 
 namespace {
 using ckmtest::Reader;
@@ -10,6 +11,7 @@ struct Fixture {
     std::filesystem::path endpoint;
     ckv::core::ProcessId server = -1;
     Reader reader;
+    std::vector<std::pair<std::string, std::string>> environment;
     std::string_view startup_stage = "server launch";
     explicit Fixture(std::string_view name) : endpoint(ckmtest::private_socket(name)) {}
     ~Fixture() { reader.quit(); ckmtest::end_process(server); ckmtest::forget(endpoint); }
@@ -19,7 +21,7 @@ struct Fixture {
         startup_stage = "endpoint readiness";
         if (!ckmtest::wait_for_socket(endpoint)) return false;
         startup_stage = "client launch";
-        if (!reader.start(endpoint)) return false;
+        if (!reader.start(endpoint, {110, 32}, environment)) return false;
         startup_stage = "client desktop";
         if (!reader.sees("Session")) return false;
         // A rendered desktop is not shell readiness. cmd may still be
@@ -92,6 +94,8 @@ void check_picture_containment(Reader& reader) {
 
 CK_TEST(native_actual_client_renders_child_sixel_and_keeps_it_contained_during_resize) {
     Fixture fixture("graphics");
+    const auto trace_path = fixture.reader.home.path() / "graphics.log";
+    fixture.environment = {{"CKVISION_GRAPHICS_LOG", trace_path.string()}};
     if (!ready(fixture)) return;
     auto& reader = fixture.reader;
     CK_CHECK(reader.client->profile().sixel);
@@ -99,6 +103,12 @@ CK_TEST(native_actual_client_renders_child_sixel_and_keeps_it_contained_during_r
     CK_CHECK(reader.sees("NATIVE-GRAPHIC-DONE"));
     const auto deadline = ckmtest::clock_type::now() + std::chrono::seconds(6);
     while (!red_picture(reader) && ckmtest::clock_type::now() < deadline) reader.settle(20);
+    if (!red_picture(reader)) {
+        std::ifstream trace(trace_path);
+        for (std::string line; std::getline(trace, line);)
+            std::fprintf(stderr, "Native graphics trace: %s\n", line.c_str());
+        for (const auto& row : reader.rows()) std::fprintf(stderr, "%s\n", row.c_str());
+    }
     CK_CHECK(red_picture(reader));
     check_picture_containment(reader);
     reader.client->resize({80, 24}, {9, 18});
