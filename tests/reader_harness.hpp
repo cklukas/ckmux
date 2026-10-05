@@ -57,7 +57,9 @@ inline std::filesystem::path binary_path() {
     // Explicit packaged-binary acceptance. An invalid selection must fail,
     // never silently run the locally built application instead.
     if (const char* const selected = std::getenv("CKMUX_TEST_BINARY")) {
-        const auto candidate = std::filesystem::u8path(selected);
+        std::u8string utf8;
+        for (const char byte : std::string_view(selected)) utf8 += static_cast<char8_t>(byte);
+        const std::filesystem::path candidate(utf8);
         std::error_code error;
         if (!candidate.is_absolute() || !std::filesystem::is_regular_file(candidate, error) || error)
             throw std::runtime_error("the selected acceptance executable is unavailable");
