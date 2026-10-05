@@ -197,6 +197,7 @@ jobs:
           -BuildDirectory "$env:GITHUB_WORKSPACE/build"
           -TemporaryRoot "$env:CKMUX_NATIVE_SCRATCH"
           -Configuration ${{ matrix.configuration }}
+          -ForceScheduledHost
       - name: Prove failed native tests fail the host and remove its task
         run: >
           ./ckmux/tests/windows_native_test_host.ps1

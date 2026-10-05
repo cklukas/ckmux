@@ -216,7 +216,7 @@ jobs:
             if($required -notin $inventory.tests.name) { throw "Native release gate absent: $required" }
           }
           ./ckmux/tools/windows/test-native.ps1 -BuildDirectory "$env:GITHUB_WORKSPACE/build" `
-            -TemporaryRoot "$env:CKMUX_RELEASE_SCRATCH/t" -Configuration Release
+            -TemporaryRoot "$env:CKMUX_RELEASE_SCRATCH/t" -Configuration Release -ForceScheduledHost
 
       - name: Generate matching ZIP and per-user MSI with checksums
         run: |

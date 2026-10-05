@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iterator>
 #include "windows_print_observer.hpp"
+#include "windows_clipboard_fixture.hpp"
 
 namespace {
 using ckmtest::Reader;
@@ -272,6 +273,91 @@ CK_TEST(native_print_observer_detects_a_real_pipe_and_a_real_owned_child) {
     std::fprintf(stderr, "Native observer controls: real pipe seen and released; "
         "owned child PID=%lu is newly observed\n", static_cast<unsigned long>(pid));
     child.quit();
+}
+
+CK_TEST(native_clipboard_context_requires_the_actual_noninteractive_logon) {
+    const ckmtest::ClipboardIsolation isolation;
+    CK_CHECK(isolation.safe);
+    if (!isolation.safe) return; // Failed assertion, never an interactive fallback.
+    CK_CHECK(isolation.includes(::GetCurrentProcessId()));
+    auto rejected = isolation;
+    rejected.safe = false;
+    CK_CHECK(!rejected.includes(::GetCurrentProcessId()));
+    LUID distinct = *isolation.logon;
+    distinct.LowPart ^= 1;
+    CK_CHECK(!ckmtest::same_authentication(*isolation.logon, distinct));
+    Fixture fixture("clipboard-context");
+    if (!ready(fixture)) return;
+    CK_CHECK(isolation.includes(static_cast<DWORD>(fixture.server)));
+    CK_CHECK(isolation.includes(static_cast<DWORD>(fixture.reader.client->process_id())));
+}
+
+namespace {
+bool native_yank(Reader& reader) {
+    reader.press("\x02" "[");
+    if (!reader.sees("— COPY ")) return false;
+    reader.press("/NATIVE-COPY-\r");
+    reader.press("y");
+    return reader.stops_seeing("— COPY ", 3000);
+}
+
+void actual_clipboard_copy(bool locked) {
+    const ckmtest::ClipboardIsolation isolation;
+    CK_CHECK(isolation.safe);
+    if (!isolation.safe) return;
+    Fixture fixture(locked ? "clipboard-locked" : "clipboard-unicode");
+    const auto config = fixture.reader.home.path() / "clipboard.ini";
+    {
+        std::ofstream file(config, std::ios::binary);
+        file << "[terminal]\nclipboard=osc52\n";
+        CK_CHECK(file.good());
+    }
+    fixture.environment = {{"CKMUX_CONFIG", config.string()}};
+    if (!ready(fixture)) return;
+    const bool server_safe = isolation.includes(static_cast<DWORD>(fixture.server));
+    const bool client_safe = isolation.includes(static_cast<DWORD>(fixture.reader.client->process_id()));
+    CK_CHECK(server_safe && client_safe);
+    if (!server_safe || !client_safe) return;
+    // Both actual child tokens match the caller's noninteractive logon. The
+    // ckVision launch uses no inherited handles or explicit lpDesktop, so its
+    // first USER32 connection selects that logon's default service station.
+    auto& reader = fixture.reader;
+    graphic_child(reader, "--copy-controller");
+    CK_CHECK(reader.sees("COPY-CONTROLLER-READY"));
+    ckv::term::WindowsClipboardWriter sentinel;
+    CK_CHECK(sentinel.write_text("prior isolated clipboard").accepted());
+    CK_CHECK(ckmtest::native_clipboard_text() == L"prior isolated clipboard");
+    if (locked) {
+        ckmtest::ClipboardLock lock;
+        CK_CHECK(lock.held);
+        if (!lock.held) return;
+        CK_CHECK(native_yank(reader));
+        CK_CHECK(reader.sees("The copy did not reach host clipboard"));
+        CK_CHECK(reader.sees("ckmux kept it"));
+        CK_CHECK(lock.release());
+        CK_CHECK(ckmtest::native_clipboard_text() == L"prior isolated clipboard");
+        reader.press("\r");
+        reader.press("\x02" "]");
+        reader.press("\r");
+        CK_CHECK(reader.sees("INTERNAL-PASTE-VERIFIED"));
+    }
+    CK_CHECK(native_yank(reader));
+    CK_CHECK(ckmtest::native_clipboard_text() == L"NATIVE-COPY-\u03A9\u4E2D\U0001F600");
+    CK_CHECK(reader.screen().find("The copy did not reach") == std::string::npos);
+    const auto handles = ckmtest::named_handles(static_cast<DWORD>(reader.client->process_id()));
+    CK_CHECK(handles.has_value());
+    bool actual_station_seen = false;
+    if (handles) for (const auto& name : *handles)
+        if (name.ends_with(L"\\" + isolation.station_name)) actual_station_seen = true;
+    CK_CHECK(actual_station_seen);
+    std::fprintf(stderr, "Actual native copy: unicode=1 locked-refusal=%d station-handle-match=%d\n",
+                 locked ? 1 : 0, actual_station_seen ? 1 : 0);
+}
+} // namespace
+
+CK_TEST(native_actual_client_clipboard_copy_publishes_unicode) { actual_clipboard_copy(false); }
+CK_TEST(native_actual_client_clipboard_copy_preserves_locked_external_and_internal_text_then_recovers) {
+    actual_clipboard_copy(true);
 }
 
 CK_TEST(native_actual_client_print_capture_saves_plain_text_in_a_unicode_folder) {
