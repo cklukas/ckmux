@@ -108,7 +108,7 @@ if(WIN32)
         test_windows_shell_host.cpp
         test_windows_paths.cpp
         test_windows_pipe.cpp)
-    list(APPEND CKMUX_TEST_SOURCES test_windows_resource_stats.cpp)
+    list(APPEND CKMUX_TEST_SOURCES test_windows_resource_stats.cpp test_windows_reader.cpp)
     add_executable(ckmux_ipc_race_probe windows_pipe_race_probe.cpp)
     target_link_libraries(ckmux_ipc_race_probe PRIVATE ckmux_platform)
     ckmux_strict(ckmux_ipc_race_probe)
@@ -302,6 +302,8 @@ set(CKMUX_LABELS_test_prefix "pty")
 set(CKMUX_LABELS_test_rename_terminal "pty")
 set(CKMUX_LABELS_test_stats_display "pty")
 set(CKMUX_LABELS_test_windows_resource_stats "native;pty;e2e")
+set(CKMUX_LABELS_test_windows_reader "native;pty;ipc;e2e")
+set(CKMUX_TIMEOUT_test_windows_reader 240)
 set(CKMUX_LABELS_test_session_desktop_client "pty")
 set(CKMUX_LABELS_test_reader_modes_client "pty")
 # Both suites observe actual child identities and drive real local IPC.

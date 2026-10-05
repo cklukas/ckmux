@@ -16,6 +16,7 @@
 // should not conclude there isn't one (WP-21 §4.3).
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -24,18 +25,26 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include "platform/socket.hpp"
 #include "scratch_directory.hpp"
+#if defined(_WIN32)
+#include "common/config.hpp"
+#include "platform/shell_host.hpp"
+#include "server_fixture.hpp"
+#endif
 
-#include "cvision/term/posix_terminal_subsession.hpp"
+#include "cvision/term/terminal_subsession.hpp"
 #include "cvision/testing/cktest.hpp"
 
 namespace ckmtest {
@@ -52,6 +61,9 @@ inline std::filesystem::path binary_path() {
 }
 
 inline std::filesystem::path private_socket(std::string_view name) {
+#if defined(_WIN32)
+    return server_endpoint(name);
+#else
     const char* const base = std::getenv("TMPDIR");
     std::filesystem::path directory =
         std::filesystem::path(base != nullptr && *base != '\0' ? base : "/tmp");
@@ -59,16 +71,22 @@ inline std::filesystem::path private_socket(std::string_view name) {
     std::error_code ignored;
     std::filesystem::create_directories(directory, ignored);
     return directory / (std::string(name) + ".sock");
+#endif
 }
 
 inline void forget(const std::filesystem::path& socket) {
+#if defined(_WIN32)
+    forget_server_endpoint(socket);
+#else
     std::error_code ignored;
     std::filesystem::remove(socket, ignored);
     std::filesystem::remove(std::filesystem::path(socket.string() + ".lock"), ignored);
     std::filesystem::remove(std::filesystem::path(socket.string() + ".log"), ignored);
     std::filesystem::remove(socket.parent_path(), ignored);
+#endif
 }
 
+#if !defined(_WIN32)
 // Every server this harness forks, so none of them can outlive the run.
 //
 // A test that returns early after starting a server — `if (!frame.has_value())
@@ -230,11 +248,75 @@ inline void end_process(::pid_t child) {
         ::usleep(5000);
     }
 }
+#else
+// Foreground servers belong to the fixture, not the reader's ConPTY job.
+// Retain ckVision's owning sessions rather than killing a possibly reused PID.
+// Static destruction closes them before the fixture HOME is removed.
+struct HarnessServer {
+    ckv::core::ProcessId identity;
+    std::unique_ptr<ckv::term::TerminalSubsession> session;
+};
+inline std::vector<HarnessServer>& harness_servers() {
+    static std::vector<HarnessServer> servers;
+    return servers;
+}
+
+inline const std::filesystem::path& harness_config() {
+    static const ScratchDirectory home("reader-home");
+    static const std::filesystem::path config = [] {
+        const auto path = home.path() / "ckmux.ini";
+        const auto shell = ckm::platform::shell_host().system_shell;
+        if (shell.empty() || !ckm::save_setting(path, "general", "shell", shell))
+            throw std::runtime_error("cannot configure the real native fixture shell");
+        return path;
+    }();
+    return config;
+}
+
+inline ckv::core::ProcessId start_server(const std::filesystem::path& socket) {
+    auto spec = ckv::term::TerminalLaunchSpec::program(
+        binary_path().string(), {"--server", socket.string(), "--foreground"});
+    spec.working_directory = harness_config().parent_path().string();
+    spec.environment = {{"CKMUX_CONFIG", harness_config().string()},
+                        {"USERPROFILE", spec.working_directory}, {"HOME", spec.working_directory}};
+    spec.exit_policy = ckv::core::TerminalExitPolicy::TerminateAfterGrace;
+    auto server = ckv::term::launch_terminal_subsession(std::move(spec));
+    if (server->state() == ckv::core::TerminalSubsessionState::Failed || server->process_id() <= 0)
+        return -1;
+    const auto id = server->process_id();
+    harness_servers().push_back({id, std::move(server)});
+    return id;
+}
+
+inline bool wait_for_socket(const std::filesystem::path& socket, int budget_ms = 5000) {
+    const auto deadline = clock_type::now() + std::chrono::milliseconds(budget_ms);
+    do {
+        auto probe = ckm::platform::connect_to_server(socket);
+        if (probe.status == ckm::platform::ConnectStatus::Connected) {
+            auto owned_stream = probe.take_stream();
+            return owned_stream.open();
+        }
+        for (auto& server : harness_servers()) (void)server.session->drain(64 * 1024);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (clock_type::now() < deadline);
+    return false;
+}
+
+inline void end_process(ckv::core::ProcessId child) {
+    auto& servers = harness_servers();
+    for (auto it = servers.begin(); it != servers.end(); ++it)
+        if (it->identity == child) {
+            it->session->close();
+            servers.erase(it);
+            return;
+        }
+}
+#endif
 
 // The real client, in a terminal, with its screen decoded — a reader's ckmux.
 struct Reader {
     ScratchDirectory home{"reader-client"};
-    std::unique_ptr<ckv::term::PosixTerminalSubsession> client;
+    std::unique_ptr<ckv::term::TerminalSubsession> client;
 
     // What the client is told its HOST can do. Settable because WP-21 §3's
     // Sixel row is about a host that cannot render a picture: the program
@@ -259,11 +341,22 @@ struct Reader {
         ckv::term::TerminalLaunchSpec spec =
             ckv::term::TerminalLaunchSpec::program(binary_path().string(), {});
         spec.working_directory = home.path().string();
+#if defined(_WIN32)
+        spec.environment = {{"TERM", "xterm-256color"}, {"HOME", home.path().string()},
+                            {"USERPROFILE", home.path().string()},
+                            {"CKMUX_CONFIG", harness_config().string()},
+                            {"CKMUX_SOCKET", socket.string()}};
+#else
         spec.environment = {{"TERM", "xterm-256color"}, {"PATH", "/usr/bin:/bin"},
                             {"SHELL", harness_shell()}, {"HOME", home.path().string()},
                             {"LC_ALL", "C"},            {"CKMUX_SOCKET", socket.string()}};
-        for (const std::pair<std::string, std::string>& entry : extra_environment)
-            spec.environment.push_back({entry.first, entry.second});
+#endif
+        for (const auto& entry : extra_environment) {
+            auto existing = std::find_if(spec.environment.begin(), spec.environment.end(),
+                [&](const auto& value) { return value.first == entry.first; });
+            if (existing == spec.environment.end()) spec.environment.push_back(entry);
+            else existing->second = entry.second;
+        }
         spec.profile = host_profile;
         spec.profile.cells = cells;
         spec.profile.cell_pixels = ckv::PixelSize{9, 18};
@@ -271,8 +364,10 @@ struct Reader {
         ckv::term::TerminalSubsessionOptions options;
         options.max_output_bytes = 1u << 20u;
         options.max_parser_work_per_step = 256u << 10u;
-        client = ckv::term::PosixTerminalSubsession::launch(spec, options);
-        return client != nullptr;
+        client = ckv::term::launch_terminal_subsession(std::move(spec), options);
+        return client->process_id() > 0 &&
+               client->state() != ckv::core::TerminalSubsessionState::Failed &&
+               client->state() != ckv::core::TerminalSubsessionState::Exited;
     }
 
     void press(std::string_view keys) {
@@ -284,7 +379,7 @@ struct Reader {
         const clock_type::time_point until = clock_type::now() + std::chrono::milliseconds(ms);
         while (clock_type::now() < until) {
             (void)client->drain(64 * 1024);
-            ::usleep(10000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 
@@ -320,7 +415,7 @@ struct Reader {
             (void)client->drain(64 * 1024);
             if (screen().find(needle) != std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
-            ::usleep(20000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }
 
@@ -337,7 +432,7 @@ struct Reader {
             (void)client->drain(64 * 1024);
             if (screen().find(needle) == std::string::npos) return true;
             if (clock_type::now() >= deadline) return false;
-            ::usleep(20000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }
 
@@ -347,7 +442,7 @@ struct Reader {
         while (clock_type::now() < deadline) {
             (void)client->drain(64 * 1024);
             if (client->state() == ckv::core::TerminalSubsessionState::Exited) return true;
-            ::usleep(20000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         return false;
     }

@@ -83,8 +83,9 @@ confirmed, and menu-visible.
 
 The owner activated native Windows compatibility on 2026-10-03. WP-52–WP-57
 in [12](12-work-packages.md) implement [15](15-windows.md), starting with the
-latest ckVision's shared lifecycle interface. Windows support is not yet
-implemented or released.
+latest ckVision's shared lifecycle interface. The native implementation and
+blocking Windows CI are present; complete acceptance and a Windows release
+are still pending.
 
 M0–M2 and the architecture-review remediation queue are complete. **WP-15**
 (M3's menu-driven acceptance walkthrough) and **WP-21** (M4's reference-app,

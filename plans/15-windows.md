@@ -5,6 +5,54 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Actual native client acceptance candidate — 2026-10-05
+
+The reader harness now uses ckVision's portable terminal factory. Windows
+fixtures retain owning ConPTY sessions for their foreground servers separately
+from each client's process tree, and select the real system cmd.exe through an
+explicit private configuration. They do not substitute an echo helper for a
+shell, modify production behavior or add native process launch plumbing.
+Eight new native cases drive the actual ckmux binary and decoded host screen:
+prefix commands/real computed shell results, menus/report, mouse menu opening,
+detach/reattach, abrupt client-tree termination/reattach, running host resize,
+custom title versus child title, and ending the last session. The proposed
+required native inventory is51. Runtime gates are pending at preparation;
+registration is not pass evidence. This controlled-ConPTY acceptance does not
+prove the user's actual Windows Terminal GUI, detached lazy startup, complete
+reference-app/saturation equivalence or install-tested Windows release.
+
+Initial ARM64 MSVC strict Release run executes all eight cases, with six
+passing and two fixture failures. A mouse-menu test used only one Escape,
+although the shared menu contract deliberately backs out one level per
+Escape; it now observes dropdown dismissal then leaves the bar explicitly.
+The exit witness compared a process ID after the adapter cleared it on exit;
+the registry now retains the immutable launch identity beside the owning
+session. Both corrections are test-only. The exact corrected ff4e45bd candidate
+passes all eight actual cases on Windows11 ARM64 MSVC strict Release, CTest0,
+52.29s after a checked10.25s incremental build against installed ckVision16.
+The initial6fbbbc1 common harness also passes the five affected Mac Release
+suites in166.06s, checked4s incremental build, installed16. These are focused
+candidate verdicts, not full clean-commit integration. Caption witnesses now
+also require the title on the real window-frame row beside its close control,
+so a child's echoed title command cannot substitute for a renamed frame.
+An actual compiled production mutation omits remote input payloads and fails
+all eight client startup/computed-shell witnesses, propagating CTest8. Source
+hashes are restored and the production executable rebuilt before the positive
+repeat; that repeat has three intermittent startup failures. The initial rig
+waited for the desktop but not the real shell prompt. It now separately observes
+the native shell banner/prompt before input, and emits startup-stage/screen
+diagnostics on failure. No production behavior is changed, and stability of
+these stronger fixtures is checked at2a278341: three consecutive native
+eight-case runs all pass, CTest0, after a checked13.64s incremental build;
+the final run takes52.31s. The two resize iterations now
+also require different computed answers, preventing old screen content from
+standing in for working input after the second environment change.
+
+Exact public555ea330 CI37254249086 now succeeds in all eight jobs, including
+Windows x64/ARM64/x64ASan, both macOS lanes and all three Linux lanes, with
+the previous50-entry native inventory. This does not prove the new51-entry
+candidate or replace its required exact-public hosted gate.
+
 ### Native shared-session test inventory — 2026-10-05
 
 The native gate now includes all nine `test_reader_modes` cases and all nineteen
