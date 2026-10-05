@@ -191,20 +191,23 @@ macOS and Linux are both gating platforms. The current release matrix runs all
 65 Unix suites and 54 native Windows suites in its package jobs before publication. The local
 Debian gate additionally sweeps GCC 13, GCC 14
 and Clang.
-Native Windows compatibility remains in active development, not a supported
-packaged release. Native ARM64 development builds run on tested Windows 11
+Windows x64 and ARM64 ZIP/MSI packages are published in
+[v0.1.8](https://github.com/cklukas/ckmux/releases/tag/v0.1.8). Full native
+acceptance remains in progress; publication is not a claim that the owner's
+live Windows Terminal walkthrough has passed. Native ARM64 builds run on tested Windows 11
 25H2: owned named-pipe IPC, detached server/startup coordination, native waits,
 Unicode paths and owned-job process resources are implemented. Shared child
 lifecycle and host/resource services are provided by released ckVision 0.1.18,
 not application workarounds. Blocking x64/ARM64 CI and supported x64 ASan are
-present. Both architecture package candidates pass fresh-standard-user ZIP/MSI
+present. Both released architecture packages pass fresh-standard-user ZIP/MSI
 installation, detached lifecycle, repair and uninstall checks. Actual downloaded
 CI ZIPs additionally pass graphics, print saving, native clipboard/refusal and
 reattached-history acceptance on Windows 11 ARM64, with x64 emulated there.
-Automated final release gates and publication remain unfinished; v0.1.7 still
-has no Windows assets. The owner will perform the live Windows Terminal and
-manual installer checks after the installer release is published on GitHub.
-Those manual checks are pending, not a prerequisite for publication. See the
+All eight CI jobs and all seven release jobs passed at public commit
+`218ee734`; the 17 downloaded release assets and eight package/archive
+checksum pairs were verified. The owner will now perform the live Windows
+Terminal and manual installer checks using that published release.
+Those manual checks are pending. See the
 [Windows guide](docs/windows.md) for the precise host/runtime and test policy.
 
 ## Provenance
