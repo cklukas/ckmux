@@ -75,6 +75,12 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE 
         PSS_HANDLE_ENTRY entry{};
         walked = ::PssWalkSnapshot(snapshot, PSS_WALK_HANDLES, marker, &entry, sizeof(entry));
         if (walked != ERROR_SUCCESS) break;
+        std::wstring_view type;
+        if (entry.TypeName && entry.TypeNameLength % sizeof(wchar_t) == 0) {
+            type = {entry.TypeName, entry.TypeNameLength / sizeof(wchar_t)};
+            // Native PSS may include the terminating NUL in its byte count.
+            if (!type.empty() && type.back() == L'\0') type.remove_suffix(1);
+        }
         if (entry.Handle == inspect) {
             std::fprintf(stderr, "Observer witness flags=%u type=%u type-name-bytes=%u name-bytes=%u\n",
                 static_cast<unsigned int>(entry.Flags), static_cast<unsigned int>(entry.ObjectType),
@@ -90,8 +96,7 @@ inline std::optional<std::vector<std::wstring>> named_handles(DWORD pid, HANDLE 
                 break;
             }
             names.emplace_back(entry.ObjectName, entry.ObjectNameLength / sizeof(wchar_t));
-        } else if (entry.TypeName && entry.TypeNameLength == 4 * sizeof(wchar_t) &&
-                   std::wstring_view(entry.TypeName, 4) == L"File") {
+        } else if (type == L"File") {
             const auto name = file_object_name(process, entry.Handle);
             if (!name) { walked = ERROR_INVALID_DATA; break; }
             if (!name->empty()) names.push_back(*name);
