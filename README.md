@@ -1,224 +1,107 @@
 # ckmux
 
-**ckmux** is a terminal multiplexer — like tmux — with a face. It keeps your
-terminal sessions, and the programs running inside them, alive when you
-disconnect, and lets you reattach later exactly where you left off.
+**Persistent terminals. A desktop you can see.**
 
-**Documentation:** [cklukas.github.io/ckmux](https://cklukas.github.io/ckmux/) —
-getting started, the command line, keys, and configuration.
+Keep shells, editors, and long-running commands alive after you disconnect.
+Come back to a desktop of movable terminal windows, with menus you can browse
+and a footer that shows the keys available right now.
 
-Unlike tmux, its interface is visible. There is a permanent menu bar, a
-permanent footer showing the keys that work right now, and every terminal
-lives in a movable, resizable window on a desktop. Everything works by mouse
-or by keyboard, and nothing has to be memorized before it can be found.
+[Get started](docs/getting-started.md) · [Install](docs/installation.md) ·
+[User guide](https://cklukas.github.io/ckmux/) ·
+[Downloads](https://github.com/cklukas/ckmux/releases/latest) ·
+[Changes](CHANGES.md)
 
-```
- Session  Terminal  Window  View  Help
-░░╔═[■]═══════════════════ Terminal 1 ═══════════════════[↑]═╗░░░
-░░║ $ vim notes.md                                           ║░░░
-░░║                          ┌─ ^B … ──────────────────────┐ ║░░░
-░░║                          │ c   new term   t   tile     │ ║░░░
-░░║                          │ n   next       m   menu     │ ║░░░
-░░║                          │ w   windows    d   detach   │ ║░░░
-░░║                          └─────────────────────────────┘ ║░░░
-░░╚══════════════════════════════════════════════════════════╝░░░
- ^B m menu  ^B c new term  ^B d detach  ^B n next  ^B ? keys
+```text
+ Session  Terminal  Window  View  Settings  Help
+ ┌─ Terminal 1 ────────────────────────┐
+ │ $ make                            │
+ │ Building…       ┌─ Terminal 2 ─────────────────────┐
+ │                 │ $ vim notes.md                  │
+ └─────────────────│                                 │
+                   │                                 │
+                   └─────────────────────────────────┘
+ ^B m menu   ^B c new terminal   ^B d detach   ^B ? keys
 ```
 
-Inside each window you can run any terminal program — a shell, vim, htop, mc —
-with full color, mouse support, and Sixel graphics.
+*An illustration of the desktop layout.* ckmux runs inside your terminal
+emulator, on macOS, Linux, and native Windows.
 
-## How it works
+## Why ckmux?
 
-A detached server owns the terminals and their PTYs; it keeps running with no
-client attached. A client connects over a local socket, receives a snapshot,
-and then receives only what changed. Closing the client — or losing the
-connection — does not touch the programs. Reattaching replays the current
-state, so you come back to what is there now, not to what you left.
-
-The interface is built on [ckVision](https://github.com/cklukas/ckVision), a
-windowed terminal-UI framework, which the two projects develop together.
-
-## Keys
-
-One key is taken from the program you are running: the prefix, `Ctrl+B`. Press
-it and a popup shows what the next key does — `c` for a new terminal, `n` and
-`p` to move between them, `d` to detach, `?` for the full list. Every command
-is also in the menu bar, and every menu entry shows its key, so the popup is a
-shortcut rather than the only way in. Press `Ctrl+B` twice to send a literal
-`Ctrl+B` through to the program.
-
-Everything else — function keys, Alt combinations, the mouse — belongs to the
-program in the window, exactly as it would without ckmux.
+- **Leave work running.** Detach or close the client; the server keeps your
+  sessions and programs alive. Reattach to their current state.
+- **Find commands as you go.** Menus, mouse interaction, and a prefix-key
+  popup make the interface usable before you learn the shortcuts.
+- **Arrange your workspace.** Move, resize, tile, or cascade terminal windows;
+  keep separate named sessions for different projects.
+- **Share a view.** Join a session from another client, or watch it read-only.
+- **Keep terminal features.** Color, mouse input, scrollback, copy mode, and
+  Sixel graphics on capable hosts, plus captured print output and process stats.
 
 ## Install
 
-Release packages are available from the
-[latest GitHub release](https://github.com/cklukas/ckmux/releases/latest).
-The DEB, RPM, and macOS packages target Linux x86_64 and macOS arm64. Linux
-packages are built on Ubuntu 24.04; CI also gates Ubuntu 26.04. Ubuntu
-20.04 is no longer supported: v0.1.3 to v0.1.5 carried a separately named
-Ubuntu 20.04 DEB, and v0.1.5 remains the release to use there. Starting with
-v0.1.2, each release also carries a Homebrew formula that builds ckmux from
-that exact release source.
-
-On macOS with [Homebrew](https://brew.sh/):
-
-```bash
-brew install cklukas/ckmux/ckmux
-```
-
-The tap uses the same versioned `ckmux.rb` formula attached to the GitHub
-release, including its release-source SHA-256.
-
-On Debian or Ubuntu, download the `.deb` from the latest release and install
-it with APT so system dependencies are resolved:
-
-```bash
-sudo apt install ./ckmux_*_amd64.deb
-```
-
-On Fedora, RHEL, or another RPM-based distribution, download the `.rpm` and
-install it with the distribution package manager:
-
-```bash
-sudo dnf install ./ckmux-*.x86_64.rpm
-```
-
-Every release also includes `.tar.gz` archives for installation without a
-package manager. Extract one and copy its `bin`, `share/man`, and
-`share/doc/ckmux` contents under the same prefix. Confirm any installation
-with `ckmux --version`.
-
-## Build
-
-Needs a C++20 compiler, CMake 3.28+, and a ckVision checkout beside this one
-(or an installed ckVision package).
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j8
-./build/ckmux
-```
-
-`cmake --install build` installs the executable, `ckmux(1)`, and the browser
-guide. The key appendix in both installed formats is generated from the same
-registry that drives dispatch, menus, the footer, and in-application help.
-
-Run the suite:
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-GitHub runs functional suites serially with `CKMUX_TEST_STRESS=OFF`. The
-startup-election check uses two starters, not a load test. Ten-starter,
-ten-terminal and sustained-flood checks are opt-in and run locally on the
-owner's Mac Studio, not on hosted runners:
-
-```bash
-cmake -S . -B build -DCKMUX_TEST_STRESS=ON
-cmake --build build -j8
-ctest --test-dir build --output-on-failure --parallel 1
-```
-
-For Windows builds, use the noninteractive native test host described in the
-[Windows guide](docs/windows.md#run-native-tests). Its real clipboard cases
-fail closed when run directly in an interactive window station.
-
-The documentation site is built from `docs/` by
-[ckdocs](https://cklukas.github.io/ck-git-hosting/operations/07-docs-sites.html),
-configured in `ckdocs.yml`. To preview it, or to check its links as the Pages
-workflow does:
-
-```bash
-ckdocs serve --root .
-ckdocs check --root .
-```
-
-## Status
-
-Pre-1.0, with **v0.1.7** published for macOS arm64 and Linux x86_64. The core
-promise works and is proven by a test that forks a real
-server, kills the client mid-run, and shows the program kept going unwatched.
-Sessions are plural, named and killable. The interface is real and usable:
-menu bar with clock and calendar, footer, floating terminal windows, the
-prefix and its popup, scrollback with a frame scrollbar, Sixel graphics, and
-themes under `Settings ▸ General…`. Shared and read-only attaches, copy mode,
-captured print output, and per-terminal process statistics are built as well.
-
-M3 and M4 are in their acceptance passes. The user guide, installed man page,
-generated key appendix, Linux port, licensing, and packaging are complete;
-the v0.1.2 packaging update added RPM and Homebrew delivery to the existing DEB
-and platform archives, and v0.1.3 adds the Ubuntu 20.04 compatibility package.
-v0.1.4 reduces terminal-update traffic in two places: sparse server deltas are
-partitioned by their exact encoded cost, and ckVision 0.1.5 coalesces large
-text frames while the host terminal is still completing the previous frame.
-v0.1.5 adds the big clock: `^B t` shows the time in block digits over a
-terminal, as tmux's clock mode does, and View ▸ Show Date / Show Date and
-Time show the others; it stays up while you work in other windows. Copy mode
-now sits over its own window, and `^B n` / `^B p` take the keyboard with the
-window they bring forward.
-v0.1.6 moves to ckVision 0.1.7. Help now opens beside your work instead of
-holding the keyboard, and Move / Resize is one keyboard mode in which Enter
-keeps the new place and Esc puts the window back. ckVision's diagnostic
-switches, `CKVISION_OUTPUT_CAPTURE` and `CKVISION_GRAPHICS_LOG`, are now read
-by ckmux itself and keep working as before. It drops the Ubuntu 20.04
-package: ckVision 0.1.7 requires the exact floating-point `<charconv>`
-conversions that 20.04's GCC 10 standard library lacks.
-v0.1.7 moves to ckVision 0.1.8, which fixes clicks landing in the top-left
-corner, on the menu, after a drag carried the pointer past the terminal
-window's edge (as resizing a window by its edge does) in terminals that report
-the mouse in cells, such as macOS Terminal.
-The remaining v1 work is M4's three-host/vttest acceptance, the
-`ckmux-256color` terminfo it gates, and the final acceptance audit. Expect
-rough edges, and expect the interface to move.
-
-## Layout
-
-| Path | Contents |
+| Platform | Installation |
 |---|---|
-| `src/common/` | Wire protocol, configuration, keymap, grid deltas — shared by both ends |
-| `src/server/` | The detached server: terminals, PTYs, the diff engine |
-| `src/client/` | The attaching client: the ckVision interface, commands, copy mode |
-| `src/platform/` | The OS seam — sockets, processes, polling, clipboard, paths |
-| `doc/` | Templates for the installed man page and generated key appendix |
-| `docs/` | The browser guide; its key page is checked against the compiled registry |
-| `tests/` | The suite; behavior here lands with a test that fails without it |
-| `fuzz/` | libFuzzer targets and corpora for the protocol and configuration decoders |
+| macOS | `brew install cklukas/ckmux/ckmux`; Apple Silicon archive for macOS 26+ also available |
+| Linux x86_64 — Debian / Ubuntu | Download the DEB, then `sudo apt install ./ckmux_*_amd64.deb` |
+| Linux x86_64 — RPM distributions | Download the RPM, then `sudo dnf install ./ckmux-*.x86_64.rpm` |
+| Windows x64 / ARM64 | Download the matching per-user MSI or portable ZIP; run in Windows Terminal |
 
-macOS and Linux are both gating platforms. The current release matrix runs all
-65 Unix suites and 54 native Windows suites in its package jobs before publication. The local
-Debian gate additionally sweeps GCC 13, GCC 14
-and Clang.
-Windows x64 and ARM64 ZIP/MSI packages are published in
-[v0.1.8](https://github.com/cklukas/ckmux/releases/tag/v0.1.8). Full native
-acceptance remains in progress; publication is not a claim that the owner's
-live Windows Terminal walkthrough has passed. Native ARM64 builds run on tested Windows 11
-25H2: owned named-pipe IPC, detached server/startup coordination, native waits,
-Unicode paths and owned-job process resources are implemented. Shared child
-lifecycle and host/resource services are provided by released ckVision 0.1.18,
-not application workarounds. Blocking x64/ARM64 CI and supported x64 ASan are
-present. Both released architecture packages pass fresh-standard-user ZIP/MSI
-installation, detached lifecycle, repair and uninstall checks. Actual downloaded
-CI ZIPs additionally pass graphics, print saving, native clipboard/refusal and
-reattached-history acceptance on Windows 11 ARM64, with x64 emulated there.
-All eight CI jobs and all seven release jobs passed at public commit
-`218ee734`; the 17 downloaded release assets and eight package/archive
-checksum pairs were verified. The owner will now perform the live Windows
-Terminal and manual installer checks using that published release.
-Those manual checks are pending. See the
-[Windows guide](docs/windows.md) for the precise host/runtime and test policy.
+Use the [latest release](https://github.com/cklukas/ckmux/releases/latest).
+The [installation guide](docs/installation.md) covers platform requirements,
+checksums, archive installation, upgrades, and removal. For other architectures
+or development, see [building from source](docs/building.md).
 
-## Provenance
+## Your first minute
 
-ckmux shares no code with tmux, GNU screen, zellij, dtach/abduco, mtm, Twin,
-Turbo Vision, or any port or derivative of them. Its behavior is derived from
-published standards — ECMA-48, xterm ctlseqs, the kitty protocol specs,
-Unicode UAX #11/#29, terminfo(5), POSIX — from ckVision's own documentation,
-and from documented black-box observation of terminals. Contributions are held
-to the same rule; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Start ckmux from a terminal:
 
-## License
+```sh
+ckmux
+```
 
-[MIT](LICENSE). Copyright (c) 2026 Dr. Christian Klukas.
+On Windows, use the installed executable or `bin\ckmux.exe` from the extracted
+ZIP; see the [Windows launch instructions](docs/installation.md#windows).
+
+Press **Ctrl+B**, release it, then press the command key:
+
+| Key after Ctrl+B | Action |
+|---|---|
+| `c` | Open a terminal window |
+| `n` / `p` | Switch to the next / previous terminal |
+| `m` | Open the menu bar |
+| `d` | Detach and leave programs running |
+| `?` | Show the key reference |
+
+Run `ckmux` again to return. Press Ctrl+B twice to send a literal Ctrl+B to
+the program. No configuration file is required.
+
+## Learn more
+
+| I want to… | Read |
+|---|---|
+| Create sessions, detach, reattach, or share | [Getting started](docs/getting-started.md) |
+| Use the command line | [CLI reference](docs/cli.md) |
+| Find a shortcut or copy text | [Keys and copy mode](docs/keys.md) |
+| Choose a shell, theme, or key binding | [Configuration](docs/configuration.md) |
+| Understand Windows runtime and testing requirements | [Native Windows](docs/windows.md) |
+| Build, test, or contribute | [Build guide](docs/building.md) · [Contribution terms](CONTRIBUTING.md) |
+
+ckmux is pre-1.0: expect interface and protocol changes. Native Windows packages
+are published and automated installation/lifecycle checks pass; the manual
+Windows Terminal and installer walkthrough remains pending. Sixel requires a
+capable outer terminal. Sessions survive client disconnection, not a reboot or
+server shutdown.
+
+## Under the hood
+
+A detached server owns the shells, terminal state, scrollback, and layout.
+Clients connect locally over a Unix socket or Windows named pipe, receive the
+current state, and render subsequent updates. The interface and terminal stack
+use [ckVision](https://github.com/cklukas/ckVision), a C++20 terminal UI library.
+
+ckmux is independently implemented from published standards and documented
+terminal behavior; it shares no code with other terminal multiplexers.
+Contributions follow the [provenance rules](CONTRIBUTING.md#provenance-binding--read-before-writing-a-line).
+
+[MIT License](LICENSE) · Copyright (c) 2026 Dr. Christian Klukas.

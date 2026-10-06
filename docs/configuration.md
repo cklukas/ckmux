@@ -18,12 +18,28 @@ file.
 
 Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 
+## Choose a shell
+
+The default is your resolved POSIX shell on macOS/Linux and `cmd.exe` on
+Windows. Set an executable path to choose another shell; do not add shell
+arguments or surrounding quotes to the value. For PowerShell 7 installed at
+its usual Windows location:
+
+```ini
+[general]
+shell = C:\Program Files\PowerShell\7\pwsh.exe
+```
+
+For macOS/Linux, an example is `shell = /bin/zsh`. The selected executable
+must exist. Shell selection applies to newly created terminals; existing
+programs keep running. Use `ckmux check-config` to check configuration syntax.
+
 ## [general]
 
 | Key | Default | Meaning |
 |---|---|---|
 | `prefix` | `C-b` | The one key ckmux takes from the programs inside it. |
-| `shell` | `$SHELL` | What New Terminal runs; empty means your shell, resolved at launch. |
+| `shell` | Automatic | What New Terminal runs: resolved POSIX shell on macOS/Linux; `cmd.exe` on Windows. An empty value selects that default. |
 | `login-shell` | `true` | POSIX only: start an interactive login shell. Windows uses native shell profile behavior and preserves this key without offering it in Settings. |
 | `scrollback` | `10000` | Lines of history per terminal; `0` means remember nothing. |
 | `max-terminals` | `64` | The most terminals one session may hold. |
@@ -34,7 +50,7 @@ Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 | `kill-grace-seconds` | `5` | How long programs get to end on their own when a session is killed; `0` means don't wait. |
 | `kill-empty-session` | `true` | A session whose last terminal closed goes away. |
 | `clock` | `seconds` | The menu-bar clock: `seconds`, `minutes`, or `off`. The big clock (`^B t`) drops its seconds for `minutes`. |
-| `desktop-size` | `fixed` | Whose screen sizes the shared desktop: `fixed`, `fit-smallest`, or `fit-latest`. A client's own screen never silently reflows a session — resizing SIGWINCHes every child, for every reader watching. |
+| `desktop-size` | `fixed` | Shared desktop sizing: `fixed`, `fit-smallest`, or `fit-latest`. With one attached reader, resizing its host also resizes the desktop. With several readers, this policy decides; a desktop resize affects every child. |
 | `resize-windows-to-fit` | `false` | After a reattach on a smaller screen has moved an oversized window up and left, whether a second, resizing step shrinks it to fit. |
 | `show-cpu` | `false` | CPU readout on every terminal window's footer (View menu). |
 | `show-memory-rss` | `false` | Memory (RSS) readout. |
@@ -50,7 +66,7 @@ Sizes take an optional upper-case suffix: `K`, `M`, or `G` (powers of 1024).
 | `sixel` | `auto` | Sixel graphics: `auto` or `off`. |
 | `sixel-max-megapixels` | `64` | The largest picture a program may draw — an allocator guard, far above a full 4K screen. |
 | `osc52` | `true` | Whether a program may put text on the clipboard with OSC 52 (capped at 64 KiB). |
-| `clipboard` | `osc52, pbcopy` | Where a copy goes, in order: `osc52` (the outer terminal), `pbcopy` (a local helper), or `exec:<command>` (text on stdin). |
+| `clipboard` | `osc52, pbcopy` | Where a copy goes, in order: `osc52` (native clipboard on Windows, outer terminal on POSIX), `pbcopy` (a macOS helper), or `exec:<command>` (text on stdin). |
 
 ## [printer]
 
@@ -99,13 +115,14 @@ Actions: `new-terminal`, `close-terminal`, `kill-terminal`, `move-terminal`,
 `tile-horizontally`, `tile-vertically`, `tile-grid`, `cascade`, `menu-bar`,
 `copy-mode`, `paste`, `detach`, `sessions`, `new-session`, `rename-session`,
 `kill-session`, `key-reference`, `settings`, `status-bar`, `fit-desktop`,
-`show-cpu`, `show-memory-rss`, `show-memory-real`, `about`, `send-prefix`,
+`show-cpu`, `show-memory-rss`, `show-memory-real`, `show-clock`, `show-date`,
+`show-date-time`, `about`, `send-prefix`,
 `quit`.
 
 `ckmux check-config` also names any key that is parsed and validated but not
 yet acted on by this version, with the work it waits for — so "I set this,
 why did nothing happen?" always has an answer.
 
-Known diagnostic defect, since v0.1.1: `check-config` still lists `ask-cache`,
+Known diagnostic limitation: `check-config` still lists `ask-cache`,
 `save-format`, `save-folder`, and `save-ask-name` as waiting for printer work.
 The runtime does honor all four; only that report is stale.

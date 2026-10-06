@@ -17,18 +17,24 @@ site:
       url: https://github.com/cklukas/ckmux
     - title: Releases
       url: https://github.com/cklukas/ckmux/releases
+    - title: Changes
+      url: https://github.com/cklukas/ckmux/blob/main/CHANGES.md
     - title: ckVision
       url: https://cklukas.github.io/ckVision/
 search: true
 nav:
   - title: Home
     page: docs/index.md
+  - title: Installation
+    page: docs/installation.md
   - title: Getting started
     page: docs/getting-started.md
-  - title: Native Windows
-    page: docs/windows.md
   - title: Reference
     pages:
       - docs/cli.md
       - docs/keys.md
       - docs/configuration.md
+  - title: Development
+    pages:
+      - docs/building.md
+      - docs/windows.md
