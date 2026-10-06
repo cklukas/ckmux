@@ -81,6 +81,7 @@ the program. No configuration file is required.
 | I want to… | Read |
 |---|---|
 | Create sessions, detach, reattach, or share | [Getting started](docs/getting-started.md) |
+| Keep work running over SSH or understand logout limits | [SSH and session lifetime](docs/session-lifetime.md) |
 | Use the command line | [CLI reference](docs/cli.md) |
 | Find a shortcut or copy text | [Keys and copy mode](docs/keys.md) |
 | Choose a shell, theme, or key binding | [Configuration](docs/configuration.md) |
@@ -92,6 +93,7 @@ are published and automated installation/lifecycle checks pass; the manual
 Windows Terminal and installer walkthrough remains pending. Sixel requires a
 capable outer terminal. Sessions survive client disconnection, not a reboot or
 server shutdown.
+Desktop logout and login cleanup have [platform-specific limits](docs/session-lifetime.md).
 
 ## Under the hood
 

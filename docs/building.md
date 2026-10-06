@@ -21,6 +21,11 @@ Clang toolchain on Linux, or Visual Studio's C++ desktop tools and Windows SDK
 on Windows. Native Windows CI uses Visual Studio 2026. Ubuntu 24.04's standard
 build tools meet the Linux baseline; Ubuntu 20.04's default toolchain does not.
 
+With Apple's system C++ library, floating-point `std::from_chars` requires
+macOS 26 or later. Setting an older deployment target does not make that API
+available. Homebrew source builds using Apple Clang have the same requirement;
+an alternative C++ standard library needs its own compatibility verification.
+
 Typical prerequisites:
 
 ```sh
