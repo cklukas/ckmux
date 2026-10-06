@@ -10,7 +10,7 @@ In filenames below, `VERSION` means the release number shown on that page.
 
 | System | Package | Notes |
 |---|---|---|
-| macOS Apple Silicon | Homebrew or `Darwin-arm64.tar.gz` | Prebuilt archive requires macOS 26+; Homebrew builds from source |
+| macOS Apple Silicon | Homebrew or `Darwin-arm64.tar.gz` | macOS 26+ with the standard Apple toolchain; Homebrew builds from source |
 | Debian / Ubuntu x86_64 | `_amd64.deb` | Packages built on Ubuntu 24.04; CI also checks Ubuntu 26.04 |
 | RPM-based Linux x86_64 | `.x86_64.rpm` | Install with DNF; runtime dependencies must be available |
 | Other Linux x86_64 | `Linux-x86_64.tar.gz` | Same runtime baseline as the Linux packages |
@@ -34,10 +34,11 @@ ckmux --version
 ckmux
 ```
 
-The prebuilt Apple Silicon archive requires **macOS 26 or newer**, as declared
-by its executable. For installation without Homebrew, use the
-[archive instructions](#macos-and-linux-archives). On older macOS versions, a
-source build needs a toolchain satisfying the [build requirements](building.md#requirements).
+The prebuilt Apple Silicon archive and source builds using Apple's system
+C++ library require **macOS 26 or newer**. For installation without Homebrew,
+use the [archive instructions](#macos-and-linux-archives). Older macOS versions
+would need a separately verified alternative standard library; see the
+[build requirements](building.md#requirements).
 
 ## Linux
 

@@ -21,6 +21,7 @@ a footer showing the keys you can use right now.
 |---|---|
 | Download, install, upgrade, or remove ckmux | [Installation](installation.md) |
 | Manage sessions or join from another client | [Getting started](getting-started.md) |
+| Reconnect over SSH or understand desktop logout | [SSH and session lifetime](session-lifetime.md) |
 | Use commands and environment variables | [Command line](cli.md) |
 | Navigate, copy, and paste | [Keys](keys.md) |
 | Configure the shell, display, clipboard, and printing | [Configuration](configuration.md) |
@@ -41,6 +42,8 @@ A detached server owns each session. Closing a client leaves the server and
 its programs running; rebooting or stopping the server ends them. Connections
 are local, through a Unix socket or Windows named pipe. For remote work, run
 ckmux on the remote machine through your usual terminal connection.
+Desktop logout and SSH session cleanup depend on the host; read
+[SSH and session lifetime](session-lifetime.md) before relying on logout survival.
 
 [Source code](https://github.com/cklukas/ckmux) ·
 [Downloads](https://github.com/cklukas/ckmux/releases/latest) ·

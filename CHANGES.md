@@ -9,6 +9,9 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Document SSH use, desktop logout limits, and the distinction between server
+  survival and a reachable session endpoint.
+
 - Rewrite the README around installation, first use, and the current feature set.
 - Separate installation, session basics, references, and source builds in the
   guide; cover macOS, Linux, and native Windows explicitly, including the

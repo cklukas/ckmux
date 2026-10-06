@@ -299,6 +299,15 @@ The Windows-port session's own, 2026-10-03:
   stable input/build paths from lane-specific evidence names; check actual
   directories before dispatch and retain the failed configuration log.
 
+The session-lifetime audit's own, 2026-10-06:
+
+- **Selected an earlier test package by its reported release number.** Both
+  it and the published archive reported 0.1.8, but their executable hashes
+  differed. The final identity audit caught the mismatch; SSH disconnect,
+  reattachment and desktop logout were repeated using the checksum-verified
+  published ZIP. Compare package and executable hashes before starting an
+  acceptance run; a version string does not identify the tested bytes.
+
 ### A number without its configuration is not a measurement (2026-08-20)
 
 `plans/09` recorded `32 ms worst, 24 ms mean` for the flood gate and named no

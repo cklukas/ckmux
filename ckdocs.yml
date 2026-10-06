@@ -29,6 +29,8 @@ nav:
     page: docs/installation.md
   - title: Getting started
     page: docs/getting-started.md
+  - title: SSH and session lifetime
+    page: docs/session-lifetime.md
   - title: Reference
     pages:
       - docs/cli.md

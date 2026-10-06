@@ -304,6 +304,7 @@ install(FILES
     LICENSE
     docs/index.md
     docs/getting-started.md
+    docs/session-lifetime.md
     docs/installation.md
     docs/building.md
     docs/cli.md

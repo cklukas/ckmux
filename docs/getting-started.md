@@ -44,6 +44,8 @@ running. Run `ckmux` again to return to their current state.
 Closing the client or losing your terminal connection also leaves the server
 running. This is persistence across client connections: sessions do not survive
 a machine reboot or an explicit server shutdown.
+Desktop logout and SSH cleanup can also end or disconnect sessions. See
+[SSH and session lifetime](session-lifetime.md) for remote use and OS limits.
 
 ## Keep separate workspaces
 

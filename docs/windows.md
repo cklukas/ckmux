@@ -16,6 +16,10 @@ can select PowerShell explicitly. Detach with **Ctrl+B, d** or the Session
 menu. The server and child programs keep running after the client exits;
 `ckmux.exe kill-server` explicitly ends them.
 
+Signing out of the desktop ends a server started in that desktop login.
+Windows OpenSSH uses a different launch context in the tested configuration.
+See [SSH and session lifetime](session-lifetime.md#windows) for the distinction.
+
 A parent Windows job that prohibits independent processes makes startup fail
 with a diagnostic. Start from a normal Windows Terminal session when you need
 detached persistence.
