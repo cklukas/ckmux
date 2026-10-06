@@ -2,7 +2,8 @@
 title: Command line
 ---
 
-`ckmux --help` prints this same reference in the terminal.
+Use `ckmux --help` for the command summary in your terminal. On Windows,
+substitute the installed `ckmux.exe` path if its directory is not on PATH.
 
 ## Commands
 
@@ -39,11 +40,31 @@ ask for it — it is what `ckmux attach <name>` already does.
 `ckmux --server <socket> [--foreground]` is the detached server. A client
 starts one by itself when none answers, so the only reason to type it is
 debugging: `--foreground` keeps it in front of you with its diagnostics on
-stderr; a detached server writes them to a log beside the socket.
+stderr. A detached server logs beside the socket on macOS/Linux, or beside
+configuration under LocalAppData on Windows.
 
 ## Environment
+
+### macOS and Linux
 
 | Variable | Meaning |
 |---|---|
 | `CKMUX_SOCKET` | The server socket, used exactly as given. Default: `$XDG_RUNTIME_DIR/ckmux-<uid>/default.sock`, with `$TMPDIR` and then `/tmp` standing in when there is no runtime directory. |
 | `CKMUX_CONFIG` | The configuration file, used exactly as given. Default: `$XDG_CONFIG_HOME/ckmux/ckmux.conf`, ordinarily `~/.config/ckmux/ckmux.conf`. A missing file is the ordinary case: every setting has a default. |
+
+### Windows
+
+| Variable | Meaning |
+|---|---|
+| `CKMUX_SOCKET` | A named-pipe instance label using letters, digits, `.`, `_`, or `-`, or its full current-user pipe name. Default label: `default`. Names and startup locks are scoped to your Windows user SID. |
+| `CKMUX_CONFIG` | Explicit configuration file. Default: `%LOCALAPPDATA%\ckmux\ckmux.conf`, falling back to the account's LocalAppData known folder. A missing file uses defaults. |
+
+### Diagnostics on all platforms
+
+| Variable | Meaning |
+|---|---|
+| `CKVISION_OUTPUT_CAPTURE` | File receiving the bytes ckmux writes to the outer terminal. |
+| `CKVISION_GRAPHICS_LOG` | File receiving the client's graphics trace. |
+
+Choose explicit writable paths for diagnostic output. These are optional
+troubleshooting facilities, not required configuration.

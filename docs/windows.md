@@ -4,36 +4,32 @@
 title: Native Windows
 ---
 
-# Native Windows builds and packages
+# Native Windows
 
-The [v0.1.8 release](https://github.com/cklukas/ckmux/releases/tag/v0.1.8)
-contains Windows x64 and ARM64 portable ZIPs and per-user MSI installers.
-All eight CI jobs and all seven release jobs passed at public commit
-`218ee734`; all 17 downloaded assets and eight package/archive checksum
-pairs were verified. Full native acceptance is still in progress: passing
-automated tests does not certify the owner's live Windows Terminal walkthrough.
+For MSI and portable ZIP installation, architecture selection, and launch
+commands, start with [Installation → Windows](installation.md#windows).
+This page covers runtime choices, packaging, and native test execution.
 
-The released x64 and ARM64 packages passed full fresh-standard-user ZIP and
-per-user MSI checks: installed file verification, real detached-server and shell
-persistence after starter exit, explicit complete shutdown, repair and uninstall,
-including PATH and user-data preservation. Matching downloaded CI ZIPs also pass actual contained graphics,
-text/ANSI print saving, Unicode clipboard copy and reattached history checks on
-Windows 11 ARM64; x64 runs there under emulation. The owner will now perform
-the live Windows Terminal and manual installer checks using the published
-release. These manual checks remain pending and are not claimed complete.
+ckmux uses native Windows named pipes and ConPTY; it does not require WSL.
+The default shell is `cmd.exe`; [configuration](configuration.md#choose-a-shell)
+can select PowerShell explicitly. Detach with **Ctrl+B, d** or the Session
+menu. The server and child programs keep running after the client exits;
+`ckmux.exe kill-server` explicitly ends them.
 
-The release formats are a portable ZIP and a per-user MSI for x64 and
-ARM64. Select the package matching the operating system; use the ARM64 package
-on Windows on ARM. The MSI uses LocalAppData, requires no administrator account,
-and does not add a global PATH entry. Configuration and durable logs
-are not installed files and must remain unchanged during uninstall.
+A parent Windows job that prohibits independent processes makes startup fail
+with a diagnostic. Start from a normal Windows Terminal session when you need
+detached persistence.
 
-Run `bin/ckmux.exe` from Windows Terminal. The default native shell is cmd.exe;
-PowerShell can be selected explicitly in configuration. Detach with Ctrl+B, D,
-or the Session menu. Closing the client must leave its server and programs
-alive; use `ckmux.exe kill-server` only for explicit shutdown. An ancestor
-Windows job that prohibits independent processes makes startup fail with a
-diagnostic instead of promising persistence it cannot provide.
+## Support status
+
+Windows x64 and ARM64 ZIP/MSI packages are published. Automated checks cover
+installation in a fresh standard-user profile, detached-server persistence,
+repair, uninstall, clipboard operations, graphics, print saving, and restored
+history. The manual Windows Terminal and installer walkthrough remains pending.
+
+Native x64 build/runtime checks run on Windows Server. Full x64 desktop
+installer checks run under x64 emulation on Windows 11 ARM64, alongside native
+ARM64 checks. This does not establish native x64 desktop visual acceptance.
 
 ## Runtime policy
 
@@ -46,13 +42,9 @@ The complete distribution includes the DLL, all console hosts needed by the
 target architecture, Microsoft's MIT notice, and a runtime identity record.
 Keep those files together when moving a ZIP installation.
 
-The selected runtime passes the library's 34 native child/outer-host cases on
-the named Windows 11 ARM64 verification host. Newer runtime 1.25.260930003
-fails two graphics negotiation/resize cases on that host; its cause is still
-under investigation. This pin is a checked distribution policy, not a claim
-of compatibility with every Microsoft runtime. Matching ckmux CI ZIPs pass
-contained graphics and text-only fallback checks on that same named host.
-This does not replace the remaining Windows Terminal visual walkthrough.
+Use the qualified runtime when reproducing release packages. A different
+ConPTY version needs its own graphics negotiation and resize validation;
+compatibility is not implied by a newer version number.
 
 Without an app-local runtime, ckVision uses Windows' inbox ConPTY and reports
 its effective child profile without Sixel. An incomplete app-local deployment
@@ -65,8 +57,9 @@ CMake 4.3 or later and WiX .NET tools with a matching UI extension. The build
 selects the static MSVC CRT before creating application and library targets;
 an installed SDK must have been built with that same CRT selection.
 
-Obtain the exact archive above from Microsoft's official NuGet package, verify
-its SHA256, then provide its absolute path explicitly:
+Obtain the exact archive above from Microsoft's
+[official NuGet package](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY/1.24.261001001),
+verify its SHA256, then provide its absolute path explicitly:
 
 ```powershell
 cmake -S . -B build -A ARM64 -DCKMUX_WINDOWS_ARCHITECTURE=arm64 `
@@ -85,8 +78,8 @@ build is not the intended graphics-enabled Windows release package.
 CI and release builds configure `CKMUX_TEST_STRESS=OFF`; the native host runs
 CTest serially. Two simultaneous starters check startup election and detached
 survival. Ten-instance and sustained-flood stress checks are not hosted-runner
-acceptance gates; the owner requested that load coverage run locally on the
-Mac Studio. Select that opt-in configuration with
+acceptance gates. Run them on dedicated local hardware. Select that opt-in
+configuration with
 `cmake -S . -B build -DCKMUX_TEST_STRESS=ON` before rebuilding locally.
 
 Run the full registered inventory through the same-user, limited,

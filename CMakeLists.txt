@@ -300,9 +300,12 @@ install(FILES "${CKMUX_GENERATED_MAN}"
     DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
 install(FILES
     README.md
+    CHANGES.md
     LICENSE
     docs/index.md
     docs/getting-started.md
+    docs/installation.md
+    docs/building.md
     docs/cli.md
     docs/configuration.md
     docs/windows.md
