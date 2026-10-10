@@ -7,7 +7,7 @@ Entries through 0.1.8 were reconstructed from tagged Git history and release
 records. Dates below are GitHub publication dates in UTC. These summaries do
 not imply that every manual acceptance check was complete at release time.
 
-## Unreleased
+## [0.1.9](https://github.com/cklukas/ckmux/releases/tag/v0.1.9) — 2026-10-10
 
 - Use ckVision 1.0.0, the library's first major release. ckmux builds against
   it unchanged; no behavior changes.
@@ -24,6 +24,8 @@ not imply that every manual acceptance check was complete at release time.
 - Add this changelog and include it and the new guides in installed packages.
 - Update the Homebrew tap to the published 0.1.8 formula and its pinned
   ckVision 0.1.18 resource.
+
+[Compare with 0.1.8](https://github.com/cklukas/ckmux/compare/v0.1.8...v0.1.9)
 
 ## [0.1.8](https://github.com/cklukas/ckmux/releases/tag/v0.1.8) — 2026-10-05
 
