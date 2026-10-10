@@ -2,6 +2,14 @@
 
 Plan 07 · Status: current · 2026-08-25 · [Index](README.md)
 
+ckVision 1.0.0 (2026-10-10): the pin moves from 0.1.18 to the first major
+release (public `f3bea2ee`), which promotes the verified 0.1.19 implementation
+to a public C++/CMake compatibility contract. ckmux needed no source change: a
+clean clone built against the GitHub `v1.0.0` tag with zero warnings and passed
+65/65 (macOS Debug) before any edit. The pre-1.0 churn risk (R2 in
+[10](10-roadmap.md)) now has a compatibility promise behind it: minor versions
+add, patch versions fix, incompatible changes need a new major.
+
 Released cross-architecture executable inspection (2026-10-05): x64 Windows
 GetBinaryTypeW rejects the actual ARM64 system cmd.exe with193, while launching
 that identical absolute image succeeds and exits37. The native ARM64 caller

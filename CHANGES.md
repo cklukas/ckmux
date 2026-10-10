@@ -9,6 +9,9 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Use ckVision 1.0.0, the library's first major release. ckmux builds against
+  it unchanged; no behavior changes.
+
 - Document SSH use, desktop logout limits, and the distinction between server
   survival and a reachable session endpoint.
 
