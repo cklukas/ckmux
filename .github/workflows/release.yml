@@ -232,6 +232,16 @@ jobs:
             $sum=Get-Content "packages/$filename.sha256" -Raw
             if($sum -notmatch '^([0-9a-fA-F]{64})  ([^\r\n]+)\s*$' -or $Matches[2] -cne $filename -or
                 $Matches[1] -ine (Get-FileHash "packages/$filename").Hash) { throw 'Windows package checksum/name mismatch' }
+            # CPack writes its checksum sidecar in text mode, which on Windows
+            # ends the line in CRLF; `shasum -c` and `sha256sum -c` on macOS
+            # and Linux then read the filename with a trailing CR and report it
+            # missing (v0.1.8 and v0.1.9 shipped that way). Rewrite the
+            # verified digest in the same form the other platforms publish:
+            # lowercase hex, two spaces, the filename, one LF.
+            $sidecar="$env:GITHUB_WORKSPACE/packages/$filename.sha256"
+            [IO.File]::WriteAllText($sidecar, "$($Matches[1].ToLowerInvariant())  $filename`n")
+            $bytes=[IO.File]::ReadAllText($sidecar)
+            if($bytes -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($filename))\n\z") { throw 'Windows checksum sidecar is not LF-only' }
           }
 
       - name: Full installation and lifecycle in a fresh standard-user profile
@@ -324,8 +334,8 @@ jobs:
               $record.output_sha256 -ine (Get-FileHash independent-build/ckmux.exe).Hash) { throw 'Independent x64 build identity mismatch' }
           foreach($extension in @('zip','msi')) {
             $filename="ckmux-$version-Windows-x64.$extension"
-            $sum=Get-Content "packages/$filename.sha256" -Raw
-            if($sum -notmatch '^([0-9a-fA-F]{64})  ([^\r\n]+)\s*$' -or $Matches[2] -cne $filename -or
+            $sum=[IO.File]::ReadAllText("$env:GITHUB_WORKSPACE/packages/$filename.sha256")
+            if($sum -cnotmatch '^([0-9a-f]{64})  ([^\r\n]+)\n\z' -or $Matches[2] -cne $filename -or
                 $Matches[1] -ine (Get-FileHash "packages/$filename").Hash) { throw 'Downloaded x64 package digest mismatch' }
           }
           ./ckmux/tools/windows/test-package.ps1 -Zip "$env:GITHUB_WORKSPACE/packages/ckmux-$version-Windows-x64.zip" `
@@ -387,9 +397,34 @@ jobs:
           path: packages/ckmux.rb
           if-no-files-found: error
 
+  # Every checksum sidecar is checked the way a user checks it, with the
+  # coreutils tool, on every run including a manual dispatch: a sidecar that
+  # only Windows tooling can read fails here instead of reaching a release.
+  checksums:
+    needs: [package, windows-package]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: packages-*
+          path: packages
+          merge-multiple: true
+
+      - name: Verify every checksum sidecar with sha256sum
+        working-directory: packages
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sidecars=(*.sha256)
+          test "${#sidecars[@]}" -ge 8
+          for sidecar in "${sidecars[@]}"; do
+            if grep -q $'\r' "$sidecar"; then echo "CR in $sidecar" >&2; exit 1; fi
+            sha256sum --strict -c "$sidecar"
+          done
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [package, windows-package, windows-x64-install, homebrew]
+    needs: [package, windows-package, windows-x64-install, homebrew, checksums]
     runs-on: ubuntu-26.04
     permissions:
       contents: write

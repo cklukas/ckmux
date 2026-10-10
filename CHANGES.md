@@ -7,6 +7,13 @@ Entries through 0.1.8 were reconstructed from tagged Git history and release
 records. Dates below are GitHub publication dates in UTC. These summaries do
 not imply that every manual acceptance check was complete at release time.
 
+## Unreleased
+
+- Write the Windows release checksum files (`.sha256` next to each MSI and ZIP)
+  with LF line endings, so `shasum -a 256 -c` and `sha256sum -c` verify them on
+  macOS and Linux. Through 0.1.9 they ended in CRLF, which those tools read as
+  part of the filename; the packages themselves were correct.
+
 ## [0.1.9](https://github.com/cklukas/ckmux/releases/tag/v0.1.9) — 2026-10-10
 
 - Use ckVision 1.0.0, the library's first major release. ckmux builds against
