@@ -87,6 +87,16 @@ latest ckVision's shared lifecycle interface. The native implementation,
 blocking Windows CI and published Windows ZIP/MSI release are present;
 the owner's live Windows Terminal and manual installer acceptance remain pending.
 
+Published ckmux v0.1.9 pins ckVision v1.0.0, the library's first major release
+(2026-10-10), with no ckmux source change: public `3cfb376`, CI `38049065739`
+green on all eight jobs, release `38050462725` green on all seven (including
+the Windows x64 install on Windows 11 ARM64). All 17 assets were downloaded;
+the RPM, DEB, both TGZs and all four Windows MSI/ZIP packages match their
+published SHA-256 (the Windows `.sha256` files use CRLF, as in 0.1.8, so
+`shasum -c` needs them stripped), the macOS binary reports 0.1.9, and the
+Homebrew tap serves the release formula (tap `b42dc56`). The 0.1.8 record
+below describes that release.
+
 Published ckmux v0.1.8 pins released ckVision v0.1.18 (2026-10-05).
 Public `218ee734` has all eight CI `37379312706` jobs and all seven release
 `37382460321` jobs green. Both x64/ARM64 ZIP/MSI pairs pass full
