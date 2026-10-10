@@ -308,6 +308,17 @@ The session-lifetime audit's own, 2026-10-06:
   published ZIP. Compare package and executable hashes before starting an
   acceptance run; a version string does not identify the tested bytes.
 
+The ckVision-upgrade session's own, 2026-10-10:
+
+- **Published a workflow change after checking only that it parsed.** The
+  release workflow gained a job, and `windows_distribution_policy` reads
+  `release.yml` and requires `publish`'s literal `needs:` line, so CI and
+  the release dispatch on the published snapshot both went red. The new
+  job's own script had been tested on real assets; the test that reads the
+  file containing it had not run. Files under `.github/`, `packaging/` and
+  `tools/` can be test inputs here: grep `tests/` for the file's name, and
+  run the suite before publishing a change to one.
+
 ### A number without its configuration is not a measurement (2026-08-20)
 
 `plans/09` recorded `32 ms worst, 24 ms mean` for the flood gate and named no

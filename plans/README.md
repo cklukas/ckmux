@@ -93,7 +93,10 @@ green on all eight jobs, release `38050462725` green on all seven (including
 the Windows x64 install on Windows 11 ARM64). All 17 assets were downloaded;
 the RPM, DEB, both TGZs and all four Windows MSI/ZIP packages match their
 published SHA-256 (the Windows `.sha256` files use CRLF, as in 0.1.8, so
-`shasum -c` needs them stripped), the macOS binary reports 0.1.9, and the
+`shasum -c` needs them stripped; fixed after the release by `f49ddb0` and
+`1738a20`, proved by dispatch `38054662759` on public `2ebbc2c`, whose four
+Windows sidecars are LF-only and whose `checksums` job passed all eight), the
+macOS binary reports 0.1.9, and the
 Homebrew tap serves the release formula (tap `b42dc56`). The 0.1.8 record
 below describes that release.
 
