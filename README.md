@@ -45,7 +45,7 @@ emulator, on macOS, Linux, and native Windows.
 | macOS | `brew install cklukas/ckmux/ckmux`; Apple Silicon archive for macOS 26+ also available |
 | Linux x86_64 — Debian / Ubuntu | Download the DEB, then `sudo apt install ./ckmux_*_amd64.deb` |
 | Linux x86_64 — RPM distributions | Download the RPM, then `sudo dnf install ./ckmux-*.x86_64.rpm` |
-| Windows x64 / ARM64 | Download the matching per-user MSI or portable ZIP; run in Windows Terminal |
+| Windows x64 / ARM64 | Download the matching MSI (current user or all users) or portable ZIP; run in Windows Terminal |
 
 Use the [latest release](https://github.com/cklukas/ckmux/releases/latest).
 The [installation guide](docs/installation.md) covers platform requirements,

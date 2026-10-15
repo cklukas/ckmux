@@ -5,6 +5,40 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Installer scope choice — 2026-10-15
+
+The MSI wizard offers **Just for me** by default without administrator
+permission, or **Everyone on this computer**, which uses Windows Installer's
+normal administrator approval. The former installs under LocalAppData and
+owns one user PATH entry; the latter installs under Program Files and owns
+one machine PATH entry. Both offer directory selection, preserve unrelated
+PATH entries and keep their original scope for repair and uninstall.
+
+The package uses Windows Installer 5.0 single-package authoring, with
+`ALLUSERS=2` and `MSIINSTALLPERUSER=1` as its defaults. Its scope-aware
+registry values use HKMU, which redirects to HKCU or HKLM. An advertised
+Start menu shortcut follows the installation context and executable component.
+Separate conditioned components own the user and machine PATH entries.
+CPack generates ordinary file components under ProgramFiles64Folder; the
+custom WiX template supplies the actual dual-purpose package scope.
+
+The package gate runs both scopes. A SYSTEM fixture installs and repairs the
+machine copy, then an independently logged-on, non-elevated standard user
+checks its complete byte inventory, launches it by name with a fresh Windows
+environment and exercises the packaged server lifecycle. The fixture then
+uninstalls it and checks preservation of an unrelated machine PATH entry.
+The existing non-admin install/custom-folder/repair/uninstall lane remains.
+Both scope lanes pass on native AMD64 `workstation` (Windows 11 Pro build
+26300), including standard-user access to the machine installation and full
+fixture cleanup. The complete WiX MSI validator passes with exit 0, including
+ICE105. The actual owner's interactive wizard was inspected from its exact
+MSI process: both choices are visible, the user choice resolves to the owner's
+LocalAppData folder, the machine choice resolves to Program Files, and the
+machine Install button displays the administrator shield. The wizard was
+cancelled before installation; the owner's existing installation was retained.
+The verified per-user PATH checkpoint below predates this extension. ARM64
+installation and public release publication remain outside this local verdict.
+
 ### Per-user installer command discovery — 2026-10-15
 
 The MSI adds the selected installation's `bin` directory to the current

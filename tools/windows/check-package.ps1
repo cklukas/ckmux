@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('x64','arm64')][string]$Architecture,
     [Parameter(Mandatory=$true)][string]$Version,
     [Parameter(Mandatory=$true)][string]$TemporaryRoot,
-    [Parameter(Mandatory=$true)][string]$LifecycleScript
+    [Parameter(Mandatory=$true)][string]$LifecycleScript,
+    [switch]$MachineInstallation
 )
 $ErrorActionPreference='Stop'
 foreach($inputPath in @($Zip,$Msi,$BuildExecutable,$LifecycleScript)) {
@@ -39,6 +40,7 @@ $originalUserPath=$beforePath.user
 $record.original_user_path=$originalUserPath
 $pathFixtureChanged=$false
 $installRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('ckmux-'+$Architecture)
+if($MachineInstallation) { $installRoot=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) ('ckmux-'+$Architecture) }
 $dataRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ckmux'
 $createdDataRoot=-not (Test-Path -LiteralPath $dataRoot)
 if($createdDataRoot) { New-Item -ItemType Directory -Path $dataRoot | Out-Null }
@@ -134,13 +136,18 @@ function Installer([string]$Name,[string]$Action,[string]$Target,[string]$Destin
 }
 function Installed-Path([string]$Name) {
     $bin=Join-Path $installRoot 'bin'
-    $actual=[Environment]::GetEnvironmentVariable('PATH','User')
+    $target=if($MachineInstallation) { 'Machine' } else { 'User' }
+    $actual=[Environment]::GetEnvironmentVariable('PATH',$target)
     $entries=@($actual -split ';' | Where-Object { $_ -and $_ -ine $bin })
-    $expectedEntries=@($beforePath.user -split ';' | Where-Object { $_ })
+    $baseline=if($MachineInstallation) { $beforePath.machine } else { $beforePath.user }
+    $expectedEntries=@($baseline -split ';' | Where-Object { $_ -and $_ -ine $bin })
     $count=@($actual -split ';' | Where-Object { $_ -ieq $bin }).Count
+    $otherPathUnchanged=if($MachineInstallation) {
+        [Environment]::GetEnvironmentVariable('PATH','User') -ceq $beforePath.user
+    } else { [Environment]::GetEnvironmentVariable('PATH','Machine') -ceq $beforePath.machine }
     if($count -ne 1 -or ($entries -join ';') -cne ($expectedEntries -join ';') -or
-        [Environment]::GetEnvironmentVariable('PATH','Machine') -cne $beforePath.machine) {
-        throw "$Name did not append exactly one user PATH entry while preserving existing user/system PATH"
+        -not $otherPathUnchanged) {
+        throw "$Name did not provide exactly one $target PATH entry while preserving other entries and the other scope"
     }
     $record["${Name}_user_path"]=$actual
 
@@ -269,11 +276,42 @@ try {
     if($upgrade -ine $expectedUpgrade -or (Property $database 'ProductVersion') -cne $Version) {
         throw 'MSI upgrade identity or version differs from architecture-specific policy'
     }
-    if((Property $database 'ALLUSERS') -ne '') { throw 'MSI is not authored as strictly per-user' }
+    if((Property $database 'ALLUSERS') -cne '2' -or
+        (Property $database 'MSIINSTALLPERUSER') -cne '1') { throw 'MSI must offer both scopes and default to per-user' }
+    $rootSearch=$database.OpenView('SELECT `Signature_` FROM `AppSearch` WHERE `Property`=''INSTALL_ROOT''')
+    try {
+        [void]$rootSearch.Execute()
+        if($null -ne $rootSearch.Fetch()) { throw 'MSI must restore the install folder through a scope-specific lookup' }
+    } finally { [void]$rootSearch.Close() }
+    $choices=$database.OpenView('SELECT `Value` FROM `RadioButton` WHERE `Property`=''CKMUX_SCOPE''')
+    try {
+        [void]$choices.Execute(); $scopes=@()
+        while($row=$choices.Fetch()) { $scopes+=$row.StringData(1) }
+        if((@($scopes | Sort-Object) -join ',') -cne 'machine,user') { throw 'MSI wizard must offer both installation scopes' }
+        $record.msi_properties.scopes=$scopes
+    } finally { [void]$choices.Close() }
+    $navigation=$database.OpenView('SELECT `Argument` FROM `ControlEvent` WHERE `Dialog_`=''LicenseAgreementDlg'' AND `Control_`=''Next'' AND `Event`=''NewDialog'' AND `Argument`=''CkmuxScopeDlg''')
+    try {
+        [void]$navigation.Execute()
+        if($null -eq $navigation.Fetch()) { throw 'MSI wizard does not navigate to the scope choice' }
+    } finally { [void]$navigation.Close() }
     $template=$database.SummaryInformation(0).Property(7)
     $expectedTemplate=if($Architecture -eq 'arm64') { 'Arm64;' } else { 'x64;' }
     if(-not $template.StartsWith($expectedTemplate,[StringComparison]::OrdinalIgnoreCase)) {
         throw 'MSI platform differs from its advertised architecture'
+    }
+    if($MachineInstallation) {
+        $registered=New-Object Text.StringBuilder 39
+        $sid=New-Object Text.StringBuilder 256; [uint32]$size=256; [uint32]$context=0
+        $result=[CkmuxPackageInstaller]::CurrentProduct($product,$registered,[ref]$context,$sid,[ref]$size)
+        if($result -ne 0 -or $context -ne 4) { throw "Machine installation is not registered for all users: $result/$context" }
+        $record.install_context=$context; $record.install_root=$installRoot
+        Same-Layout $expected (Layout $installRoot)
+        Installed-Path 'machine-access'
+        Exercise 'machine' $installRoot
+        Same-Layout $beforeData (Data-Hashes)
+        $record.machine_access_verified=$true; $record.exit=0
+        return
     }
     if((Related-Products $upgrade) -or (Test-Path -LiteralPath $installRoot)) {
         throw 'Refusing to modify a pre-existing installation or installation directory'

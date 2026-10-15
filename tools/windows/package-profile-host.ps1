@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 public static class CkmuxPackageProfileHost {
+    [DllImport("msi.dll",CharSet=CharSet.Unicode)] public static extern uint MsiEnumRelatedProducts(string upgrade,uint reserved,uint index,StringBuilder product);
     [StructLayout(LayoutKind.Sequential)] struct Security { public int length; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct Startup {
         public int cb; public string reserved,desktop,title; public uint x,y,width,height,xchars,ychars,fill,flags;
@@ -101,6 +102,20 @@ $name='CKP_'+[Guid]::NewGuid().ToString('N').Substring(0,12)
 $password=ConvertTo-SecureString ('Ck!'+[Guid]::NewGuid().ToString('N')+'9z') -AsPlainText -Force
 $created=$false; $sid=''; $secret=[IntPtr]::Zero
 $record=[ordered]@{owned=$owned; account=$name; start=[DateTime]::UtcNow.ToString('o'); exit=1}
+$machine=$request.installation_scope -eq 'machine'
+$machineInstalled=$false; $machinePathChanged=$false; $machineProduct=''
+$machineBefore=[Environment]::GetEnvironmentVariable('PATH','Machine')
+function Machine-Installer([string]$Name,[string]$Action,[string]$Target) {
+    if($Action -eq '/i') { $Target=(Resolve-Path -LiteralPath $Target).Path }
+    $arguments="$Action `"$Target`" /qn /norestart /l*v `"$Scope/$Name-msi.log`""
+    if($Action -eq '/i') { $arguments+=' ALLUSERS=2 MSIINSTALLPERUSER=""' }
+    $process=Start-Process -FilePath "$env:SystemRoot/System32/msiexec.exe" -ArgumentList $arguments -PassThru
+    try {
+        if(-not $process.WaitForExit(300000)) { throw "$Name exceeded installer deadline" }
+        $record["${Name}_exit"]=$process.ExitCode
+        if($process.ExitCode -ne 0) { throw "$Name failed: $($process.ExitCode)" }
+    } finally { $process.Dispose() }
+}
 try {
     New-Item -ItemType Directory -Path $owned,"$owned/input/bin","$owned/t" | Out-Null
     $user=New-LocalUser -Name $name -Password $password -AccountNeverExpires -Description 'Disposable ckmux release-package acceptance'
@@ -118,11 +133,42 @@ try {
         [void][IO.Directory]::CreateDirectory((Split-Path $destination))
         Copy-Item -LiteralPath (Join-Path $buildBin $relative) -Destination $destination
     }
+    if($machine) {
+        $machineRoot=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) ('ckmux-'+$request.architecture)
+        $upgrade=if($request.architecture -eq 'arm64') { '{B90B17C0-BCF9-4506-B5BB-457245804F10}' }
+            else { '{63F125D8-E36D-45C4-8E12-24E8E6A2EBA8}' }
+        $related=New-Object Text.StringBuilder 39
+        $relatedResult=[CkmuxPackageProfileHost]::MsiEnumRelatedProducts($upgrade,0,0,$related)
+        if($relatedResult -ne 259 -or (Test-Path -LiteralPath $machineRoot)) {
+            throw 'Refusing to modify a pre-existing machine installation'
+        }
+        $installer=New-Object -ComObject WindowsInstaller.Installer
+        $database=$installer.OpenDatabase("$owned/input/package.msi",0)
+        $view=$database.OpenView('SELECT `Value` FROM `Property` WHERE `Property`=''ProductCode''')
+        try { [void]$view.Execute(); $machineProduct=$view.Fetch().StringData(1) }
+        finally {
+            [void]$view.Close()
+            [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
+            [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
+            [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)
+        }
+        $machineInstalled=$true; $record.machine_root=$machineRoot
+        Machine-Installer 'machine-install' '/i' "$owned/input/package.msi"
+        $image=Join-Path $machineRoot 'bin/ckmux.exe'
+        if(-not (Test-Path -LiteralPath $image)) { throw 'Machine install did not create the expected executable' }
+        Remove-Item -LiteralPath $image
+        Machine-Installer 'machine-repair' '/fau' $machineProduct
+        if(-not (Test-Path -LiteralPath $image)) { throw 'Machine repair did not restore the executable' }
+        $machineWitness=Join-Path $owned 'unrelated machine PATH entry'
+        $machinePathChanged=$true
+        [Environment]::SetEnvironmentVariable('PATH',
+            [Environment]::GetEnvironmentVariable('PATH','Machine')+';'+$machineWitness,'Machine')
+    }
     foreach($script in @('check-package.ps1','package-profile-worker.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination $owned
     }
     Copy-Item -LiteralPath $request.lifecycle -Destination "$owned/windows_server_lifecycle.ps1"
-    @{version=$request.version; architecture=$request.architecture; sid=$sid} |
+    @{version=$request.version; architecture=$request.architecture; sid=$sid; installation_scope=$request.installation_scope} |
         ConvertTo-Json | Out-File "$owned/request.json" -Encoding utf8
     $inputs=@(Get-ChildItem -LiteralPath "$owned/input" -Recurse -File | ForEach-Object {
         @{path=$_.FullName; hash=(Get-FileHash -LiteralPath $_.FullName).Hash}
@@ -146,6 +192,19 @@ finally {
                 (Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue).Sid -eq $sid
             })
             foreach($process in $remaining) { Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop }
+            if($machineInstalled) {
+                Machine-Installer 'machine-uninstall' '/x' $machineProduct
+                $machineInstalled=$false
+                $actualMachine=[Environment]::GetEnvironmentVariable('PATH','Machine')
+                $expectedMachine=$machineBefore+';'+$machineWitness
+                $record.machine_path_after_uninstall=$actualMachine
+                $actualEntries=@($actualMachine -split ';' | Where-Object { $_ }) -join ';'
+                $expectedEntries=@($expectedMachine -split ';' | Where-Object { $_ }) -join ';'
+                if($actualEntries -cne $expectedEntries -or (Test-Path -LiteralPath (Join-Path $machineRoot 'bin/ckmux.exe'))) {
+                    throw 'Machine uninstall changed unrelated PATH entries or left the executable'
+                }
+                $record.machine_path_restored=$true
+            }
             $profile=Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $sid }
             if($profile) {
                 if($profile.Loaded -or (Split-Path $profile.LocalPath -Leaf) -cne $name) {
@@ -183,6 +242,11 @@ finally {
             $record.owned_removed=-not (Test-Path -LiteralPath $owned)
         }
     } catch { $record.cleanup_failure=$_.ToString(); $record.exit=1 }
+    if($machinePathChanged) {
+        $currentMachine=[Environment]::GetEnvironmentVariable('PATH','Machine')
+        $withoutWitness=@($currentMachine -split ';' | Where-Object { $_ -cne $machineWitness }) -join ';'
+        [Environment]::SetEnvironmentVariable('PATH',$withoutWitness,'Machine')
+    }
     $record.end=[DateTime]::UtcNow.ToString('o')
     $record | ConvertTo-Json -Depth 5 | Out-File "$Scope/host-record.json" -Encoding utf8
     $record | ConvertTo-Json -Depth 5

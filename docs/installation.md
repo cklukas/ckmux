@@ -74,15 +74,18 @@ Use **Windows Terminal**. Choose `arm64` for Windows on ARM, or `x64` for
 Intel/AMD Windows. WSL is separate: install the Linux package inside WSL if
 that is where you want your sessions to run.
 
-### Per-user MSI
+### MSI installer
 
 1. Download and open the matching `.msi` from the release page.
-2. Install for your current user. Administrator access is not required.
+2. Choose **Just for me** (the default, no administrator permission required)
+   or **Everyone on this computer** (Windows requests administrator approval).
 3. Open a new Windows Terminal window and run `ckmux` in PowerShell.
 
-The installer places ckmux under your LocalAppData folder unless you select
-another destination, and adds that installation's `bin` folder to your
-**user PATH** automatically. Existing PATH entries are preserved. Run:
+**Just for me** installs under your LocalAppData folder and adds the `bin`
+folder to your **user PATH**. **Everyone on this computer** installs under
+Program Files and adds `bin` to the **system PATH**, so other accounts can
+run it too. You can change the installation folder in either mode. Existing
+PATH entries are preserved. Run:
 
 ```powershell
 ckmux --version
@@ -92,9 +95,12 @@ ckmux
 Close Windows Terminal completely and reopen it if it was running during
 installation: existing processes may still have the old PATH. Repair keeps
 one ckmux PATH entry; uninstall removes that entry and preserves the others.
-The system PATH is unchanged. Older installers through v0.1.9 did not add
-PATH automatically; with those packages, use the installed executable's full
-path or add its `bin` folder to your user PATH yourself.
+Repair and uninstall retain the original installation scope. Older installers
+through v0.1.9 only supported the current user and did not add PATH
+automatically; with those packages, use the installed executable's full path
+or add its `bin` folder to your user PATH yourself.
+To switch an existing installation between the current user and all users,
+uninstall it first, then run the MSI and select the other scope.
 
 ### Portable ZIP
 

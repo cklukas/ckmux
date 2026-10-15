@@ -9,12 +9,15 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
-- Add the Windows MSI installation's `bin` folder to the current user's PATH
+- Add the Windows MSI installation's `bin` folder to PATH
   automatically. Open a new Windows Terminal after installation and run
   `ckmux` by name. Repair avoids duplicate entries; uninstall removes ckmux's
-  entry while preserving other user entries and the system PATH.
+  entry while preserving unrelated entries and the other scope's PATH.
 - Remember a custom Windows MSI installation folder during repair and
   uninstall instead of resolving it back to the default LocalAppData folder.
+- Offer **Just for me** and **Everyone on this computer** in the MSI wizard.
+  The default user installation needs no administrator permission; the shared
+  installation requests approval and adds ckmux to the system PATH.
 
 - Write the Windows release checksum files (`.sha256` next to each MSI and ZIP)
   with LF line endings, so `shasum -a 256 -c` and `sha256sum -c` verify them on

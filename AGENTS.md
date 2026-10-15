@@ -336,6 +336,22 @@ The Windows-installer PATH session's own, 2026-10-15:
   separator; MSI normalized it while preserving both unrelated entries.
   Record actual and expected values before diagnosing loss, compare ordered
   nonempty user entries, and keep the untouched machine PATH comparison exact.
+- **Kept an MSI database COM object alive in the machine fixture host.**
+  Installation, repair, standard-user access and uninstall passed, but the
+  database handle still locked the source MSI when fixture cleanup ran.
+  Release the view, database and installer immediately after reading the
+  product code; a passing behavior check does not establish fixture cleanup.
+- **Inherited CPack's machine-only upgrade lookup in the dual-scope template.**
+  The actual owner's wizard resolved an old product code to a removed test
+  profile's directory, despite passing fresh-profile installation checks.
+  Restore the directory from the selected scope's own registry value; reject
+  a direct `INSTALL_ROOT` AppSearch in the built MSI and inspect the real
+  owner's wizard as well as disposable-profile installations.
+- **Used a non-advertised shortcut with an HKMU key path.** Both scope
+  installation checks passed, but full MSI validation rejected the mixed
+  shortcut/key-path classification under ICE57. Attach an advertised shortcut
+  to the executable and run the full MSI validator, including ICE105, rather
+  than treating compilation and successful installation as validation.
 
 ### A number without its configuration is not a measurement (2026-08-20)
 
