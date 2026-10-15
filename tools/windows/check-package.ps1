@@ -35,6 +35,9 @@ $record=[ordered]@{scope=$scope; architecture=$Architecture; version=$Version;
     lifecycle_exercised=$true}
 $beforePath=@{user=[Environment]::GetEnvironmentVariable('PATH','User');
     machine=[Environment]::GetEnvironmentVariable('PATH','Machine')}
+$originalUserPath=$beforePath.user
+$record.original_user_path=$originalUserPath
+$pathFixtureChanged=$false
 $installRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('ckmux-'+$Architecture)
 $dataRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ckmux'
 $createdDataRoot=-not (Test-Path -LiteralPath $dataRoot)
@@ -58,6 +61,29 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 public static class CkmuxPackageInstaller {
+    [DllImport("userenv.dll", SetLastError=true)]
+    static extern bool CreateEnvironmentBlock(out IntPtr environment, IntPtr token, bool inherit);
+    [DllImport("userenv.dll")]
+    static extern bool DestroyEnvironmentBlock(IntPtr environment);
+    public static System.Collections.Generic.Dictionary<string,string> FreshEnvironment() {
+        IntPtr environment;
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent()) {
+            if (!CreateEnvironmentBlock(out environment, identity.Token, false))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        try {
+            var values = new System.Collections.Generic.Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+            IntPtr entry = environment;
+            for (;;) {
+                string value = Marshal.PtrToStringUni(entry);
+                if (value.Length == 0) break;
+                int separator = value.IndexOf('=');
+                if (separator > 0) values.Add(value.Substring(0, separator), value.Substring(separator + 1));
+                entry = IntPtr.Add(entry, (value.Length + 1) * 2);
+            }
+            return values;
+        } finally { DestroyEnvironmentBlock(environment); }
+    }
     [DllImport("msi.dll", CharSet=CharSet.Unicode)]
     public static extern uint MsiEnumRelatedProducts(string upgrade, uint reserved,
         uint index, StringBuilder product);
@@ -92,17 +118,64 @@ function Native([string]$Name,[string]$Executable,[string[]]$Arguments) {
     $record["${Name}_exit"]=$code
     if($code -ne 0) { Get-Content "$scope/$Name.log"; throw "$Name failed: $code" }
 }
-function Installer([string]$Name,[string]$Action,[string]$Target) {
+function Installer([string]$Name,[string]$Action,[string]$Target,[string]$Destination='') {
     $record.step=$Name
     $log="$scope/$Name-msi.log"
     # msiexec is a GUI-subsystem executable: explicitly own and wait for it.
     # ArgumentList concatenates arrays rather than preserving argument quoting.
     $arguments="$Action `"$Target`" /qn /norestart /l*v `"$log`""
+    if($Destination) { $arguments+=" INSTALL_ROOT=`"$Destination`"" }
     $process=Start-Process -FilePath $msiexec -ArgumentList $arguments -PassThru
     try {
         if(-not $process.WaitForExit(300000)) { throw "$Name exceeded the installer deadline; PID $($process.Id)" }
         $record["${Name}_exit"]=$process.ExitCode
         if($process.ExitCode -ne 0) { throw "$Name failed: $($process.ExitCode); log $log" }
+    } finally { $process.Dispose() }
+}
+function Installed-Path([string]$Name) {
+    $bin=Join-Path $installRoot 'bin'
+    $actual=[Environment]::GetEnvironmentVariable('PATH','User')
+    $entries=@($actual -split ';' | Where-Object { $_ -and $_ -ine $bin })
+    $expectedEntries=@($beforePath.user -split ';' | Where-Object { $_ })
+    $count=@($actual -split ';' | Where-Object { $_ -ieq $bin }).Count
+    if($count -ne 1 -or ($entries -join ';') -cne ($expectedEntries -join ';') -or
+        [Environment]::GetEnvironmentVariable('PATH','Machine') -cne $beforePath.machine) {
+        throw "$Name did not append exactly one user PATH entry while preserving existing user/system PATH"
+    }
+    $record["${Name}_user_path"]=$actual
+
+    # A child of this checker would inherit its pre-install PATH. Ask Windows
+    # for a fresh logon environment instead of manually appending the tested bin.
+    $probe=Join-Path $scope 'path-probe.ps1'
+    @'
+param([string]$Expected,[string]$Version)
+$ErrorActionPreference='Stop'
+$command=Get-Command ckmux -CommandType Application -ErrorAction Stop
+if($command.Source -ine $Expected) { throw "ckmux resolved to the wrong executable: $($command.Source)" }
+$actual=& ckmux --version
+if($LASTEXITCODE -ne 0 -or $actual -cne "ckmux $Version") { throw 'PATH-launched version failed' }
+Write-Output $command.Source
+Write-Output $actual
+'@ | Set-Content -LiteralPath $probe -Encoding UTF8
+    $start=New-Object Diagnostics.ProcessStartInfo
+    $start.FileName=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $exe=Join-Path $bin 'ckmux.exe'
+    $start.Arguments="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$probe`" -Expected `"$exe`" -Version `"$Version`""
+    $start.UseShellExecute=$false; $start.CreateNoWindow=$true
+    $start.WorkingDirectory=$scope
+    $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
+    $start.EnvironmentVariables.Clear()
+    foreach($entry in [CkmuxPackageInstaller]::FreshEnvironment().GetEnumerator()) {
+        $start.EnvironmentVariables[$entry.Key]=$entry.Value
+    }
+    foreach($variable in @('TEMP','TMP','TMPDIR')) { $start.EnvironmentVariables[$variable]=$scope }
+    $process=[Diagnostics.Process]::Start($start)
+    try {
+        $stdout=$process.StandardOutput.ReadToEndAsync(); $stderr=$process.StandardError.ReadToEndAsync()
+        if(-not $process.WaitForExit(30000)) { $process.Kill(); throw "$Name PATH launch timed out" }
+        [IO.File]::WriteAllText("$scope/$Name-path.log",$stdout.Result+$stderr.Result)
+        $record["${Name}-path_exit"]=$process.ExitCode
+        if($process.ExitCode -ne 0) { throw "$Name could not launch ckmux by name; see $scope/$Name-path.log" }
     } finally { $process.Dispose() }
 }
 function Layout([string]$Root) {
@@ -216,6 +289,7 @@ try {
         throw "Installed product is not current-user unmanaged context: $result/$context/$sid"
     }
     $record.install_context=$context
+    Installed-Path 'msi-install'
     Same-Layout $expected (Layout $installRoot)
     Exercise 'msi' $installRoot
     $repairImage=Join-Path $installRoot 'bin/ckmux.exe'
@@ -223,14 +297,48 @@ try {
     if(Test-Path -LiteralPath $repairImage) { throw 'Repair fixture failed to remove its owned installed executable' }
     Installer 'msi-repair' '/fa' $product
     Same-Layout $expected (Layout $installRoot)
+    Installed-Path 'msi-repair'
+    # Changes made by another application after install must survive removal.
+    $witness=Join-Path $scope 'unrelated PATH entry'
+    $pathFixtureChanged=$true
+    [Environment]::SetEnvironmentVariable('PATH',
+        [Environment]::GetEnvironmentVariable('PATH','User')+';'+$witness,'User')
+    $beforePath.user=if($beforePath.user) { $beforePath.user+';'+$witness } else { $witness }
     Installer 'msi-uninstall' '/x' $product
     $installed=$false
     if((Related-Products $upgrade) -or (Test-Path -LiteralPath (Join-Path $installRoot 'bin/ckmux.exe'))) {
         throw 'Uninstall left a registered product or application executable'
     }
-    if([Environment]::GetEnvironmentVariable('PATH','User') -cne $beforePath.user -or
+    $record.uninstall_user_path=[Environment]::GetEnvironmentVariable('PATH','User')
+    $record.uninstall_expected_user_path=$beforePath.user
+    # MSI normalizes empty separators (the default user PATH ends in ';').
+    # Compare the ordered entries, retaining their exact spelling and order.
+    $remainingEntries=@($record.uninstall_user_path -split ';' | Where-Object { $_ })
+    $expectedEntries=@($beforePath.user -split ';' | Where-Object { $_ })
+    if(($remainingEntries -join ';') -cne ($expectedEntries -join ';') -or
         [Environment]::GetEnvironmentVariable('PATH','Machine') -cne $beforePath.machine) {
-        throw 'Package install/repair/uninstall changed persistent PATH'
+        throw 'Uninstall did not restore the original user/system PATH'
+    }
+
+    # Also cover an absent user PATH and a selected Unicode installation path.
+    # The standard-user fixture owns this profile; restore its PATH in finally.
+    [Environment]::SetEnvironmentVariable('PATH',$null,'User')
+    $beforePath.user=$null
+    $installRoot=Join-Path $scope (([string][char]0x8A2D+[char]0x5B9A)+' custom installation')
+    $record.custom_install_root=$installRoot
+    $installed=$true
+    Installer 'msi-custom-install' '/i' $Msi $installRoot
+    Same-Layout $expected (Layout $installRoot)
+    Installed-Path 'msi-custom-install'
+    Installer 'msi-custom-repair' '/fau' $product
+    Same-Layout $expected (Layout $installRoot)
+    Installed-Path 'msi-custom-repair'
+    Installer 'msi-custom-uninstall' '/x' $product
+    $installed=$false
+    if((Related-Products $upgrade) -or (Test-Path -LiteralPath (Join-Path $installRoot 'bin/ckmux.exe')) -or
+        [Environment]::GetEnvironmentVariable('PATH','User') -or
+        [Environment]::GetEnvironmentVariable('PATH','Machine') -cne $beforePath.machine) {
+        throw 'Custom installation uninstall left its product, executable or PATH entry'
     }
     $afterData=Data-Hashes
     Same-Layout $beforeData $afterData
@@ -243,6 +351,7 @@ finally {
         catch { $record.cleanup_failure=$_.ToString() }
         $ErrorActionPreference='Stop'
     }
+    if($pathFixtureChanged) { [Environment]::SetEnvironmentVariable('PATH',$originalUserPath,'User') }
     if(Test-Path -LiteralPath $dataWitness) {
         Copy-Item -LiteralPath $dataWitness -Destination "$scope/user-data-witness.conf"
         Remove-Item -LiteralPath $dataWitness

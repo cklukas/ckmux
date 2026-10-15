@@ -5,6 +5,40 @@
 
 Status: In progress · 2026-10-03 · owner directed
 
+### Per-user installer command discovery — 2026-10-15
+
+The MSI adds the selected installation's `bin` directory to the current
+user's PATH. Windows Installer owns the appended entry with the executable
+component: repair must not duplicate it, uninstall removes it, and unrelated
+user entries and the machine PATH are preserved. A newly opened Windows
+Terminal must resolve `ckmux` without a manually configured path. Existing
+terminal processes may need to be closed and reopened to refresh their
+environment. The portable ZIP remains an explicit-path distribution.
+The selected installation directory is saved in an architecture-specific HKCU
+installer value. Repair/uninstall restore it before directory costing, so a
+custom location does not revert to the default LocalAppData directory when
+resolving the PATH entry. An explicit installer directory takes priority.
+
+The installed-package gate checks PATH immediately after install and repair,
+launches `ckmux --version` by name in a process with a fresh Windows user
+environment, and checks restoration after uninstall. On native AMD64
+`workstation` (Windows 11 Pro build 26300), the 0.1.10 x64 MSI passes these
+checks in a disposable, non-elevated standard-user profile, including a custom
+Unicode/spaced directory, initially absent user PATH, and unrelated entries
+added after installation. The ZIP and installed inventories match byte for
+byte; both packaged application lifecycle checks pass. The account, profile
+and extracted test files are removed after compact records are preserved.
+
+The application regression inventories during this change pass on native
+Windows MSVC 19.44 Release (54/54, CTest exit 0) and macOS LLVM Debug
+ASan/UBSan (65/65, CTest exit 0), using released ckVision 1.0.0 at `f3bea2ee`.
+This is installer/CLI evidence; no live Windows Terminal GUI or ARM64 MSI
+acceptance is claimed here. The first package checks caught an unsigned test
+probe, an empty-PATH-separator comparison, and custom-folder repair resolving
+the default directory. A rejected WiX candidate also redeclared CPack's
+`INSTALL_ROOT` property; the final fragment uses a separate search property.
+Failed logs are retained with the task's compact validation records.
+
 ### Published installer and remaining acceptance — 2026-10-05
 
 ckmux v0.1.8 is published at public `218ee734f6b68a37f9aea3a3854c62c07fa61a41`,

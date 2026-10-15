@@ -319,6 +319,24 @@ The ckVision-upgrade session's own, 2026-10-10:
   `tools/` can be test inputs here: grep `tests/` for the file's name, and
   run the suite before publishing a change to one.
 
+The Windows-installer PATH session's own, 2026-10-15:
+
+- **Assumed a fresh child inherited the fixture's execution policy.** Its
+  environment was correctly rebuilt by Windows, but PowerShell rejected the
+  unsigned probe before command discovery ran. Set the test script's process
+  execution policy explicitly, as the existing package fixtures do; preserve
+  the failed probe and distinguish script startup from application startup.
+- **Applied an LF patch through Windows Git without checking conversion.**
+  `git apply` honored that machine's autocrlf setting, changing five patched
+  source files to CRLF. The cross-host hash audit caught it. Transfer the
+  isolated candidate archive without conversion and compare both the complete
+  file inventory and each file's SHA256 before attributing results to it.
+- **Compared PATH separators instead of PATH entries.** The new uninstall
+  witness expected a doubled semicolon inherited from the default trailing
+  separator; MSI normalized it while preserving both unrelated entries.
+  Record actual and expected values before diagnosing loss, compare ordered
+  nonempty user entries, and keep the untouched machine PATH comparison exact.
+
 ### A number without its configuration is not a measurement (2026-08-20)
 
 `plans/09` recorded `32 ms worst, 24 ms mean` for the flood gate and named no

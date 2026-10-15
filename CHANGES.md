@@ -9,6 +9,13 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Add the Windows MSI installation's `bin` folder to the current user's PATH
+  automatically. Open a new Windows Terminal after installation and run
+  `ckmux` by name. Repair avoids duplicate entries; uninstall removes ckmux's
+  entry while preserving other user entries and the system PATH.
+- Remember a custom Windows MSI installation folder during repair and
+  uninstall instead of resolving it back to the default LocalAppData folder.
+
 - Write the Windows release checksum files (`.sha256` next to each MSI and ZIP)
   with LF line endings, so `shasum -a 256 -c` and `sha256sum -c` verify them on
   macOS and Linux. Through 0.1.9 they ended in CRLF, which those tools read as

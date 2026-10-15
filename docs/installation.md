@@ -78,19 +78,23 @@ that is where you want your sessions to run.
 
 1. Download and open the matching `.msi` from the release page.
 2. Install for your current user. Administrator access is not required.
-3. Open PowerShell in Windows Terminal and launch the installed executable.
+3. Open a new Windows Terminal window and run `ckmux` in PowerShell.
 
 The installer places ckmux under your LocalAppData folder unless you select
-another destination. Note the installation folder shown in the installer.
-In PowerShell, change to that folder (the one containing `bin`) and run:
+another destination, and adds that installation's `bin` folder to your
+**user PATH** automatically. Existing PATH entries are preserved. Run:
 
 ```powershell
-.\bin\ckmux.exe --version
-.\bin\ckmux.exe
+ckmux --version
+ckmux
 ```
 
-The MSI does not add ckmux to the global PATH. Optionally add that installation's
-`bin` folder to your **user** PATH and open a new terminal to use `ckmux` by name.
+Close Windows Terminal completely and reopen it if it was running during
+installation: existing processes may still have the old PATH. Repair keeps
+one ckmux PATH entry; uninstall removes that entry and preserves the others.
+The system PATH is unchanged. Older installers through v0.1.9 did not add
+PATH automatically; with those packages, use the installed executable's full
+path or add its `bin` folder to your user PATH yourself.
 
 ### Portable ZIP
 

@@ -31,7 +31,9 @@ try {
     $results=@(Get-ChildItem -LiteralPath "$Scope/t" -Filter record.json -Recurse -File)
     if($results.Count -ne 1) { throw 'Full checker did not produce exactly one acceptance record' }
     $result=Get-Content -LiteralPath $results[0].FullName -Raw | ConvertFrom-Json
-    foreach($step in @('zip-version','zip-lifecycle','msi-install','msi-version','msi-lifecycle','msi-repair','msi-uninstall')) {
+    foreach($step in @('zip-version','zip-lifecycle','msi-install','msi-install-path','msi-version','msi-lifecycle',
+            'msi-repair','msi-repair-path','msi-uninstall','msi-custom-install','msi-custom-install-path',
+            'msi-custom-repair','msi-custom-repair-path','msi-custom-uninstall')) {
         $property=$result.PSObject.Properties["${step}_exit"]
         if($null -eq $property -or $property.Value -ne 0) { throw "Required package step missing or failed: $step" }
     }

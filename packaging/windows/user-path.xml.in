@@ -1,0 +1,24 @@
+<!-- Copyright (c) 2026 C. Klukas. All rights reserved. -->
+<!-- SPDX-License-Identifier: MIT -->
+<CPackWiXPatch>
+  <!-- Per-user component key paths are registry values, so MSI cannot infer
+       a custom installation directory from an installed file during repair. -->
+  <CPackWiXFragment Id="#PRODUCT">
+    <Property Id="CKMUX_INSTALL_ROOT">
+      <RegistrySearch Id="CkmuxInstallRoot" Root="HKCU"
+                      Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer"
+                      Name="InstallRoot" Type="raw" />
+    </Property>
+    <SetProperty Id="INSTALL_ROOT" Value="[CKMUX_INSTALL_ROOT]"
+                 Before="CostInitialize" Sequence="both"
+                 Condition="CKMUX_INSTALL_ROOT AND NOT INSTALL_ROOT" />
+  </CPackWiXFragment>
+  <!-- Own the PATH entry with the executable's per-user component so repair
+       and uninstall use the same lifecycle as the installed program. -->
+  <CPackWiXFragment Id="CM_CP_bin.ckmux.exe">
+    <Environment Id="CkmuxUserPath" Name="PATH" Value="[INSTALL_ROOT]bin"
+                 Action="set" Part="last" System="no" Permanent="no" />
+    <RegistryValue Root="HKCU" Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer"
+                   Name="InstallRoot" Type="string" Value="[INSTALL_ROOT]" KeyPath="no" />
+  </CPackWiXFragment>
+</CPackWiXPatch>
