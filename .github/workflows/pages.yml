@@ -30,7 +30,7 @@ concurrency:
 
 env:
   CKDOCS_REPOSITORY: cklukas/ck-git-hosting
-  CKDOCS_REF: 2e53443b6d156df4ffd767f956bd16461cca4021
+  CKDOCS_REF: ad6dc1de73cedef8eb64d53ab607043ae09845ee
 
 jobs:
   build:

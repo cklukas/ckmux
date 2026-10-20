@@ -19,7 +19,7 @@ on:
   branches: [main]
 sisters:
   - name: ck-git-hosting
-    ref: 2e53443b6d156df4ffd767f956bd16461cca4021
+    ref: ad6dc1de73cedef8eb64d53ab607043ae09845ee
 jobs:
   - name: docs
     steps:
