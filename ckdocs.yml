@@ -15,6 +15,7 @@ site:
   links:
     - title: GitHub
       url: https://github.com/cklukas/ckmux
+      icon: github
     - title: Releases
       url: https://github.com/cklukas/ckmux/releases
     - title: Changes
