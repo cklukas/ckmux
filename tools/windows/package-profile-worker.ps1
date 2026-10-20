@@ -24,19 +24,26 @@ try {
     if(-not $denied) { throw 'Standard package worker can write protected machine settings' }
     [IO.File]::WriteAllText("$Scope/privilege-witness.txt",
         "Administrators=false; Interactive=true; HKLM-write=denied; SID="+$identity.User.Value)
+    $machine=$request.installation_scope -eq 'machine'
     & "$Scope/check-package.ps1" -Zip "$Scope/input/package.zip" -Msi "$Scope/input/package.msi" `
         -BuildExecutable "$Scope/input/bin/ckmux.exe" -Architecture $request.architecture `
         -Version $request.version -TemporaryRoot "$Scope/t" `
-        -LifecycleScript "$Scope/windows_server_lifecycle.ps1" *> "$Scope/package-test.log"
+        -LifecycleScript "$Scope/windows_server_lifecycle.ps1" -MachineInstallation:$machine *> "$Scope/package-test.log"
     $results=@(Get-ChildItem -LiteralPath "$Scope/t" -Filter record.json -Recurse -File)
     if($results.Count -ne 1) { throw 'Full checker did not produce exactly one acceptance record' }
     $result=Get-Content -LiteralPath $results[0].FullName -Raw | ConvertFrom-Json
-    foreach($step in @('zip-version','zip-lifecycle','msi-install','msi-version','msi-lifecycle','msi-repair','msi-uninstall')) {
+    $steps=if($machine) { @('zip-version','zip-lifecycle','machine-access-path','machine-version','machine-lifecycle') }
+        else { @('zip-version','zip-lifecycle','msi-install','msi-install-path','msi-version','msi-lifecycle',
+            'msi-repair','msi-repair-path','msi-uninstall','msi-custom-install','msi-custom-install-path',
+            'msi-custom-repair','msi-custom-repair-path','msi-custom-uninstall') }
+    foreach($step in $steps) {
         $property=$result.PSObject.Properties["${step}_exit"]
         if($null -eq $property -or $property.Value -ne 0) { throw "Required package step missing or failed: $step" }
     }
+    $expectedContext=if($machine) { 4 } else { 2 }
     if($result.exit -ne 0 -or -not $result.lifecycle_exercised -or
-        $result.elevated -or $result.install_context -ne 2 -or $result.user_sid -cne $request.sid) {
+        $result.elevated -or $result.install_context -ne $expectedContext -or $result.user_sid -cne $request.sid -or
+        ($machine -and -not $result.machine_access_verified)) {
         throw 'Package record does not prove full non-admin installation and lifecycle'
     }
     $code=0

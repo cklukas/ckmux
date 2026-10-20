@@ -1,0 +1,80 @@
+<!-- Copyright (c) 2026 C. Klukas. All rights reserved. -->
+<!-- SPDX-License-Identifier: MIT -->
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCT">
+    <Property Id="CKMUX_SCOPE" Value="user" />
+    <Property Id="CKMUX_USER_ROOT">
+      <RegistrySearch Id="CkmuxUserRoot" Root="HKCU" Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer" Name="InstallRoot" Type="raw" />
+    </Property>
+    <Property Id="CKMUX_MACHINE_ROOT">
+      <RegistrySearch Id="CkmuxMachineRoot" Root="HKLM" Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer" Name="InstallRoot" Type="raw" />
+    </Property>
+    <!-- ProgramFiles64Folder can already be redirected for the initial user
+         scope. Keep the real machine default when the wizard changes scope. -->
+    <Property Id="CKMUX_PROGRAM_FILES">
+      <RegistrySearch Id="CkmuxProgramFiles" Root="HKLM" Bitness="always64" Key="Software\Microsoft\Windows\CurrentVersion" Name="ProgramFilesDir" Type="raw" />
+    </Property>
+    <SetProperty Id="INSTALL_ROOT" Action="RestoreCkmuxUserRoot" Value="[CKMUX_USER_ROOT]" After="AppSearch" Condition="CKMUX_USER_ROOT AND NOT INSTALL_ROOT AND (NOT ALLUSERS OR (ALLUSERS=2 AND MSIINSTALLPERUSER=1))" />
+    <SetProperty Id="INSTALL_ROOT" Action="RestoreCkmuxMachineRoot" Value="[CKMUX_MACHINE_ROOT]" After="RestoreCkmuxUserRoot" Condition="CKMUX_MACHINE_ROOT AND NOT INSTALL_ROOT AND (ALLUSERS=1 OR (ALLUSERS=2 AND NOT MSIINSTALLPERUSER))" />
+    <SetProperty Id="INSTALL_ROOT" Action="DefaultCkmuxUserRoot" Value="[LocalAppDataFolder]ckmux-@CKMUX_WINDOWS_ARCHITECTURE@" After="RestoreCkmuxMachineRoot" Condition="NOT INSTALL_ROOT AND (NOT ALLUSERS OR (ALLUSERS=2 AND MSIINSTALLPERUSER=1))" />
+    <SetProperty Id="INSTALL_ROOT" Action="DefaultCkmuxMachineRoot" Value="[CKMUX_PROGRAM_FILES]\ckmux-@CKMUX_WINDOWS_ARCHITECTURE@" After="DefaultCkmuxUserRoot" Condition="CKMUX_PROGRAM_FILES AND NOT INSTALL_ROOT AND (ALLUSERS=1 OR (ALLUSERS=2 AND NOT MSIINSTALLPERUSER))" />
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="CkmuxMenuFolder" Name="ckmux" />
+    </StandardDirectory>
+    <UI>
+      <Dialog Id="CkmuxScopeDlg" Width="370" Height="270" Title="ckmux Setup">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="20" Text="{\WixUI_Font_Title}Who should be able to use ckmux?" NoPrefix="yes" />
+        <Control Id="Description" Type="Text" X="20" Y="42" Width="330" Height="28" Text="Choose where to install ckmux. You can select the installation folder on the next page." NoPrefix="yes" />
+        <Control Id="Scope" Type="RadioButtonGroup" X="22" Y="83" Width="325" Height="95" Property="CKMUX_SCOPE">
+          <RadioButtonGroup Property="CKMUX_SCOPE">
+            <RadioButton Value="user" X="0" Y="0" Width="315" Height="18" Text="Just for me" />
+            <RadioButton Value="machine" X="0" Y="60" Width="315" Height="18" Text="Everyone on this computer" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="UserDescription" Type="Text" X="38" Y="105" Width="305" Height="28" Text="No administrator permission needed. Adds ckmux to your user PATH." NoPrefix="yes" />
+        <Control Id="MachineDescription" Type="Text" X="38" Y="165" Width="305" Height="36" Text="Requires administrator approval. Adds ckmux to the system PATH for all users." NoPrefix="yes" />
+        <Control Id="ScopeChange" Type="Text" X="20" Y="207" Width="330" Height="22" Text="To switch an existing installation to the other scope, uninstall it first." NoPrefix="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" Default="yes">
+          <Publish Property="ALLUSERS" Value="2" Order="1" />
+          <Publish Property="MSIINSTALLPERUSER" Value="1" Order="2" Condition="CKMUX_SCOPE=&quot;user&quot;" />
+          <Publish Property="MSIINSTALLPERUSER" Value="{}" Order="3" Condition="CKMUX_SCOPE=&quot;machine&quot;" />
+          <Publish Property="INSTALL_ROOT" Value="[CKMUX_USER_ROOT]" Order="4" Condition="CKMUX_SCOPE=&quot;user&quot; AND CKMUX_USER_ROOT AND CKMUX_SCOPE&lt;&gt;CKMUX_PREVIOUS_SCOPE" />
+          <Publish Property="INSTALL_ROOT" Value="[LocalAppDataFolder]ckmux-@CKMUX_WINDOWS_ARCHITECTURE@" Order="5" Condition="CKMUX_SCOPE=&quot;user&quot; AND NOT CKMUX_USER_ROOT AND CKMUX_SCOPE&lt;&gt;CKMUX_PREVIOUS_SCOPE" />
+          <Publish Property="INSTALL_ROOT" Value="[CKMUX_MACHINE_ROOT]" Order="6" Condition="CKMUX_SCOPE=&quot;machine&quot; AND CKMUX_MACHINE_ROOT AND CKMUX_SCOPE&lt;&gt;CKMUX_PREVIOUS_SCOPE" />
+          <Publish Property="INSTALL_ROOT" Value="[CKMUX_PROGRAM_FILES]\ckmux-@CKMUX_WINDOWS_ARCHITECTURE@" Order="7" Condition="CKMUX_SCOPE=&quot;machine&quot; AND NOT CKMUX_MACHINE_ROOT AND CKMUX_SCOPE&lt;&gt;CKMUX_PREVIOUS_SCOPE" />
+          <Publish Property="CKMUX_PREVIOUS_SCOPE" Value="[CKMUX_SCOPE]" Order="8" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="9" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="CkmuxScopeDlg" Order="2" Condition="LicenseAccepted=1" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="CkmuxScopeDlg" Order="2" />
+    </UI>
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="CM_DP_bin">
+    <Component Id="CkmuxUserEnvironment" Guid="@CKMUX_WINDOWS_USER_ENV_GUID@" Condition="NOT ALLUSERS">
+      <Environment Id="CkmuxUserPath" Name="PATH" Value="[INSTALL_ROOT]bin" Action="set" Part="last" System="no" Permanent="no" />
+      <RegistryValue Root="HKMU" Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer" Name="InstallRoot" Type="string" Value="[INSTALL_ROOT]" KeyPath="yes" />
+    </Component>
+    <Component Id="CkmuxMachineEnvironment" Guid="@CKMUX_WINDOWS_MACHINE_ENV_GUID@" Condition="ALLUSERS">
+      <Environment Id="CkmuxMachinePath" Name="PATH" Value="[INSTALL_ROOT]bin" Action="set" Part="last" System="yes" Permanent="no" />
+      <RegistryValue Root="HKMU" Key="Software\ckmux\@CKMUX_WINDOWS_ARCHITECTURE@\Installer" Name="InstallRoot" Type="string" Value="[INSTALL_ROOT]" KeyPath="yes" />
+    </Component>
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="#PRODUCTFEATURE">
+    <ComponentRef Id="CkmuxUserEnvironment" />
+    <ComponentRef Id="CkmuxMachineEnvironment" />
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="CM_FP_bin.ckmux.exe">
+    <Shortcut Id="CkmuxStartMenu" Name="ckmux" Directory="CkmuxMenuFolder" Advertise="yes" WorkingDirectory="CM_DP_bin" />
+  </CPackWiXFragment>
+  <CPackWiXFragment Id="CM_CP_bin.ckmux.exe">
+    <RemoveFolder Id="RemoveCkmuxMenu" Directory="CkmuxMenuFolder" On="uninstall" />
+  </CPackWiXFragment>
+</CPackWiXPatch>

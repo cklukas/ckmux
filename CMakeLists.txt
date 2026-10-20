@@ -1,7 +1,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.28)
-project(ckmux VERSION 0.1.9 LANGUAGES CXX)
+project(ckmux VERSION 0.1.10 LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(CkmuxSettings)
@@ -18,7 +18,7 @@ endif()
 # getting the library -- an installed package, or the FetchContent clone an
 # adopter's build makes -- must satisfy exactly this version. Bumping it is a
 # deliberate act that follows a ckVision release, never a side effect.
-set(CKMUX_CKVISION_VERSION 1.0.0)
+set(CKMUX_CKVISION_VERSION 1.2.1)
 
 # Windows selects the actual native IPC/process/wait implementations below;
 # it is not a Unix compatibility environment. Acceptance and release status
@@ -304,6 +304,7 @@ install(FILES
     LICENSE
     docs/index.md
     docs/getting-started.md
+    docs/tour.md
     docs/session-lifetime.md
     docs/installation.md
     docs/building.md
@@ -312,6 +313,29 @@ install(FILES
     docs/windows.md
     "${CKMUX_GENERATED_KEYS}"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+# The pages refer to their screenshots as images/<name>.svg.
+install(DIRECTORY docs/images DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+
+# The screenshots in README.md and docs/images: the real ckmux, run in a
+# ckVision pseudo-terminal and written as SVG from its decoded screen, with
+# ckVision's scene::render_svg_snapshot (1.2.0 and later). Off by default
+# because it is run on purpose, like ckmux_update_key_docs: `cmake --build
+# build --target ckmux_update_screenshots` rewrites docs/images. POSIX only.
+option(CKMUX_BUILD_SCREENSHOTS "Build the documentation screenshot generator" OFF)
+if(CKMUX_BUILD_SCREENSHOTS)
+    if(WIN32)
+        message(FATAL_ERROR "CKMUX_BUILD_SCREENSHOTS drives a bash/vim fixture and is POSIX only")
+    endif()
+    add_executable(ckmux_capture_screens tools/screenshots/capture_screens.cpp)
+    target_link_libraries(ckmux_capture_screens PRIVATE ckvision::cvision)
+    ckmux_strict(ckmux_capture_screens)
+    add_custom_target(ckmux_update_screenshots
+        COMMAND ckmux_capture_screens $<TARGET_FILE:ckmux>
+                "${CMAKE_CURRENT_SOURCE_DIR}/docs/images"
+        DEPENDS ckmux ckmux_capture_screens
+        COMMENT "Capturing docs/images from the running ckmux"
+        VERBATIM)
+endif()
 
 # Python is build tooling, never a dependency of ckmux (the engineering standard: no external
 # dependencies beyond ckvision::cvision). The convenience target is offered

@@ -144,6 +144,17 @@ ckdocs check --root .
 ckdocs serve --root . --out build/docs-preview
 ```
 
+The screenshots in `docs/images` are generated from the running program by
+`tools/screenshots/capture_screens.cpp` (macOS or Linux, with bash and vim):
+
+```sh
+cmake -S . -B build -DCKMUX_BUILD_SCREENSHOTS=ON
+cmake --build build --target ckmux_update_screenshots
+```
+
+Regenerate them when a change alters what a pictured screen shows, and look
+at the diff before committing it.
+
 Keep usage pages about current behavior. Record user-visible release changes
 in [CHANGES.md](https://github.com/cklukas/ckmux/blob/main/CHANGES.md).
 Read the [contribution terms](https://github.com/cklukas/ckmux/blob/main/CONTRIBUTING.md)

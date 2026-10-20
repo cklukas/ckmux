@@ -3,9 +3,10 @@
 #
 # The documentation site: ckdocs, the documentation-site generator of
 # ck-git-hosting, builds docs/ with ckdocs.yml and publishes it on GitHub
-# Pages. ckdocs is compiled here from its source at a pinned commit, never
-# downloaded as a binary; .ckgit/ci.yml pins the same commit for the
-# self-hosted Pages, so both hosts publish the same bytes. The site is built
+# Pages. ckdocs is installed from the pinned ck-git-hosting release's Debian
+# package, which must match the SHA-256 recorded here; compiling it from
+# source took minutes per deploy. .ckgit/ci.yml builds the same release from
+# source for the self-hosted Pages, so both hosts run ckdocs 0.8.1. The site is built
 # only from a commit whose `ci` workflow succeeded, because that run is what
 # proves docs/keys.md identical to the compiled key registry
 # (tests/test_docs.cpp); `--strict` fails the build on a broken link or
@@ -30,7 +31,8 @@ concurrency:
 
 env:
   CKDOCS_REPOSITORY: cklukas/ck-git-hosting
-  CKDOCS_REF: ad6dc1de73cedef8eb64d53ab607043ae09845ee
+  CKDOCS_VERSION: 0.8.1
+  CKDOCS_SHA256: 054a447ca09f9602e926fea186b68c1848a75f7c95904cbfe6b32f64b4aecfe6
 
 jobs:
   build:
@@ -41,15 +43,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: actions/checkout@v5
-        with:
-          repository: ${{ env.CKDOCS_REPOSITORY }}
-          ref: ${{ env.CKDOCS_REF }}
-          path: .ckdocs-source
-      - name: Build ckdocs
-        run: make -C .ckdocs-source BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/ckdocs" client
+      - name: Install ckdocs
+        run: |
+          deb="$RUNNER_TEMP/ckdocs_${CKDOCS_VERSION}_amd64.deb"
+          curl --fail --location --silent --show-error --retry 3 --output "$deb" \
+            "https://github.com/$CKDOCS_REPOSITORY/releases/download/v$CKDOCS_VERSION/ckdocs_${CKDOCS_VERSION}_amd64.deb"
+          echo "$CKDOCS_SHA256  $deb" | sha256sum --check --strict
+          sudo dpkg --install "$deb"
+          ckdocs --version
+          ckdocs --version | grep -F "ckdocs $CKDOCS_VERSION"
       - name: Build the site
-        run: '"$RUNNER_TEMP/ckdocs/bin/ckdocs" build --root "$PWD" --out "$RUNNER_TEMP/site" --strict'
+        run: ckdocs build --root "$PWD" --out "$RUNNER_TEMP/site" --strict
       - name: Configure Pages
         uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

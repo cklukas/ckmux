@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('x64','arm64')][string]$Architecture,
     [Parameter(Mandatory=$true)][string]$Version,
     [Parameter(Mandatory=$true)][string]$TemporaryRoot,
-    [Parameter(Mandatory=$true)][string]$LifecycleScript
+    [Parameter(Mandatory=$true)][string]$LifecycleScript,
+    [ValidateSet('user','machine','both')][string]$InstallationScope='both'
 )
 $ErrorActionPreference='Stop'
 foreach($inputPath in @($Zip,$Msi,$BuildExecutable,$TemporaryRoot,$LifecycleScript)) {
@@ -22,12 +23,19 @@ $principal=New-Object Security.Principal.WindowsPrincipal($identity)
 if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Creating the disposable CI account requires an administrator fixture host'
 }
+if($InstallationScope -eq 'both') {
+    foreach($selectedScope in @('user','machine')) {
+        & $PSCommandPath -Zip $Zip -Msi $Msi -BuildExecutable $BuildExecutable -Architecture $Architecture `
+            -Version $Version -TemporaryRoot $TemporaryRoot -LifecycleScript $LifecycleScript -InstallationScope $selectedScope
+    }
+    return
+}
 $scope=Join-Path (Resolve-Path -LiteralPath $TemporaryRoot).Path ('package-host-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scope,"$scope/t" | Out-Null
 $env:TEMP="$scope/t"; $env:TMP=$env:TEMP; $env:TMPDIR=$env:TEMP
 @{zip=(Resolve-Path -LiteralPath $Zip).Path; msi=(Resolve-Path -LiteralPath $Msi).Path;
   executable=(Resolve-Path -LiteralPath $BuildExecutable).Path; architecture=$Architecture;
-  version=$Version; lifecycle=(Resolve-Path -LiteralPath $LifecycleScript).Path} |
+  version=$Version; lifecycle=(Resolve-Path -LiteralPath $LifecycleScript).Path; installation_scope=$InstallationScope} |
     ConvertTo-Json | Out-File "$scope/request.json" -Encoding utf8
 $shell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 $hostScript=Join-Path $PSScriptRoot 'package-profile-host.ps1'
@@ -66,6 +74,9 @@ try {
         -not $actual.owned_removed -or $actual.worker_exit -ne 0) {
         throw 'Full package acceptance or disposable fixture cleanup failed'
     }
+    if($InstallationScope -eq 'machine' -and ($actual.'machine-install_exit' -ne 0 -or
+        $actual.'machine-repair_exit' -ne 0 -or $actual.'machine-uninstall_exit' -ne 0 -or
+        -not $actual.machine_path_restored)) { throw 'Machine installation lifecycle or PATH preservation is incomplete' }
     $record.exit=0
 } finally {
     if($registered) {

@@ -9,6 +9,29 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Show ckmux in the README and user guide: real screenshots of the running
+  program (tiled windows, the prefix popup, menus, zoom, copy mode, the key
+  reference, Sixel graphics, sessions and reattaching), and a new
+  [Tour](docs/tour.md) page that walks through them. The installed guide
+  carries the pictures in `images/`.
+- Add `tools/screenshots`, which regenerates those pictures from the real
+  binary (`-DCKMUX_BUILD_SCREENSHOTS=ON`, target `ckmux_update_screenshots`;
+  macOS and Linux).
+- Use ckVision 1.2.1. A program that prints a Sixel picture and then a
+  newline (`img2sixel`, a plotting library, `cat picture.six`) no longer
+  writes its next line over the picture: the cursor now ends on the
+  picture's last row, as on a Sixel-capable terminal. Before, the prompt
+  after a picture left a black bar across it.
+- Add the Windows MSI installation's `bin` folder to PATH
+  automatically. Open a new Windows Terminal after installation and run
+  `ckmux` by name. Repair avoids duplicate entries; uninstall removes ckmux's
+  entry while preserving unrelated entries and the other scope's PATH.
+- Remember a custom Windows MSI installation folder during repair and
+  uninstall instead of resolving it back to the default LocalAppData folder.
+- Offer **Just for me** and **Everyone on this computer** in the MSI wizard.
+  The default user installation needs no administrator permission; the shared
+  installation requests approval and adds ckmux to the system PATH.
+
 - Write the Windows release checksum files (`.sha256` next to each MSI and ZIP)
   with LF line endings, so `shasum -a 256 -c` and `sha256sum -c` verify them on
   macOS and Linux. Through 0.1.9 they ended in CRLF, which those tools read as

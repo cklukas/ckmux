@@ -1,0 +1,23 @@
+<!-- Copyright (c) 2026 C. Klukas. All rights reserved. -->
+<!-- SPDX-License-Identifier: MIT -->
+<?include "cpack_variables.wxi"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="$(var.CPACK_PACKAGE_NAME)" Version="$(var.CPACK_PACKAGE_VERSION)"
+           Manufacturer="$(var.CPACK_PACKAGE_VENDOR)"
+           UpgradeCode="$(var.CPACK_WIX_UPGRADE_GUID)"
+           ProductCode="$(var.CPACK_WIX_PRODUCT_GUID)"
+           Scope="perUserOrMachine" InstallerVersion="500" Language="1033" Compressed="yes">
+    <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer ckmux version is already installed." />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.CPACK_WIX_LICENSE_RTF)" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALL_ROOT" />
+    <Property Id="INSTALL_ROOT" Secure="yes" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALL_ROOT]" After="CostFinalize" />
+    <FeatureRef Id="ProductFeature" />
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+    <?include "product_fragment.wxi"?>
+  </Package>
+</Wix>

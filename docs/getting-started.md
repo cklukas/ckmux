@@ -17,6 +17,8 @@ directory is not on your PATH.
 ckmux starts its server if needed and opens a desktop with a menu bar, a
 shortcut footer, and a terminal running your shell. No configuration is needed.
 
+![A new ckmux session: menu bar, one terminal window, and the key footer](images/first-start.svg)
+
 ## Find your way around
 
 **Ctrl+B is the prefix.** Press it, release it, then press the command key.
@@ -30,6 +32,8 @@ The popup shows your choices. In the guide and the footer, `^B` means Ctrl+B.
 | `^B w` | Open the window list |
 | `^B ?` | Show all key bindings |
 | `^B ^B` | Send a literal Ctrl+B to the program |
+
+![The popup that appears after Ctrl+B](images/prefix-popup.svg)
 
 Click a window to focus it, drag its title to move it, or drag an edge to
 resize it. The Window menu also offers tiling and cascading. Use the Help
@@ -60,6 +64,8 @@ ckmux attach work       # Attach to that session
 
 From the desktop, use **`^B s`** for the session picker, **`^B S`** to create
 a session, and **`^B R`** to rename one.
+
+![The session picker listing three sessions](images/sessions.svg)
 
 ## Join or watch a session
 

@@ -8,6 +8,11 @@ ckmux keeps your shells and programs running when you disconnect. Reattach to
 a workspace of movable terminal windows, with a menu bar, mouse support, and
 a footer showing the keys you can use right now.
 
+![A ckmux desktop: a build, vim and a log tail in tiled windows](images/desktop.svg)
+
+The [tour](tour.md) shows the rest: the prefix popup, menus, zoom, copy mode,
+Sixel graphics, sessions, and coming back to a desktop that kept running.
+
 ## Start here
 
 1. [Install ckmux](installation.md) on macOS, Linux, or Windows.
@@ -19,6 +24,7 @@ a footer showing the keys you can use right now.
 
 | Task | Guide |
 |---|---|
+| See what ckmux looks like and can do | [Tour](tour.md) |
 | Download, install, upgrade, or remove ckmux | [Installation](installation.md) |
 | Manage sessions or join from another client | [Getting started](getting-started.md) |
 | Reconnect over SSH or understand desktop logout | [SSH and session lifetime](session-lifetime.md) |

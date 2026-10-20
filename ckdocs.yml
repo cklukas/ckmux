@@ -15,6 +15,7 @@ site:
   links:
     - title: GitHub
       url: https://github.com/cklukas/ckmux
+      icon: github
     - title: Releases
       url: https://github.com/cklukas/ckmux/releases
     - title: Changes
@@ -29,6 +30,8 @@ nav:
     page: docs/installation.md
   - title: Getting started
     page: docs/getting-started.md
+  - title: Tour
+    page: docs/tour.md
   - title: SSH and session lifetime
     page: docs/session-lifetime.md
   - title: Reference

@@ -6,25 +6,16 @@ Keep shells, editors, and long-running commands alive after you disconnect.
 Come back to a desktop of movable terminal windows, with menus you can browse
 and a footer that shows the keys available right now.
 
-[Get started](docs/getting-started.md) · [Install](docs/installation.md) ·
-[User guide](https://cklukas.github.io/ckmux/) ·
+[Get started](docs/getting-started.md) · [Tour](docs/tour.md) ·
+[Install](docs/installation.md) · [User guide](https://cklukas.github.io/ckmux/) ·
 [Downloads](https://github.com/cklukas/ckmux/releases/latest) ·
 [Changes](CHANGES.md)
 
-```text
- Session  Terminal  Window  View  Settings  Help
- ┌─ Terminal 1 ────────────────────────┐
- │ $ make                            │
- │ Building…       ┌─ Terminal 2 ─────────────────────┐
- │                 │ $ vim notes.md                  │
- └─────────────────│                                 │
-                   │                                 │
-                   └─────────────────────────────────┘
- ^B m menu   ^B c new terminal   ^B d detach   ^B ? keys
-```
+![ckmux with three tiled windows: a build and its tests, vim, and a live log tail](docs/images/desktop.svg)
 
-*An illustration of the desktop layout.* ckmux runs inside your terminal
-emulator, on macOS, Linux, and native Windows.
+*A build, an editor and a log tail in one session, tiled with `^B g`. Detach
+with `^B d` and all three keep running.* ckmux runs inside your terminal
+emulator on macOS, Linux and native Windows.
 
 ## Why ckmux?
 
@@ -32,11 +23,26 @@ emulator, on macOS, Linux, and native Windows.
   sessions and programs alive. Reattach to their current state.
 - **Find commands as you go.** Menus, mouse interaction, and a prefix-key
   popup make the interface usable before you learn the shortcuts.
-- **Arrange your workspace.** Move, resize, tile, or cascade terminal windows;
-  keep separate named sessions for different projects.
+- **Arrange your workspace.** Move, resize, tile, zoom or cascade terminal
+  windows; keep separate named sessions for different projects.
 - **Share a view.** Join a session from another client, or watch it read-only.
 - **Keep terminal features.** Color, mouse input, scrollback, copy mode, and
   Sixel graphics on capable hosts, plus captured print output and process stats.
+
+## See it
+
+| Press `^B` and the popup lists every next key | Every command is in a menu, with its shortcut |
+|---|---|
+| ![The prefix popup over the desktop](docs/images/prefix-popup.svg) | ![The Window menu open](docs/images/menu-window.svg) |
+| **Copy mode** selects through scrollback, by line, character or block | **Sixel graphics** from programs inside a window, on capable terminals |
+| ![Copy mode selecting test results](docs/images/copy-mode.svg) | ![A Sixel picture drawn by a script in a ckmux window](docs/images/sixel.svg) |
+| **Sessions** keep separate desktops on one server | **Come back later**, in another theme: nothing stopped |
+| ![The session picker](docs/images/sessions.svg) | ![The same desktop reattached in the light theme](docs/images/reattach-light.svg) |
+
+The [tour](docs/tour.md) walks through these and more. Every picture here is
+the real ckmux, captured by
+[`tools/screenshots`](tools/screenshots/capture_screens.cpp) from its decoded
+screen while it runs bash, vim and a small demo project.
 
 ## Install
 
@@ -45,7 +51,7 @@ emulator, on macOS, Linux, and native Windows.
 | macOS | `brew install cklukas/ckmux/ckmux`; Apple Silicon archive for macOS 26+ also available |
 | Linux x86_64 — Debian / Ubuntu | Download the DEB, then `sudo apt install ./ckmux_*_amd64.deb` |
 | Linux x86_64 — RPM distributions | Download the RPM, then `sudo dnf install ./ckmux-*.x86_64.rpm` |
-| Windows x64 / ARM64 | Download the matching per-user MSI or portable ZIP; run in Windows Terminal |
+| Windows x64 / ARM64 | Download the matching MSI (current user or all users) or portable ZIP; run in Windows Terminal |
 
 Use the [latest release](https://github.com/cklukas/ckmux/releases/latest).
 The [installation guide](docs/installation.md) covers platform requirements,
@@ -69,6 +75,7 @@ Press **Ctrl+B**, release it, then press the command key:
 |---|---|
 | `c` | Open a terminal window |
 | `n` / `p` | Switch to the next / previous terminal |
+| `g` | Tile the windows in a grid |
 | `m` | Open the menu bar |
 | `d` | Detach and leave programs running |
 | `?` | Show the key reference |
@@ -80,6 +87,7 @@ the program. No configuration file is required.
 
 | I want to… | Read |
 |---|---|
+| See what ckmux can do | [Tour](docs/tour.md) |
 | Create sessions, detach, reattach, or share | [Getting started](docs/getting-started.md) |
 | Keep work running over SSH or understand logout limits | [SSH and session lifetime](docs/session-lifetime.md) |
 | Use the command line | [CLI reference](docs/cli.md) |
