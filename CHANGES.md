@@ -9,6 +9,11 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Use ckVision 1.2.1. A program that prints a Sixel picture and then a
+  newline (`img2sixel`, a plotting library, `cat picture.six`) no longer
+  writes its next line over the picture: the cursor now ends on the
+  picture's last row, as on a Sixel-capable terminal. Before, the prompt
+  after a picture left a black bar across it.
 - Add the Windows MSI installation's `bin` folder to PATH
   automatically. Open a new Windows Terminal after installation and run
   `ckmux` by name. Repair avoids duplicate entries; uninstall removes ckmux's
