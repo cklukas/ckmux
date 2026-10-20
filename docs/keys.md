@@ -63,6 +63,8 @@ default. A `bind` or `unbind` line can change any row with an action name.
 `^B [` enters copy mode on the focused terminal (its scrollback included);
 `^B ]` pastes what was copied.
 
+![Copy mode with a line selection](images/copy-mode.svg)
+
 Inside copy mode:
 
 | Keys | Movement / action |

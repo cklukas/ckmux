@@ -16,6 +16,8 @@ these chords; commands without a default chord remain available in the menus.
 `^B [` enters copy mode on the focused terminal (its scrollback included);
 `^B ]` pastes what was copied.
 
+![Copy mode with a line selection](images/copy-mode.svg)
+
 Inside copy mode:
 
 | Keys | Movement / action |

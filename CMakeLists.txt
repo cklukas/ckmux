@@ -304,6 +304,7 @@ install(FILES
     LICENSE
     docs/index.md
     docs/getting-started.md
+    docs/tour.md
     docs/session-lifetime.md
     docs/installation.md
     docs/building.md
@@ -312,6 +313,29 @@ install(FILES
     docs/windows.md
     "${CKMUX_GENERATED_KEYS}"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+# The pages refer to their screenshots as images/<name>.svg.
+install(DIRECTORY docs/images DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+
+# The screenshots in README.md and docs/images: the real ckmux, run in a
+# ckVision pseudo-terminal and written as SVG from its decoded screen, with
+# ckVision's scene::render_svg_snapshot (1.2.0 and later). Off by default
+# because it is run on purpose, like ckmux_update_key_docs: `cmake --build
+# build --target ckmux_update_screenshots` rewrites docs/images. POSIX only.
+option(CKMUX_BUILD_SCREENSHOTS "Build the documentation screenshot generator" OFF)
+if(CKMUX_BUILD_SCREENSHOTS)
+    if(WIN32)
+        message(FATAL_ERROR "CKMUX_BUILD_SCREENSHOTS drives a bash/vim fixture and is POSIX only")
+    endif()
+    add_executable(ckmux_capture_screens tools/screenshots/capture_screens.cpp)
+    target_link_libraries(ckmux_capture_screens PRIVATE ckvision::cvision)
+    ckmux_strict(ckmux_capture_screens)
+    add_custom_target(ckmux_update_screenshots
+        COMMAND ckmux_capture_screens $<TARGET_FILE:ckmux>
+                "${CMAKE_CURRENT_SOURCE_DIR}/docs/images"
+        DEPENDS ckmux ckmux_capture_screens
+        COMMENT "Capturing docs/images from the running ckmux"
+        VERBATIM)
+endif()
 
 # Python is build tooling, never a dependency of ckmux (AGENTS.md: no external
 # dependencies beyond ckvision::cvision). The convenience target is offered

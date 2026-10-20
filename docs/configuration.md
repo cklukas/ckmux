@@ -43,7 +43,7 @@ programs keep running. Use `ckmux check-config` to check configuration syntax.
 | `login-shell` | `true` | POSIX only: start an interactive login shell. Windows uses native shell profile behavior and preserves this key without offering it in Settings. |
 | `scrollback` | `10000` | Lines of history per terminal; `0` means remember nothing. |
 | `max-terminals` | `64` | The most terminals one session may hold. |
-| `theme` | `dark` | `dark`, `light`, or `mono`. |
+| `theme` | `dark` | `dark`, `light`, or `mono`. The [tour](tour.md#leave-and-come-back) shows `light`. |
 | `on-exit` | `hold-on-error` | A window whose program exited: `close`, `hold`, or `hold-on-error` (keep it only when the exit status was non-zero — when the text on screen is the evidence). |
 | `audible-bell` | `false` | Whether a child's bell reaches your terminal as a sound. The visual half — border flash and footer flag — is always on. |
 | `confirm-kill` | `true` | Ask before closing or killing something with a live program in it. |

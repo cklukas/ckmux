@@ -9,6 +9,14 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Show ckmux in the README and user guide: real screenshots of the running
+  program (tiled windows, the prefix popup, menus, zoom, copy mode, the key
+  reference, Sixel graphics, sessions and reattaching), and a new
+  [Tour](docs/tour.md) page that walks through them. The installed guide
+  carries the pictures in `images/`.
+- Add `tools/screenshots`, which regenerates those pictures from the real
+  binary (`-DCKMUX_BUILD_SCREENSHOTS=ON`, target `ckmux_update_screenshots`;
+  macOS and Linux).
 - Use ckVision 1.2.1. A program that prints a Sixel picture and then a
   newline (`img2sixel`, a plotting library, `cat picture.six`) no longer
   writes its next line over the picture: the cursor now ends on the
