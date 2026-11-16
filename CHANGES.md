@@ -9,6 +9,13 @@ not imply that every manual acceptance check was complete at release time.
 
 ## Unreleased
 
+- Build Linux ARM64 DEB and tar.gz release packages for 64-bit uConsole and
+  Raspberry Pi systems. GitHub tests the native Ubuntu 24.04 ARM64 build and
+  installs its DEB on Debian 13; rpi4's offline CI builds and tests the pinned
+  dependency and retains packages for branch builds and version-tag releases.
+- Verify Linux DEB checksums, architecture, version, terminal-child execution,
+  session listing, and shutdown before shipping. Reject corrupted packages
+  and mismatched versions or architectures before extraction or execution.
 - Show ckmux in the README and user guide: real screenshots of the running
   program (tiled windows, the prefix popup, menus, zoom, copy mode, the key
   reference, Sixel graphics, sessions and reattaching), and a new

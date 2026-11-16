@@ -256,7 +256,7 @@ ClientApp::ClientApp(u::Application& app, ClientOptions options)
     app_.set_help_provider([this](const std::string& key) {
         if (desktop_ == nullptr) return;
         retain_dialog(std::make_shared<w::HelpViewerPresentation>(
-            w::present_modeless_help_viewer(help_, key, app_, *desktop_, roles_)));
+            w::present_modeless_help_viewer(help_, key, app_, *desktop_)));
     });
     footer_->set_hint_provider([](const std::string& key) -> std::string {
         if (key == "ckmux.prefix") return "choose a key, or Esc to cancel";
@@ -1359,7 +1359,7 @@ void ClientApp::show_new_session_dialog(std::string suggested_name) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.values.empty()) return;
         // An empty field means "you name it": the server's own rule, rather
@@ -1380,7 +1380,7 @@ void ClientApp::show_rename_session_dialog(std::string current_name) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.values.empty() || result.values.front().empty()) return;
         if (options_.rename_session) options_.rename_session(result.values.front());
@@ -1425,7 +1425,7 @@ void ClientApp::show_kill_session_dialog() {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler([this, presentation, force_field](const w::DialogResult& result) {
         if (!result.accepted || result.checked.size() <= force_field) return;
         if (options_.kill_session)
@@ -1549,7 +1549,7 @@ void ClientApp::show_session_picker(std::vector<SessionRow> rows) {
         attached_session_ == 0 ? "&Without a session" : "&Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler([this, presentation](const w::DialogResult& result) {
         if (!result.accepted || result.selected.empty()) return;
         const int index = result.selected.front();
@@ -1967,7 +1967,7 @@ void ClientApp::confirm_then_kill(w::Window* window) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"&Kill terminal", w::ButtonRole::Accept, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler([this, presentation, terminal](
                                              const w::DialogResult& result) {
         if (!result.accepted) return;
@@ -2050,7 +2050,7 @@ void ClientApp::confirm_then_close(w::Window* window) {
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, terminal, force_field](const w::DialogResult& result) {
             if (!result.accepted) return;
@@ -2121,7 +2121,7 @@ void ClientApp::show_move_terminal_dialog(ckv::term::TerminalSubsession* termina
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, terminal, to_field](const w::DialogResult& result) {
             if (!result.accepted || result.selected.size() <= to_field) return;
@@ -2464,7 +2464,7 @@ void ClientApp::show_rename_terminal_dialog(ckv::term::TerminalSubsession* termi
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, alive, named](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted || result.values.empty()) return;
@@ -2663,7 +2663,7 @@ void ClientApp::show_printer_ask_dialog(ckv::term::TerminalSubsession* terminal)
     descriptor.buttons.push_back(w::ButtonDescriptor{"Cancel", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, alive, asked, owner, answer_field](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted) return;
@@ -2802,7 +2802,7 @@ void ClientApp::show_printer_settings_dialog(ckv::term::TerminalSubsession* term
     ckv::term::TerminalSubsession* const target = terminal;
     const std::weak_ptr<void> alive = alive_;
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, alive, target, scope_field, mode_field, ask_cache_field, spool_field,
          format_field, folder_field, ask_name_field](const w::DialogResult& result) {
@@ -2877,7 +2877,7 @@ void ClientApp::show_print_output_dialog(ckv::term::TerminalSubsession* terminal
                                                         }});
         descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
         auto empty = std::make_shared<w::DescriptorDialogPresentation>(
-            w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+            w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
         retain_dialog(empty);
         return;
     }
@@ -2928,7 +2928,7 @@ void ClientApp::show_print_output_dialog(ckv::term::TerminalSubsession* terminal
     descriptor.buttons.push_back(w::ButtonDescriptor{"Close", w::ButtonRole::Dismiss, {}});
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, presentation, alive, source, listed, choice_field](const w::DialogResult& result) {
             if (alive.expired() || !result.accepted) return;
@@ -2999,7 +2999,7 @@ void ClientApp::save_print_job(ckv::term::TerminalSubsession& terminal, std::uin
 void ClientApp::show_printer_problem(const std::string& what) {
     if (desktop_ == nullptr) return;
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Print output", what,
                                 w::MessageBoxButtons::Ok})));
 }
@@ -3288,11 +3288,11 @@ void ClientApp::refresh_footer() {
     // from here (plans/06's context table).
     if (copy_mode_ != nullptr && copy_mode_->has_focus()) {
         std::vector<w::StatusLineItem> keys;
-        keys.emplace_back("↑↓ scroll", ckv::ui::kInvalidCommand, 90);
-        keys.emplace_back("v select", ckv::ui::kInvalidCommand, 80);
-        keys.emplace_back("y copy", ckv::ui::kInvalidCommand, 70);
-        keys.emplace_back("/ search", ckv::ui::kInvalidCommand, 60);
-        keys.emplace_back("q exit", ckv::ui::kInvalidCommand, 50);
+        keys.emplace_back("↑↓ scroll", 90);
+        keys.emplace_back("v select", 80);
+        keys.emplace_back("y copy", 70);
+        keys.emplace_back("/ search", 60);
+        keys.emplace_back("q exit", 50);
         footer_->set_items(std::move(keys));
         return;
     }
@@ -3302,7 +3302,7 @@ void ClientApp::refresh_footer() {
     // clock stays up and the footer is that window's.
     if (big_clock_ != nullptr && big_clock_->has_focus()) {
         std::vector<w::StatusLineItem> keys;
-        keys.emplace_back("any key back to the terminal", ckv::ui::kInvalidCommand, 90);
+        keys.emplace_back("any key back to the terminal", 90);
         footer_->set_items(std::move(keys));
         return;
     }
@@ -3319,8 +3319,8 @@ void ClientApp::refresh_footer() {
         child_has_ended(terminal_view_of(active))) {
         std::vector<w::StatusLineItem> keys;
         if (options_.request_respawn)
-            keys.emplace_back("Enter restart", ckv::ui::kInvalidCommand, 90);
-        keys.emplace_back("x close", ckv::ui::kInvalidCommand, 80);
+            keys.emplace_back("Enter restart", 90);
+        keys.emplace_back("x close", 80);
         footer_->set_items(std::move(keys));
         return;
     }
@@ -3347,9 +3347,9 @@ void ClientApp::refresh_footer() {
             if (title.noted_activity) ++busy;
         }
         if (bells > 0)
-            items.emplace_back("\u2022 " + std::to_string(bells), ckv::ui::kInvalidCommand, 100);
+            items.emplace_back("\u2022 " + std::to_string(bells), 100);
         if (busy > 0)
-            items.emplace_back("! " + std::to_string(busy), ckv::ui::kInvalidCommand, 99);
+            items.emplace_back("! " + std::to_string(busy), 99);
     }
     // Who else is in here, and whether this reader may type (WP-50). High in
     // the order for the reason the marks above are: a toast expires and these
@@ -3358,9 +3358,9 @@ void ClientApp::refresh_footer() {
     //
     // "read-only" outranks the count, because it is the one that changes what
     // the next keystroke does.
-    if (watching()) items.emplace_back("read-only", ckv::ui::kInvalidCommand, 98);
+    if (watching()) items.emplace_back("read-only", 98);
     if (const int readers = readers_here(); readers > 1)
-        items.emplace_back(std::to_string(readers) + " readers", ckv::ui::kInvalidCommand, 97);
+        items.emplace_back(std::to_string(readers) + " readers", 97);
     for (const KeyBinding* binding : keymap_.footer(current)) {
         // In the prefix context the reader has already pressed the prefix, so
         // the bare key is what they need to see next; otherwise the full
@@ -3474,7 +3474,7 @@ void ClientApp::show_all_keys() {
     // precisely to be the page that does NOT depend on where the reader is.
     if (desktop_ == nullptr) return;
     retain_dialog(std::make_shared<w::HelpViewerPresentation>(
-        w::present_modeless_help_viewer(help_, "ckmux.keys.all", app_, *desktop_, roles_)));
+        w::present_modeless_help_viewer(help_, "ckmux.keys.all", app_, *desktop_)));
 }
 
 void ClientApp::show_about() {
@@ -3486,7 +3486,7 @@ void ClientApp::show_about() {
     // different hands, so this one follows the suite rather than deciding
     // again. Last, after a blank line, where the suite puts it too.
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Info, "About ckmux",
                                 std::string("ckmux ") + kVersion +
                                     "\nA terminal multiplexer with a visible interface.\n\n"
@@ -3504,7 +3504,7 @@ void ClientApp::show_terminal_report() {
     ckv::widgets::TerminalReportDialogOptions options;
     options.mouse_reports_decoded = options_.mouse_reports_probe;
     retain_dialog(std::make_shared<w::TerminalReportDialogPresentation>(
-        w::present_modal_terminal_report_dialog(*desktop_, app_, roles_, std::move(options))));
+        w::present_modal_terminal_report_dialog(*desktop_, app_, std::move(options))));
 }
 
 void ClientApp::enter_copy_mode() {
@@ -3695,7 +3695,7 @@ void ClientApp::show_server_error(std::uint16_t code, const std::string& context
     if (!context.empty()) body += "\n\nRequest: " + context;
     body += "\nCode: " + std::to_string(static_cast<unsigned>(code));
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "ckmux server", std::move(body),
                                 w::MessageBoxButtons::Ok})));
 }
@@ -3728,7 +3728,7 @@ void ClientApp::report_clipboard_problem(const std::vector<std::string>& refused
                 ? "\n\nckmux kept it — Terminal ▸ Paste puts it into a terminal."
                 : "\n\nckmux kept it — " + paste_chord + " pastes it into a terminal.";
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Copy", std::move(body),
                                 w::MessageBoxButtons::Ok})));
 }
@@ -3862,7 +3862,7 @@ void ClientApp::show_settings() {
     descriptor.anchor_buttons_to_bottom = true;
 
     auto presentation = std::make_shared<w::DescriptorDialogPresentation>(
-        w::present_modal_dialog(std::move(descriptor), app_, *desktop_, roles_));
+        w::present_modal_dialog(std::move(descriptor), app_, *desktop_));
     presentation->set_completion_handler(
         [this, login_field, sixel_field, grace_field, fit_field, clock_field, theme_field](
             w::DialogResult result) {
@@ -4102,7 +4102,7 @@ void ClientApp::report_settings_not_saved() {
     if (desktop_ == nullptr) return;
     const std::filesystem::path path = ckm::platform::config_file_path();
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{
             w::MessageBoxKind::Warning, "Settings not saved",
             "The change applies to this session, but could not be written to\n" +
@@ -4130,7 +4130,7 @@ void ClientApp::report_config_warnings() {
     for (const std::string& warning : options_.config_warnings)
         body += "\n  " + without_prefix(warning, file);
     retain_dialog(std::make_shared<w::MessageBoxPresentation>(w::present_modal_message_box(
-        app_, *desktop_, roles_,
+        app_, *desktop_,
         w::MessageBoxDescriptor{w::MessageBoxKind::Warning, "Configuration", std::move(body),
                                 w::MessageBoxButtons::Ok})));
 }

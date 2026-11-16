@@ -251,6 +251,13 @@ from the live registry. v0.1.0, v0.1.1 and v0.1.2 are published; v0.1.2 adds
 RPM and the install-tested Homebrew formula. **Remaining:** WP-23
 `ckmux-256color` waits for WP-21; WP-27 is the final v1 audit after WP-23.
 
+The post-v0.1.9 release procedure also builds Linux ARM64 TGZ/DEB packages:
+GitHub uses the native Ubuntu 24.04 ARM64 runner and installs the DEB on Debian
+13 before shipping; rpi4 uses the offline pinned ckVision sister snapshot and
+retains branch artifacts and matching version-tag releases. uConsole support
+targets a 64-bit Debian 13 userspace, with installed-package session lifecycle
+checks rather than architecture labels alone; see [09](09-testing.md).
+
 ## Native Windows compatibility (owner directed, 2026-10-03)
 
 Windows/ConPTY is now active under WP-52–WP-57 and

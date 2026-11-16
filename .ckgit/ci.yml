@@ -1,12 +1,10 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 #
-# The self-hosted ck-git-hosting lane: every push to main builds the
-# documentation site with ckdocs and `pages:` publishes it on this server's
-# Pages once the step has passed. It builds nothing else. The gating build
-# and test lanes are the GitHub matrix (.github/workflows/ci.yml), which
-# fetches the pinned ckVision release over the network this sandbox does not
-# have.
+# The rpi4 lane builds and tests native Linux ARM64 packages as well as the
+# documentation site. Pinned sister snapshots keep both builds offline.
+# Branch runs retain packages as CI artifacts; matching version tags produce
+# durable releases. Pages publication remains limited to the default branch.
 #
 # ckdocs is compiled from the ck-git-hosting sister project at the same
 # pinned commit .github/workflows/pages.yml uses, so the LAN and GitHub
@@ -17,10 +15,64 @@
 version: 1
 on:
   branches: [main]
+  tags: [v*]
 sisters:
   - name: ck-git-hosting
-    ref: ad6dc1de73cedef8eb64d53ab607043ae09845ee
+    ref: 3ab2bf8981d96b00b5f57ddbc63195c6df66d9fd
+  - name: ckvision
+    ref: v2.0.0
 jobs:
+  - name: linux-arm64
+    steps:
+      - name: configure
+        script: |
+          set -eu
+          test "$(dpkg --print-architecture)" = arm64
+          version=$(sed -nE 's/^project\(ckmux VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' CMakeLists.txt)
+          test -n "$version"
+          case "${CKGIT_REF:-}" in
+            refs/tags/*) test "${CKGIT_REF#refs/tags/}" = "v$version" ;;
+          esac
+          cmake -S . -B "$TMPDIR/ckmux-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCKMUX_TEST_STRESS=OFF -DCKMUX_PREFER_CKVISION_SOURCE=ON \
+            -DCKMUX_CKVISION_SOURCE_DIR="$CKGIT_SISTER_CKVISION"
+      - name: build
+        script: |
+          set -eu
+          start=$(date +%s)
+          printf 'StartUTC=%s\nConfiguration=Release\nArchitecture=arm64\nSource=%s\nDependency=v1.2.1\n' \
+            "$(date -u +%FT%TZ)" "$CKGIT_COMMIT" > "$TMPDIR/build-record.txt"
+          printf 'Baseline=No comparable duration recorded by this workflow; retain this run for comparison.\n' >> "$TMPDIR/build-record.txt"
+          find . -path './.git' -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > "$TMPDIR/source-assets.sha256"
+          find "$CKGIT_SISTER_CKVISION" -path '*/.git' -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > "$TMPDIR/dependency-assets.sha256"
+          sha256sum "$TMPDIR/source-assets.sha256" "$TMPDIR/dependency-assets.sha256" >> "$TMPDIR/build-record.txt"
+          status=0
+          cmake --build "$TMPDIR/ckmux-build" --parallel 4 || status=$?
+          printf 'EndUTC=%s\nElapsedSeconds=%s\nOutput=%s/ckmux-build/ckmux\n' \
+            "$(date -u +%FT%TZ)" "$(( $(date +%s) - start ))" "$TMPDIR" >> "$TMPDIR/build-record.txt"
+          printf 'Exit=%s\n' "$status" >> "$TMPDIR/build-record.txt"
+          test "$status" = 0
+          test "$(stat -c %Y "$TMPDIR/ckmux-build/ckmux")" -ge "$start"
+          sha256sum "$TMPDIR/ckmux-build/ckmux" >> "$TMPDIR/build-record.txt"
+      - name: test
+        script: |
+          set -eu
+          ctest --test-dir "$TMPDIR/ckmux-build" --output-on-failure --parallel 1
+          sha256sum -c "$TMPDIR/source-assets.sha256" > "$TMPDIR/inputs-verified.txt"
+          sha256sum -c "$TMPDIR/dependency-assets.sha256" >> "$TMPDIR/inputs-verified.txt"
+      - name: package
+        script: |
+          set -eu
+          version=$(sed -nE 's/^project\(ckmux VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' CMakeLists.txt)
+          cpack -G 'TGZ;DEB' --config "$TMPDIR/ckmux-build/CPackConfig.cmake" -B "$PWD/dist"
+          bash packaging/linux/check-deb.sh "$PWD/dist/ckmux_${version}_arm64.deb" "$TMPDIR/deb-check" "$version" arm64
+          python3 tests/check_linux_packages.py --source "$PWD" \
+            --package "$PWD/dist/ckmux_${version}_arm64.deb" --scratch "$TMPDIR/deb-regression" --version "$version"
+          (cd dist && sha256sum --strict -c ./*.sha256)
+          cp "$TMPDIR/build-record.txt" "$TMPDIR/source-assets.sha256" "$TMPDIR/dependency-assets.sha256" "$TMPDIR/deb-check/verification.txt" dist/
+    artifacts:
+      name: packages
+      paths: [dist]
   - name: docs
     steps:
       - name: site

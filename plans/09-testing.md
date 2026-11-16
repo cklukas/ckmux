@@ -338,6 +338,19 @@ gate Ubuntu 24.04 (the package build baseline) and Ubuntu 26.04; the advisory
 ckVision HEAD lane runs on 26.04. Release binaries remain built on 24.04 so a
 runner-label migration cannot silently raise their system-library floor.
 The publication-only job runs on 26.04 and does not compile the packages.
+Linux ARM64 adds a blocking native Ubuntu 24.04 ARM64 Debug lane and a Release
+TGZ/DEB lane. The release DEB is installed and exercised in a clean Debian 13
+ARM64 container before publication, covering the uConsole's 64-bit userspace.
+The offline rpi4 lane builds the pinned ckVision sister snapshot, runs the full
+Release suite, and retains native Debian 13 ARM64 packages; version tags
+matching the project version publish durable local release bundles.
+Both package producers verify checksum, version and architecture, then execute
+a terminal child, list its session, identify the server by its exact executable
+and unique socket, and stop it. Negative package regressions reject a bad
+checksum, changed archive, wrong version and wrong architecture before running
+anything. GitHub's checksum gate requires both ARM64 sidecars alongside the
+existing platform packages. These automated checks do not replace the manual
+host-terminal acceptance matrix below.
 Host-terminal manual matrix per release:
 WezTerm + iTerm2 (Sixel), Terminal.app (no Sixel — fallback path), xterm
 (`-ti vt340`), plus upstream's `ckvision_terminal_probe` output attached to

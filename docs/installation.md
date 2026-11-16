@@ -12,15 +12,18 @@ In filenames below, `VERSION` means the release number shown on that page.
 |---|---|---|
 | macOS Apple Silicon | Homebrew or `Darwin-arm64.tar.gz` | macOS 26+ with the standard Apple toolchain; Homebrew builds from source |
 | Debian / Ubuntu x86_64 | `_amd64.deb` | Packages built on Ubuntu 24.04; CI also checks Ubuntu 26.04 |
+| Debian / Ubuntu ARM64 | `_arm64.deb` | uConsole and Raspberry Pi with a 64-bit OS; built on Ubuntu 24.04 ARM64 and install-tested on Debian 13 |
 | RPM-based Linux x86_64 | `.x86_64.rpm` | Install with DNF; runtime dependencies must be available |
 | Other Linux x86_64 | `Linux-x86_64.tar.gz` | Same runtime baseline as the Linux packages |
+| Other Linux ARM64 | `Linux-aarch64.tar.gz` | Same runtime baseline as the ARM64 DEB |
 | Windows x64 | `Windows-x64.msi` or `.zip` | Native Intel/AMD build |
 | Windows ARM64 | `Windows-arm64.msi` or `.zip` | Use on Windows on ARM |
 
 Linux packages require a compatible modern system runtime; they are not
-universal static binaries. Ubuntu 20.04 is unsupported. For Linux ARM64,
-Intel Macs, or another system without a matching binary, see
-[Building from source](building.md); no matching prebuilt archive is published.
+universal static binaries. Ubuntu 20.04 is unsupported. ARM64 packages start
+with the next release after v0.1.9; earlier releases require a source build.
+For Intel Macs or another system without a matching binary, see
+[Building from source](building.md).
 Windows packages are checked on Windows 11 ARM64 and Windows Server x64;
 manual Windows Terminal and installer acceptance remains pending.
 
@@ -55,6 +58,26 @@ ckmux
 
 APT resolves the package's runtime dependencies. If the distribution cannot
 satisfy them, use a supported newer system or build from source.
+
+On a uConsole or Raspberry Pi running 64-bit Debian 13, use the ARM64 package:
+
+```sh
+dpkg --print-architecture  # must report arm64
+sudo apt install ./ckmux_*_arm64.deb
+ckmux --version
+ckmux
+```
+
+The GitHub release builds this package natively on Ubuntu 24.04 ARM64 and
+installs and exercises it in Debian 13 before publication. The rpi4 CI also
+builds native Debian 13 ARM64 packages from the same pinned ckVision release.
+For its CI artifacts, use `ckgit ci artifacts RUN --project ckmux` and
+`ckgit ci download RUN packages --project ckmux --into DIRECTORY`, then
+extract the downloaded tar bundle. Matching version tags retain the bundle
+as a local release: `ckgit release download ckmux --tag vVERSION --asset packages --into DIRECTORY`.
+The bundle contains the DEB, Linux archive, checksum sidecars, and build records.
+Choose only the DEB matching `dpkg --print-architecture`; the ARM64 package
+requires a 64-bit userspace and is not an `armhf` package.
 
 ### Fedora and other RPM distributions
 

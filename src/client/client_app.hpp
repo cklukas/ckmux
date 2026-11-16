@@ -44,11 +44,12 @@
 #include "cvision/ui/layout.hpp"
 #include "cvision/ui/standard_roles.hpp"
 #include "cvision/widgets/big_clock.hpp"
-#include "cvision/widgets/common_components.hpp"
+#include "cvision/widgets/date_time.hpp"
 #include "cvision/widgets/desktop.hpp"
 #include "cvision/widgets/help_viewer.hpp"
 #include "cvision/widgets/menu.hpp"
 #include "cvision/widgets/status_line.hpp"
+#include "cvision/widgets/tooltip.hpp"
 #include "cvision/widgets/window.hpp"
 #include "cvision/widgets/window_switcher_bar.hpp"
 

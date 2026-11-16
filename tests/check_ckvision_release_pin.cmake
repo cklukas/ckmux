@@ -11,6 +11,11 @@ set(pin "${CMAKE_MATCH_1}")
 if(pin STREQUAL "")
     message(FATAL_ERROR "No release pin found")
 endif()
+file(READ "${CKMUX_SOURCE_DIR}/.ckgit/ci.yml" local_workflow)
+string(REGEX MATCH "name: ckvision\n[ \t]+ref: v([0-9.]+)" sister_pin "${local_workflow}")
+if(NOT sister_pin OR NOT CMAKE_MATCH_1 STREQUAL pin)
+    message(FATAL_ERROR "Offline ARM64 CI must use the pinned ckVision release v${pin}")
+endif()
 # Exercise the real declaration's arguments, not a second policy written in
 # this test. Removing EXACT must make the later-version case fail.
 string(REGEX MATCH "\n[ \t]+FIND_PACKAGE_ARGS ([^)]*)\\)" find_declaration "${source}")

@@ -37,6 +37,10 @@ jobs:
             sanitize: ""
             ckvision: pinned
             name: linux
+          - os: ubuntu-24.04-arm
+            sanitize: ""
+            ckvision: pinned
+            name: linux-arm64
           - os: ubuntu-26.04
             sanitize: ""
             ckvision: pinned

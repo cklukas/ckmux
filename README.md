@@ -50,10 +50,12 @@ screen while it runs bash, vim and a small demo project.
 |---|---|
 | macOS | `brew install cklukas/ckmux/ckmux`; Apple Silicon archive for macOS 26+ also available |
 | Linux x86_64 — Debian / Ubuntu | Download the DEB, then `sudo apt install ./ckmux_*_amd64.deb` |
+| Linux ARM64 — Debian / Ubuntu, uConsole | Download the ARM64 DEB, then `sudo apt install ./ckmux_*_arm64.deb` |
 | Linux x86_64 — RPM distributions | Download the RPM, then `sudo dnf install ./ckmux-*.x86_64.rpm` |
 | Windows x64 / ARM64 | Download the matching MSI (current user or all users) or portable ZIP; run in Windows Terminal |
 
 Use the [latest release](https://github.com/cklukas/ckmux/releases/latest).
+Linux ARM64 packages start with the next release after v0.1.9.
 The [installation guide](docs/installation.md) covers platform requirements,
 checksums, archive installation, upgrades, and removal. For other architectures
 or development, see [building from source](docs/building.md).

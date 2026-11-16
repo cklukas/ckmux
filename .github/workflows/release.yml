@@ -31,6 +31,9 @@ jobs:
           - os: ubuntu-24.04
             generators: "TGZ;DEB;RPM"
             name: linux-x86_64
+          - os: ubuntu-24.04-arm
+            generators: "TGZ;DEB"
+            name: linux-aarch64
           - os: macos-latest
             generators: "TGZ"
             name: macos-arm64
@@ -62,13 +65,39 @@ jobs:
           cmake -S ckmux -B build -DCMAKE_BUILD_TYPE=Release -DCKMUX_TEST_STRESS=OFF
 
       - name: Build
-        run: cmake --build build -j
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=$(sed -nE 's/^set\(CKMUX_CKVISION_VERSION ([0-9.]+)\)$/\1/p' ckmux/CMakeLists.txt)
+          library=build/_deps/ckvision-src
+          test "$(git -C "$library" rev-parse HEAD)" = "$(git -C "$library" rev-parse "v$pin^{commit}")"
+          for root in ckmux "$library"; do
+            git -C "$root" ls-files -z | while IFS= read -r -d '' input; do
+              shasum -a 256 "$root/$input"
+            done
+          done > "$RUNNER_TEMP/ckmux-release-inputs.sha256"
+          start=$(date +%s)
+          printf 'Source=%s\nDependency=%s\nConfiguration=Release\nArchitecture=%s\nStartUTC=%s\n' \
+            "$(git -C ckmux rev-parse HEAD)" "$(git -C "$library" rev-parse HEAD)" \
+            "$(uname -m)" "$(date -u +%FT%TZ)" > "$RUNNER_TEMP/ckmux-build-record.txt"
+          printf 'Baseline=Fresh hosted build; no comparable duration recorded.\n' >> "$RUNNER_TEMP/ckmux-build-record.txt"
+          shasum -a 256 "$RUNNER_TEMP/ckmux-release-inputs.sha256" >> "$RUNNER_TEMP/ckmux-build-record.txt"
+          status=0
+          cmake --build build -j || status=$?
+          printf 'EndUTC=%s\nElapsedSeconds=%s\nExit=%s\nOutput=%s/build/ckmux\n' \
+            "$(date -u +%FT%TZ)" "$(( $(date +%s) - start ))" "$status" "$GITHUB_WORKSPACE" >> "$RUNNER_TEMP/ckmux-build-record.txt"
+          test "$status" = 0
+          if [[ $(uname) == Darwin ]]; then timestamp=$(stat -f %m build/ckmux); else timestamp=$(stat -c %Y build/ckmux); fi
+          test "$timestamp" -ge "$start"
+          shasum -a 256 build/ckmux >> "$RUNNER_TEMP/ckmux-build-record.txt"
 
       # The full suite, in the build type being shipped: Release verdicts have
       # differed from Debug ones here before (dead-code check), so a release
       # is gated on its own build type, never on Debug's word.
       - name: Test
-        run: ctest --test-dir build --output-on-failure --parallel 1
+        run: |
+          ctest --test-dir build --output-on-failure --parallel 1
+          shasum -a 256 -c "$RUNNER_TEMP/ckmux-release-inputs.sha256" > /dev/null
 
       - name: Package
         run: cpack -G "${{ matrix.generators }}" --config build/CPackConfig.cmake -B "$GITHUB_WORKSPACE/packages"
@@ -90,6 +119,10 @@ jobs:
             dpkg-deb --info "$deb"
             dpkg-deb --contents "$deb" > "$RUNNER_TEMP/ckmux-deb-contents"
             grep -Eq '/usr/bin/ckmux$' "$RUNNER_TEMP/ckmux-deb-contents"
+            version=$(sed -nE 's/^project\(ckmux VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' ckmux/CMakeLists.txt)
+            bash ckmux/packaging/linux/check-deb.sh "$deb" "$RUNNER_TEMP/ckmux-deb-check" "$version" "$(dpkg --print-architecture)"
+            python3 ckmux/tests/check_linux_packages.py --source ckmux \
+              --package "$deb" --scratch "$RUNNER_TEMP/ckmux-deb-regression" --version "$version"
           fi
           if [[ "$generators" == *RPM* ]]; then
             rpm=$(find "$GITHUB_WORKSPACE/packages" -maxdepth 1 -name '*.rpm' -print -quit)
@@ -98,6 +131,33 @@ jobs:
             rpm -qlp "$rpm" > "$RUNNER_TEMP/ckmux-rpm-contents"
             grep -Eq '/usr/bin/ckmux$' "$RUNNER_TEMP/ckmux-rpm-contents"
           fi
+
+      - name: Install and exercise the ARM64 package on Debian 13
+        if: matrix.name == 'linux-aarch64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(ckmux VERSION ([0-9.]+) LANGUAGES CXX\)$/\1/p' ckmux/CMakeLists.txt)
+          docker run --rm --platform linux/arm64 \
+            -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
+            -v "$GITHUB_WORKSPACE/ckmux/packaging/linux:/checks:ro" \
+            debian:13 bash -euc '
+              mkdir -p /work/tmp
+              export TMPDIR=/work/tmp
+              apt-get update
+              apt-get install --yes /packages/ckmux_*_arm64.deb
+              bash /checks/check-deb.sh "/packages/ckmux_${1}_arm64.deb" /work/check "$1" arm64 /usr/bin/ckmux
+            ' -- "$version"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-${{ matrix.name }}-evidence
+          path: |
+            ${{ runner.temp }}/ckmux-build-record.txt
+            ${{ runner.temp }}/ckmux-release-inputs.sha256
+            ${{ runner.temp }}/ckmux-deb-check/verification.txt
+            build/Testing/Temporary/*.log
 
       - uses: actions/upload-artifact@v7
         with:
@@ -416,7 +476,9 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           sidecars=(*.sha256)
-          test "${#sidecars[@]}" -ge 8
+          test "${#sidecars[@]}" -ge 10
+          compgen -G 'ckmux_*_arm64.deb.sha256' > /dev/null
+          compgen -G 'ckmux-*-Linux-aarch64.tar.gz.sha256' > /dev/null
           for sidecar in "${sidecars[@]}"; do
             if grep -q $'\r' "$sidecar"; then echo "CR in $sidecar" >&2; exit 1; fi
             sha256sum --strict -c "$sidecar"

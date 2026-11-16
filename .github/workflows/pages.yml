@@ -31,8 +31,8 @@ concurrency:
 
 env:
   CKDOCS_REPOSITORY: cklukas/ck-git-hosting
-  CKDOCS_VERSION: 0.8.1
-  CKDOCS_SHA256: 054a447ca09f9602e926fea186b68c1848a75f7c95904cbfe6b32f64b4aecfe6
+  CKDOCS_VERSION: 0.11.0
+  CKDOCS_SHA256: f3166afa2f12b69503e248a08b8c0313a1331f3e481b7c5f380db03eef64c8a6
 
 jobs:
   build:
