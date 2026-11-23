@@ -7,7 +7,7 @@ Entries through 0.1.8 were reconstructed from tagged Git history and release
 records. Dates below are GitHub publication dates in UTC. These summaries do
 not imply that every manual acceptance check was complete at release time.
 
-## Unreleased
+## [0.1.10](https://github.com/cklukas/ckmux/releases/tag/v0.1.10)
 
 - Build Linux ARM64 DEB and tar.gz release packages for 64-bit uConsole and
   Raspberry Pi systems. GitHub tests the native Ubuntu 24.04 ARM64 build and
@@ -24,7 +24,8 @@ not imply that every manual acceptance check was complete at release time.
 - Add `tools/screenshots`, which regenerates those pictures from the real
   binary (`-DCKMUX_BUILD_SCREENSHOTS=ON`, target `ckmux_update_screenshots`;
   macOS and Linux).
-- Use ckVision 1.2.1. A program that prints a Sixel picture and then a
+- Use ckVision 2.1.0, including the 2.x desktop and terminal improvements.
+  A program that prints a Sixel picture and then a
   newline (`img2sixel`, a plotting library, `cat picture.six`) no longer
   writes its next line over the picture: the cursor now ends on the
   picture's last row, as on a Sixel-capable terminal. Before, the prompt

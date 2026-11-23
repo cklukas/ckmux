@@ -424,8 +424,8 @@ This table keeps the landed seams beside the genuinely open/deferred ones so
 
 | # | State | Item | For |
 |---|---|---|---|
-| U-SVG-SNAPSHOT | Released in ckVision 1.2.0 (private `187029ee`), first published as 1.2.1; ckmux pins 1.2.1 | The documentation figures needed ckmux's real screen as an image. ckVision's SVG renderer was private docgen tooling (`tools/docgen/frame_svg`, built only with its examples), so it became the public `scene::render_svg_snapshot` rather than being compiled into ckmux from ckVision's tools directory. Its locale-dependent `snprintf` length formatting was replaced on the way (a comma locale wrote `2,22`). ckmux's `tools/screenshots/capture_screens.cpp` consumes it behind `CKMUX_BUILD_SCREENSHOTS` (off by default: it is run on purpose). | README/docs screenshots |
-| U-SIXEL-CURSOR | Released in ckVision 1.2.0 (private `683acde6`), first published as 1.2.1; ckmux pins 1.2.1 | Found by those screenshots: after a child's Sixel picture `TerminalEmulator` left the cursor on the picture's first row, so `cat picture.six` and the following prompt cut a black bar into the picture inside ckmux. A Sixel-capable host leaves it on the picture's last row (observed in iTerm2). Fixed in the emulator, not around it; ckmux's figures were regenerated against the fix. Released ckmux builds keep the bar until a release built against 1.2.1. | README/docs screenshots; every Sixel-drawing program |
+| U-SVG-SNAPSHOT | Implemented in ckVision 1.2.0 (private `187029ee`), first published as 1.2.1 | The documentation figures needed ckmux's real screen as an image. ckVision's SVG renderer was private docgen tooling (`tools/docgen/frame_svg`, built only with its examples), so it became the public `scene::render_svg_snapshot` rather than being compiled into ckmux from ckVision's tools directory. Its locale-dependent `snprintf` length formatting was replaced on the way (a comma locale wrote `2,22`). ckmux's `tools/screenshots/capture_screens.cpp` consumes it behind `CKMUX_BUILD_SCREENSHOTS` (off by default: it is run on purpose). | README/docs screenshots |
+| U-SIXEL-CURSOR | Implemented in ckVision 1.2.0 (private `683acde6`), first published as 1.2.1 | Found by those screenshots: after a child's Sixel picture `TerminalEmulator` left the cursor on the picture's first row, so `cat picture.six` and the following prompt cut a black bar into the picture inside ckmux. A Sixel-capable host leaves it on the picture's last row (observed in iTerm2). The fix is in the emulator and ships in ckmux 0.1.10 with ckVision 2.1.0. | README/docs screenshots; every Sixel-drawing program |
 | U-WIN-PROCESS-IMAGE | Released upstream; current adoption gates pending | Generic read-only PE/COFF and host user-mode architecture inspection is released in ckVision0.1.18/publicfbc83742 after all seven hosted37320737354 jobs pass. ckmux replaces only the image-preflight call; shell preferences, recursive application launch refusal, server arguments/readiness and session policy remain here. No ARM-specific shell exception, loader implementation or server semantics enter the library. | WP-53/WP-56 |
 | U1-b | Deferred; no known gap | `StatusLine`/`MenuBar` niceties if a concrete gap surfaces. | M3–M4 |
 | U-WIN-CONPTY-DEPLOY | Released upstream as17; consumed by packaging | D-134 provides an opt-in generic CMake helper with an explicit archive/hash/architecture/target, PE checks, complete OS-compatible console hosts, build/install refresh, identity record and Microsoft MIT notice. No automatic network or mandatory runtime dependency. Release17 at publicc89d0d7b passes all seven CI37265637549 jobs and clean Mac/GCC/native/sanitizer gates; subsequent test-only static-CRT correction public21f2f685 passes all seven CI37277400770 jobs. Actual helper-deployed runtime1.24 passes all34 library cases; runtime1.25 still fails pixel-mouse and graphics/resize proof on the named host. ckmux calls only this helper and owns its archive/installer/release policy. Seven distribution-policy cases and their actual-call-omission negative pass; ARM64 prototype installer checks pass, but x64 and full installed/live acceptance remain required. | WP-55/WP-56 |
@@ -478,10 +478,11 @@ around the library.
   build, and the old order silently built against yesterday's installed
   library while the developer edited today's source. `CKMUX_SANITIZE`
   forwards to `CKVISION_SANITIZE` so one flag instruments both projects.
-- **Version discipline**: adopter and CI builds resolve exactly
-  `CKMUX_CKVISION_VERSION` — released v0.1.16 — through `find_package` or a
-  FetchContent clone of that release tag. Co-development builds deliberately
-  use the sibling source first so an upstream fix is visible immediately.
+- **Version discipline**: ckmux 0.1.10 pins ckVision v2.1.0. Adopter and CI
+  builds resolve exactly `CKMUX_CKVISION_VERSION` through `find_package` or a
+  FetchContent clone of that release tag. The offline ARM64 CI uses the same
+  tag in `.ckgit/ci.yml`. Co-development builds use the sibling source first
+  so an upstream fix is visible immediately.
   The isolated Windows-port candidate requires the shared invocation,
   captured-helper and detached-process APIs in 0.1.16. Its release tag peels
   to public `a38928cf`; all seven GitHub CI37243144550 jobs pass. A

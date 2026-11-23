@@ -1189,7 +1189,7 @@ void ClientApp::notify(std::string text, w::NotificationSeverity severity, bool 
         // make: a toast expires on ckVision's timer, and nothing else would
         // tell us the surface had shrunk or emptied.
         const std::weak_ptr<void> alive = alive_;
-        toasts_->on_changed = [this, alive] {
+        toasts_->on_change = [this, alive] {
             if (alive.expired()) return;
             // POSTED, not called. This runs from inside the centre — a click
             // that dismissed a line, or an expiry firing on its timer — and

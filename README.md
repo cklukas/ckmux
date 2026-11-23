@@ -55,7 +55,7 @@ screen while it runs bash, vim and a small demo project.
 | Windows x64 / ARM64 | Download the matching MSI (current user or all users) or portable ZIP; run in Windows Terminal |
 
 Use the [latest release](https://github.com/cklukas/ckmux/releases/latest).
-Linux ARM64 packages start with the next release after v0.1.9.
+Linux ARM64 packages are available starting with v0.1.10.
 The [installation guide](docs/installation.md) covers platform requirements,
 checksums, archive installation, upgrades, and removal. For other architectures
 or development, see [building from source](docs/building.md).

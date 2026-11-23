@@ -20,7 +20,7 @@ sisters:
   - name: ck-git-hosting
     ref: 3ab2bf8981d96b00b5f57ddbc63195c6df66d9fd
   - name: ckvision
-    ref: v2.0.0
+    ref: v2.1.0
 jobs:
   - name: linux-arm64
     steps:
@@ -40,8 +40,10 @@ jobs:
         script: |
           set -eu
           start=$(date +%s)
-          printf 'StartUTC=%s\nConfiguration=Release\nArchitecture=arm64\nSource=%s\nDependency=v1.2.1\n' \
-            "$(date -u +%FT%TZ)" "$CKGIT_COMMIT" > "$TMPDIR/build-record.txt"
+          pin=$(sed -nE 's/^set\(CKMUX_CKVISION_VERSION ([0-9.]+)\)$/\1/p' CMakeLists.txt)
+          test -n "$pin"
+          printf 'StartUTC=%s\nConfiguration=Release\nArchitecture=arm64\nSource=%s\nDependency=v%s\n' \
+            "$(date -u +%FT%TZ)" "$CKGIT_COMMIT" "$pin" > "$TMPDIR/build-record.txt"
           printf 'Baseline=No comparable duration recorded by this workflow; retain this run for comparison.\n' >> "$TMPDIR/build-record.txt"
           find . -path './.git' -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > "$TMPDIR/source-assets.sha256"
           find "$CKGIT_SISTER_CKVISION" -path '*/.git' -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > "$TMPDIR/dependency-assets.sha256"

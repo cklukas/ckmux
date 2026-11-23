@@ -20,8 +20,8 @@ In filenames below, `VERSION` means the release number shown on that page.
 | Windows ARM64 | `Windows-arm64.msi` or `.zip` | Use on Windows on ARM |
 
 Linux packages require a compatible modern system runtime; they are not
-universal static binaries. Ubuntu 20.04 is unsupported. ARM64 packages start
-with the next release after v0.1.9; earlier releases require a source build.
+universal static binaries. Ubuntu 20.04 is unsupported. Linux ARM64 packages
+are available starting with v0.1.10. Earlier releases require a source build.
 For Intel Macs or another system without a matching binary, see
 [Building from source](building.md).
 Windows packages are checked on Windows 11 ARM64 and Windows Server x64;
